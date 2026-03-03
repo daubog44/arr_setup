@@ -11,16 +11,7 @@ spec:
   resources:
     requests:
       storage: 1Gi
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: force-https
-  namespace: mgmt
-spec:
-  headers:
-    customRequestHeaders:
-      X-Forwarded-Proto: "https"
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -99,18 +90,3 @@ spec:
       services:
         - name: authelia
           port: 9091
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: authelia
-  namespace: mgmt
-spec:
-  forwardAuth:
-    address: http://authelia.mgmt.svc.cluster.local:9091/api/verify?rd=https://auth.${DOMAIN_NAME}/
-    trustForwardHeader: true
-    authResponseHeaders:
-      - Remote-User
-      - Remote-Groups
-      - Remote-Name
-      - Remote-Email
