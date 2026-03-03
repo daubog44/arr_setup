@@ -1,0 +1,7 @@
+version: "3"
+dotenv: [".env"]
+tasks:
+  test:
+    cmds:
+      - echo "JWT is [$AUTHELIA_JWT_SECRET]"
+      - echo "HASH is [$HEADLAMP_OIDC_HASH]"

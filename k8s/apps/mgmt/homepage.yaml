@@ -1,0 +1,94 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homepage
+  namespace: mgmt
+spec:
+  selector:
+    matchLabels:
+      app: homepage
+  template:
+    metadata:
+      labels:
+        app: homepage
+    spec:
+      containers:
+        - name: homepage
+          image: ghcr.io/gethomepage/homepage:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: "home.${DOMAIN_NAME}"
+          volumeMounts:
+            - name: config-files
+              mountPath: /app/config/settings.yaml
+              subPath: settings.yaml
+            - name: config-files
+              mountPath: /app/config/services.yaml
+              subPath: services.yaml
+            - name: config-files
+              mountPath: /app/config/widgets.yaml
+              subPath: widgets.yaml
+            - name: config-files
+              mountPath: /app/config/bookmarks.yaml
+              subPath: bookmarks.yaml
+            - name: config-storage
+              mountPath: /app/config/logs
+      volumes:
+        - name: config-files
+          configMap:
+            name: homepage-config
+        - name: config-storage
+          persistentVolumeClaim:
+            claimName: homepage-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homepage
+  namespace: mgmt
+spec:
+  selector:
+    app: homepage
+  ports:
+    - port: 80
+      targetPort: 3000
+      name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homepage
+  namespace: mgmt
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  rules:
+    - host: home.${DOMAIN_NAME}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homepage
+                port:
+                  name: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: homepage-config
+  namespace: mgmt
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

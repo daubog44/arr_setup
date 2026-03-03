@@ -1,0 +1,31 @@
+# Environments
+.env
+.env.*
+!.env.example
+
+# SSH Keys
+.ssh/
+
+# Secret config
+demo-US-FREE-34.conf
+setup_ovpn.sh
+
+# OpenTofu / Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Temporary files
+test.txt
+*.log

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: mgmt
+  labels:
+    app.kubernetes.io/name: headlamp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: headlamp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: headlamp
+    spec:
+      serviceAccountName: headlamp-admin
+      containers:
+      - name: headlamp
+        image: ghcr.io/headlamp-k8s/headlamp:v0.40.0
+        ports:
+        - containerPort: 4466
+        args:
+          - "-in-cluster"
+          - "-oidc-client-id=headlamp"
+          - "-oidc-client-secret=${HEADLAMP_OIDC_SECRET}"
+          - "-oidc-idp-issuer-url=https://auth.${DOMAIN_NAME}"
+          - "-oidc-scopes=openid,profile,groups,email"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: mgmt
+spec:
+  ports:
+  - port: 80
+    targetPort: 4466
+  selector:
+    app.kubernetes.io/name: headlamp

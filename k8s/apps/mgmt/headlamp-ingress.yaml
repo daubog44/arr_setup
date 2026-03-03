@@ -1,0 +1,27 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: headlamp-basic-auth
+  namespace: mgmt
+spec:
+  basicAuth:
+    secret: headlamp-basic-auth
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: headlamp
+  namespace: mgmt
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`headlamp.${DOMAIN_NAME}`)
+      kind: Rule
+      middlewares:
+        - name: authelia
+          namespace: mgmt
+        - name: headlamp-token-header
+      services:
+        - name: headlamp
+          port: 80

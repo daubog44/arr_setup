@@ -1,0 +1,744 @@
+- name: Proxmox Shared Storage Setup
+  hosts: proxmox_host
+  gather_facts: false
+  tasks:
+    - name: Ensure Proxmox is reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+
+    - name: Install CIFS utilities
+      ansible.builtin.apt:
+        name: cifs-utils
+        state: present
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Ensure SMB credentials directory exists
+      ansible.builtin.file:
+        path: /etc/samba
+        state: directory
+        mode: '0700'
+
+    - name: Dynamically resolve NAS IP from default gateway (bypass Tailscale)
+      ansible.builtin.shell: |
+        GW=$(ip route | awk '/default/ {print $3}' | head -n 1)
+        if [[ "{{ nas_address }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "{{ nas_address }}"
+        else
+          dig +short @$GW {{ nas_address }} | tail -n 1
+        fi
+      args:
+        executable: /bin/bash
+      register: nas_ip_dynamic
+      changed_when: false
+
+    - name: Ensure NAS hostname is in Proxmox /etc/hosts (Bypass Tailscale DNS override)
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '.*\s+{{ nas_address }}$'
+        line: "{{ nas_ip_dynamic.stdout }} {{ nas_address }}"
+        state: present
+      when: nas_ip_dynamic.stdout != "" and nas_ip_dynamic.stdout != nas_address
+
+    - name: Write SMB credentials file
+      ansible.builtin.copy:
+        dest: "/etc/samba/.smb_credentials_{{ nas_address }}"
+        content: |
+          username={{ lookup('env', 'SMB_USER') }}
+          password={{ lookup('env', 'SMB_PASSWORD') }}
+        mode: '0600'
+
+    - name: Ensure mount point exists
+      ansible.builtin.file:
+        path: "{{ host_nas_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount Samba Share persistently
+      ansible.builtin.mount:
+        path: "{{ host_nas_path }}"
+        src: "//{{ nas_address }}/{{ nas_share_name | default('proxmox') }}"
+        fstype: cifs
+        opts: "credentials=/etc/samba/.smb_credentials_{{ nas_address }},iocharset=utf8,vers=3.0,uid={{ storage_uid | default(13000) }},gid={{ storage_gid | default(13000) }},file_mode=0777,dir_mode=0777"
+        state: mounted
+
+    - name: Create TRaSH Guides Folder Structure on Host Storage
+
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ storage_uid | default(13000) }}"
+        group: "{{ storage_gid | default(13000) }}"
+        mode: "0777"
+      ignore_errors: true
+      with_items:
+        - "{{ host_nas_path }}"
+        - "{{ host_nas_path }}/torrents"
+        - "{{ host_nas_path }}/torrents/complete"
+        - "{{ host_nas_path }}/torrents/incomplete"
+        - "{{ host_nas_path }}/media"
+        - "{{ host_nas_path }}/media/movies"
+        - "{{ host_nas_path }}/media/tv"
+
+    - name: Ensure Host NAS directory is owned by bare-metal UID/GID
+      ansible.builtin.shell: "chown -R {{ storage_uid | default(13000) }}:{{ storage_gid | default(13000) }} {{ host_nas_path }} && chmod -R 777 {{ host_nas_path }}"
+
+- name: Host Hardware Discovery & Driver Setup
+  hosts: proxmox_host
+  gather_facts: true
+  tasks:
+    - name: Detect NVIDIA GPU
+      ansible.builtin.shell: lspci | grep -i "NVIDIA" | grep -i "VGA" || true
+      register: nvidia_check
+      changed_when: false
+
+    - name: Detect Intel GPU
+      ansible.builtin.shell: lspci | grep -i "Intel" | grep -i "VGA" || true
+      register: intel_check
+      changed_when: false
+
+    - name: Set GPU Discovery Facts
+      ansible.builtin.set_fact:
+        has_nvidia: "{{ 'NVIDIA' in nvidia_check.stdout }}"
+        has_intel: "{{ 'Intel' in intel_check.stdout }}"
+        nvidia_model: "{{ nvidia_check.stdout | regex_replace('.*\\[([^\\]]+)\\].*', '\\1') | regex_replace(' ', '_') | lower if 'NVIDIA' in nvidia_check.stdout else 'none' }}"
+        intel_model: "{{ intel_check.stdout | regex_replace('.*\\[([^\\]]+)\\].*', '\\1') | regex_replace(' ', '_') | lower if 'Intel' in intel_check.stdout else 'none' }}"
+
+    - name: Install NVIDIA drivers on Proxmox Host
+      when: has_nvidia
+      block:
+        - name: Enable contrib and non-free repositories on Proxmox
+          ansible.builtin.apt_repository:
+            repo: "deb http://ftp.debian.org/debian {{ ansible_facts['distribution_release'] }} main contrib non-free non-free-firmware"
+            state: present
+
+        - name: Install Proxmox Headers and NVIDIA Kernel Modules
+          ansible.builtin.apt:
+            name:
+              - "proxmox-headers-{{ ansible_facts['kernel'] }}"
+              - nvidia-kernel-dkms
+              - nvidia-driver-libs
+              - nvidia-smi
+              - nvidia-vulkan-icd
+            update_cache: true
+            state: present
+
+        - name: Force DKMS to build NVIDIA modules
+          ansible.builtin.shell: "dkms autoinstall -k {{ ansible_facts['kernel'] }}"
+          register: dkms_build
+          changed_when: "'installed' in dkms_build.stdout"
+          failed_when: false
+
+        # --- Community patch: github.com/Boux/nvidia-550xx-dkms ---
+        # Fixes NVIDIA 550 compilation on kernel 6.17+ using LINUX_VERSION_CODE conditionals
+        - name: Write community kernel 6.17 compatibility patch to host
+          ansible.builtin.copy:
+            dest: /tmp/0005-nvidia-kernel617.patch
+            content: |
+              --- a/nvidia-drm/nvidia-drm-drv.c
+              +++ b/nvidia-drm/nvidia-drm-drv.c
+              @@ -202,6 +202,10 @@ static void nv_drm_output_poll_changed(struct drm_device *dev)
+               static struct drm_framebuffer *nv_drm_framebuffer_create(
+                   struct drm_device *dev,
+                   struct drm_file *file,
+              +#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+              +    const struct drm_format_info *info,
+              +#endif
+                   #if defined(NV_DRM_HELPER_MODE_FILL_FB_STRUCT_HAS_CONST_MODE_CMD_ARG)
+                   const struct drm_mode_fb_cmd2 *cmd
+                   #else
+              @@ -217,6 +221,10 @@ static struct drm_framebuffer *nv_drm_framebuffer_create(
+                   fb = nv_drm_internal_framebuffer_create(
+                           dev,
+                           file,
+              +#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+              +            info,
+              +#endif
+                           &local_cmd);
+               
+              --- a/nvidia-drm/nvidia-drm-fb.c
+              +++ b/nvidia-drm/nvidia-drm-fb.c
+              @@ -33,6 +33,7 @@
+               #include "nvidia-drm-format.h"
+               #include <drm/drm_crtc_helper.h>
+              +#include <linux/version.h>
+               
+              @@ -246,6 +247,10 @@ static int nv_drm_framebuffer_init(struct drm_device *dev,
+               struct drm_framebuffer *nv_drm_internal_framebuffer_create(
+                   struct drm_device *dev,
+                   struct drm_file *file,
+              +#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+              +    const struct drm_format_info *info,
+              +#endif
+                   struct drm_mode_fb_cmd2 *cmd)
+               {
+              @@ -299,6 +304,10 @@ struct drm_framebuffer *nv_drm_internal_framebuffer_create(
+                       dev,
+                       #endif
+                       &nv_fb->base,
+              +#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+              +        info,
+              +#endif
+                       cmd);
+               
+              --- a/nvidia-drm/nvidia-drm-fb.h
+              +++ b/nvidia-drm/nvidia-drm-fb.h
+              @@ -35,6 +35,8 @@
+               #include <drm/drm_framebuffer.h>
+               #endif
+               
+              +#include <linux/version.h>
+              +
+               #include "nvidia-drm-gem-nvkms-memory.h"
+              @@ -59,6 +61,10 @@ static inline struct nv_drm_framebuffer *to_nv_framebuffer(
+               struct drm_framebuffer *nv_drm_internal_framebuffer_create(
+                   struct drm_device *dev,
+                   struct drm_file *file,
+              +#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+              +    const struct drm_format_info *info,
+              +#endif
+                   struct drm_mode_fb_cmd2 *cmd);
+            mode: '0644'
+          when: dkms_build.rc != 0 and ansible_facts['kernel'] is version('6.17', '>=')
+
+        - name: Apply community kernel 6.17 patch to NVIDIA sources
+          ansible.builtin.shell: |
+            cd /usr/src/nvidia-current-550.163.01
+            patch -p1 --forward --reject-file=/tmp/nvidia-patch.rej < /tmp/0005-nvidia-kernel617.patch || true
+          when: dkms_build.rc != 0 and ansible_facts['kernel'] is version('6.17', '>=')
+          register: patch_result
+
+        - name: Remove stale DKMS build directory to force clean rebuild
+          ansible.builtin.file:
+            path: "/var/lib/dkms/nvidia-current/550.163.01/{{ ansible_facts['kernel'] }}"
+            state: absent
+          when: dkms_build.rc != 0
+
+        - name: Retry DKMS build after community patch
+          ansible.builtin.shell: "dkms autoinstall -k {{ ansible_facts['kernel'] }}"
+          when: dkms_build.rc != 0
+
+        - name: Blacklist nouveau and other conflicting drivers
+          ansible.builtin.copy:
+            dest: /etc/modprobe.d/blacklist-nouveau.conf
+            content: |
+              blacklist nouveau
+              blacklist nvidiafb
+              options nouveau modeset=0
+            mode: '0644'
+
+        - name: Update initramfs to apply blacklist
+          ansible.builtin.shell: "update-initramfs -u"
+          changed_when: true
+
+        - name: Unbind nouveau from GPU at runtime
+          ansible.builtin.shell: |
+            PCI_ID=$(lspci | grep -i "NVIDIA" | grep -i "VGA" | head -n 1 | awk '{print $1}')
+            if [ -n "$PCI_ID" ] && [ -d /sys/bus/pci/drivers/nouveau ]; then
+              # Convert 01:00.0 to 0000:01:00.0 if necessary
+              FULL_PCI_ID=$(echo $PCI_ID | sed 's/^[0-9]\+/0000:&/')
+              if [ -d "/sys/bus/pci/drivers/nouveau/$FULL_PCI_ID" ]; then
+                echo "$FULL_PCI_ID" > /sys/bus/pci/drivers/nouveau/unbind || true
+              fi
+            fi
+          changed_when: false
+
+        - name: Ensure NVIDIA modules are loaded
+          ansible.builtin.modprobe:
+            name: "{{ item }}"
+            state: present
+          loop: [nvidia, nvidia_uvm, nvidia_drm]
+          ignore_errors: true
+
+        - name: Verify NVIDIA device nodes exist
+          ansible.builtin.shell: "ls -l /dev/nvidia*"
+          register: nvidia_devs
+          changed_when: false
+
+- name: Worker Hardware Mapping & Passthrough
+  hosts: k3s_workers
+  gather_facts: false
+  tasks:
+    - name: Get Video and Render GIDs
+      ansible.builtin.shell: |
+        python3 -c "
+        import grp
+        try: v = grp.getgrnam('video').gr_gid
+        except: v = 44
+        try: r = grp.getgrnam('render').gr_gid
+        except: r = 104
+        print(f'{v},{r}')
+        "
+      register: gids_out
+      changed_when: false
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Set GID facts
+      ansible.builtin.set_fact:
+        video_gid: "{{ gids_out.stdout.split(',')[0] | int }}"
+        render_gid: "{{ gids_out.stdout.split(',')[1] | int }}"
+
+    - name: Allow root to map specific UID/GIDs in subuid and subgid
+      ansible.builtin.lineinfile:
+        path: "{{ item.path }}"
+        line: "root:{{ item.id }}:1"
+      with_items:
+        - { path: /etc/subgid, id: "{{ video_gid }}" }
+        - { path: /etc/subgid, id: "{{ render_gid }}" }
+        - { path: /etc/subgid, id: "{{ storage_gid | default(13000) }}" }
+        - { path: /etc/subuid, id: "{{ storage_uid | default(13000) }}" }
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Generate LXC ID mappings
+      ansible.builtin.shell: |
+        python3 -c "
+        video_gid = {{ video_gid }}
+        render_gid = {{ render_gid }}
+        storage_uid = {{ storage_uid | default(13000) }}
+        storage_gid = {{ storage_gid | default(13000) }}
+        gids = sorted(list(set([video_gid, render_gid, storage_gid])))
+        current_container_gid = 0
+        mapped_from_pool = 0
+        lines = []
+        # UIDs mapping
+        lines.append(f'lxc.idmap: u 0 100000 {storage_uid}')
+        lines.append(f'lxc.idmap: u {storage_uid} {storage_uid} 1')
+        lines.append(f'lxc.idmap: u {storage_uid + 1} {storage_uid + 100000} {65535 - storage_uid}')
+        # GIDs mapping
+        for g in gids:
+            if g > current_container_gid:
+                count = g - current_container_gid
+                lines.append(f'lxc.idmap: g {current_container_gid} {100000 + mapped_from_pool} {count}')
+                mapped_from_pool += count
+            lines.append(f'lxc.idmap: g {g} {g} 1')
+            current_container_gid = g + 1
+        if current_container_gid < 65536:
+            count = 65536 - current_container_gid
+            lines.append(f'lxc.idmap: g {current_container_gid} {100000 + mapped_from_pool} {count}')
+        for line in lines:
+            print(line)
+        "
+      register: lxc_idmap_config
+      changed_when: false
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Generate GPU Passthrough lines
+      ansible.builtin.shell: |
+        python3 -c "
+        import os, glob
+        config = []
+        # Map both Intel (dri) and NVIDIA devices
+        for dev in glob.glob('/dev/dri/*') + glob.glob('/dev/nvidia*'):
+            if os.path.exists(dev) and not os.path.isdir(dev):
+                stat = os.stat(dev)
+                major = os.major(stat.st_rdev)
+                minor = os.minor(stat.st_rdev)
+                config.append(f'lxc.cgroup2.devices.allow: c {major}:{minor} rwm')
+                config.append(f'lxc.mount.entry: {dev} {dev[1:]} none bind,optional,create=file')
+        # Mount NVIDIA userspace libraries (needed by nvidia-container-toolkit)
+        # Search both base dir and nvidia/current/ where versioned .so files live
+        lib_dirs = ['/usr/lib/x86_64-linux-gnu', '/usr/lib/x86_64-linux-gnu/nvidia/current']
+        nvidia_libs = []
+        for d in lib_dirs:
+            nvidia_libs += glob.glob(f'{d}/libnvidia*') + \
+                           glob.glob(f'{d}/libcuda*') + \
+                           glob.glob(f'{d}/libnvcuvid*') + \
+                           glob.glob(f'{d}/libnvoptix*') + \
+                           glob.glob(f'{d}/libEGL_nvidia*') + \
+                           glob.glob(f'{d}/libGLX_nvidia*') + \
+                           glob.glob(f'{d}/libGLESv*_nvidia*') + \
+                           glob.glob(f'{d}/libvdpau_nvidia*')
+        for lib in nvidia_libs:
+            if os.path.isfile(lib) or os.path.islink(lib):
+                config.append(f'lxc.mount.entry: {lib} {lib[1:]} none bind,optional,create=file')
+        # Mount nvidia-smi binary
+        if os.path.exists('/usr/bin/nvidia-smi'):
+            config.append('lxc.mount.entry: /usr/bin/nvidia-smi usr/bin/nvidia-smi none bind,optional,create=file')
+        print('\n'.join(config))
+        "
+      register: gpu_passthrough_config
+      changed_when: false
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Clean up old LXC custom mappings
+      ansible.builtin.shell: "sed -i '/^lxc\\.idmap:/d; /^lxc\\.cgroup2\\.devices\\.allow:/d; /^lxc\\.mount\\.entry: \\/dev\\//d; /^lxc\\.mount\\.entry: \\/usr\\/lib\\//d; /^lxc\\.mount\\.entry: \\/usr\\/bin\\/nvidia/d' /etc/pve/lxc/{{ lxc_vmid }}.conf"
+      changed_when: false
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Inject LXC GPU, IDMAP, and TUN device rules
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ lxc_vmid }}.conf"
+        line: "{{ item }}"
+      loop: "{{ (gpu_passthrough_config.stdout_lines + lxc_idmap_config.stdout_lines + [
+          'lxc.cgroup2.devices.allow: c 10:200 rwm',
+          'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file',
+          'lxc.mount.entry: ' + (host_nas_path) + ' data none bind,create=dir'
+        ]) | reject('equalto', '') | list }}"
+      register: lxc_conf
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Ensure LXC Container is restarted to apply hardware mappings
+      ansible.builtin.shell: "pct stop {{ lxc_vmid }} || true && pct start {{ lxc_vmid }}"
+      when: lxc_conf.changed
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Wait for LXC Container to securely be running
+      ansible.builtin.shell: "pct status {{ lxc_vmid }}"
+      register: lxc_status
+      until: "'status: running' in lxc_status.stdout"
+      retries: 5
+      delay: 5
+      when: lxc_conf.changed
+      delegate_to: "{{ proxmox_host }}"
+
+
+- name: Automate OS Baseline and Dependencies (All K3s Nodes)
+  hosts: k3s_master, k3s_workers
+  gather_facts: false
+
+  tasks:
+    - name: Wait for system to become reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+
+    - name: Gather facts for the first time
+      ansible.builtin.setup:
+
+    - name: Debug - Check DNS resolution
+      ansible.builtin.command: getent hosts google.com
+      register: dns_check
+      changed_when: false
+      ignore_errors: true
+
+    - name: Debug - Show MTU of eth0
+      ansible.builtin.command: ip addr show eth0
+      register: mtu_check
+      changed_when: false
+
+    - name: Debug - Results
+      ansible.builtin.debug:
+        msg: 
+          - "DNS Check: {{ dns_check.stdout | default('FAILED') }}"
+          - "MTU Check: {{ mtu_check.stdout }}"
+
+    - name: Enable non-free and contrib repositories natively (DEB822)
+      ansible.builtin.replace:
+        path: /etc/apt/sources.list.d/debian.sources
+        regexp: '^Components:\s*(.*)'
+        replace: 'Components: main contrib non-free non-free-firmware'
+      ignore_errors: true
+
+    - name: Check if Legacy List exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list
+      register: legacy_sources
+
+    - name: Enable non-free and contrib repositories natively (Legacy List)
+      ansible.builtin.replace:
+        path: /etc/apt/sources.list
+        regexp: '(main\s*$)'
+        replace: 'main contrib non-free non-free-firmware'
+      when: legacy_sources.stat.exists
+
+    - name: Ensure no stale apt locks
+      ansible.builtin.shell: |
+        rm -f /var/lib/apt/lists/lock
+        rm -f /var/cache/apt/archives/lock
+        rm -f /var/lib/dpkg/lock*
+      become: true
+      changed_when: false
+
+    - name: Upgrade all packages (Robust & Debuggable)
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: full
+        force_apt_get: true
+        dpkg_options: 'force-confold,force-confdef'
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+- name: K3s Shared Node Setup
+  hosts: k3s_master:k3s_workers
+  gather_facts: true
+  vars:
+    k3s_pod_cidr: "10.42.0.0/16"
+    
+  tasks:
+
+    - name: Ensure IP forwarding is enabled
+      ansible.builtin.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: yes
+
+
+    - name: Create K3s config directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: '0755'
+
+
+    - name: Tell Proxmox / LXC to stop managing resolv.conf
+      ansible.builtin.file:
+        path: /etc/.pve-ignore.resolv.conf
+        state: touch
+        mode: '0644'
+
+    - name: Ensure /etc/resolv.conf is clean and stays clean
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Create a clean resolv.conf for K3s (as a backup/explicit reference)
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/resolv.conf
+        content: |
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install baseline dependencies (NFS, cURL, etc)
+      ansible.builtin.apt:
+        name:
+          - curl
+          - htop
+          - nano
+          - ca-certificates
+          - gnupg
+          - nfs-common
+          - open-iscsi
+          - iptables
+          - intel-media-va-driver-non-free
+          - firmware-misc-nonfree
+          - runc
+        state: present
+
+    - name: Ensure iptables-legacy is used (K3s requirement sometimes)
+      ansible.builtin.alternatives:
+        name: iptables
+        path: /usr/sbin/iptables-legacy
+
+    - name: Ensure ip6tables-legacy is used
+      ansible.builtin.alternatives:
+        name: ip6tables
+        path: /usr/sbin/ip6tables-legacy
+
+    - name: Allow IP forwarding in iptables (CNI requirement)
+      ansible.builtin.command: iptables -w -P FORWARD ACCEPT
+      changed_when: false
+
+    - name: Enable and start iscsid (required by Longhorn storage)
+      ansible.builtin.systemd:
+        name: iscsid
+        enabled: true
+        state: started
+
+    - name: Install NVIDIA Container Toolkit (Only if NVIDIA GPU is passed)
+      ansible.builtin.shell: |
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+          sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+          tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+        DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
+
+    - name: Ensure /dev/kmsg is persistent via systemd-tmpfiles (LXC fix)
+      ansible.builtin.copy:
+        dest: /etc/tmpfiles.d/kmsg.conf
+        content: 'L /dev/kmsg - - - - /dev/console'
+        mode: '0644'
+
+    - name: Apply systemd-tmpfiles for /dev/kmsg immediately
+      ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf
+      changed_when: true
+      ignore_errors: true
+
+    - name: Check if K3s is already installed (skip restart on fresh install)
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_bin_check
+
+    - name: Configure nvidia runtime in K3s containerd (only if K3s already installed)
+      ansible.builtin.shell: |
+        nvidia-ctk runtime configure --runtime=containerd \
+          --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml \
+          --set-as-default
+      changed_when: true
+      when:
+        - hostvars[proxmox_host]['has_nvidia'] | default(false)
+        - k3s_bin_check.stat.exists
+        - "'k3s_workers' in group_names"
+
+    - name: Restart K3s to apply NVIDIA runtime changes
+      ansible.builtin.systemd:
+        name: "{{ 'k3s-agent' if 'k3s_workers' in group_names else 'k3s' }}"
+        state: restarted
+      when:
+        - k3s_bin_check.stat.exists
+        - (hostvars[proxmox_host]['has_nvidia'] | default(false))
+
+- name: K3s Master Node Setup
+  hosts: k3s_master
+  gather_facts: true
+  
+  tasks:
+    - name: Write K3s server config (LXC-compatible, KubeletInUserNamespace)
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/config.yaml
+        content: |
+          kubelet-arg:
+            - "feature-gates=KubeletInUserNamespace=true"
+            - "read-only-port=0"
+          tls-san:
+            - "{{ ansible_host | default(groups['k3s_master'][0]) }}"
+          disable:
+            - servicelb
+          write-kubeconfig-mode: "644"
+          cluster-cidr: "{{ hostvars[inventory_hostname]['k3s_pod_cidr'] | default('10.42.0.0/16') }}"
+          resolv-conf: /etc/rancher/k3s/resolv.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Download and install K3s Server
+      ansible.builtin.shell: |
+        curl -sfL https://get.k3s.io | sh -s - server \
+          --disable servicelb \
+          --write-kubeconfig-mode 644 \
+          --resolv-conf /etc/rancher/k3s/resolv.conf
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for node-token
+      ansible.builtin.wait_for:
+        path: /var/lib/rancher/k3s/server/node-token
+
+    - name: Read node-token from Master
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: node_token_b64
+
+    - name: Store node-token as fact
+      ansible.builtin.set_fact:
+        k3s_token: "{{ node_token_b64['content'] | b64decode | trim }}"
+        cacheable: yes
+
+    - name: Fetch kubeconfig from Master
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /home/daubog44/.kube/haac-k3s.yaml
+        flat: yes
+
+- name: K3s Worker Nodes Setup
+  hosts: k3s_workers
+  gather_facts: true
+
+  tasks:
+    - name: Write K3s agent base config (LXC-compatible)
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/config.yaml
+        content: |
+          kubelet-arg:
+            - "feature-gates=KubeletInUserNamespace=true"
+            - "read-only-port=0"
+          resolv-conf: /etc/rancher/k3s/resolv.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Add nvidia runtime to K3s agent config (if GPU available)
+      ansible.builtin.lineinfile:
+        path: /etc/rancher/k3s/config.yaml
+        line: "default-runtime: nvidia"
+        state: present
+      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
+
+    - name: Download and install K3s Agent
+      ansible.builtin.shell: |
+        MASTER_IP="{{ groups['k3s_master'][0] }}"
+        TOKEN="{{ hostvars[groups['k3s_master'][0]]['k3s_token'] | default('') }}"
+        if [ -z "$TOKEN" ]; then echo "TOKEN NOT FOUND" && exit 1; fi
+        curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${TOKEN} sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for K3s containerd config.toml to be created (async after install)
+      ansible.builtin.wait_for:
+        path: /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+        state: present
+        timeout: 60
+      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
+
+    - name: Configure nvidia runtime in K3s containerd (after fresh agent install)
+      ansible.builtin.shell: |
+        nvidia-ctk runtime configure --runtime=containerd \
+          --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml \
+          --set-as-default
+      changed_when: true
+      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
+
+    - name: Restart K3s agent to apply nvidia runtime (after fresh install)
+      ansible.builtin.systemd:
+        name: k3s-agent
+        state: restarted
+      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
+      ignore_errors: true
+
+    - name: Apply capability labels to the node
+      ansible.builtin.command: "k3s kubectl label node {{ ansible_facts['hostname'] }} {{ item.key }}={{ item.value }} --overwrite"
+      vars:
+        detected_nvidia: "{{ hostvars[proxmox_host]['nvidia_model'] if hostvars[proxmox_host]['has_nvidia'] else 'none' }}"
+        detected_intel: "{{ hostvars[proxmox_host]['intel_model'] if hostvars[proxmox_host]['has_intel'] else 'none' }}"
+        # Use user-provided label if it's not "true", otherwise fallback to detected model
+        final_gpu_label: "{{ node_labels.gpu if (node_labels.gpu | default('false')) not in ['true', 'false'] else (detected_nvidia if detected_nvidia != 'none' else (detected_intel if detected_intel != 'none' else 'false')) }}"
+      loop: "{{ (node_labels | default({}) | combine({
+          'gpu': final_gpu_label,
+          'gpu_nvidia': ('true' if hostvars[proxmox_host]['has_nvidia'] | default(false) else 'false'),
+          'gpu_intel': ('true' if hostvars[proxmox_host]['has_intel'] | default(false) else 'false'),
+          'gpu_nvidia_model': detected_nvidia,
+          'gpu_intel_model': detected_intel,
+          'gpu_type': ('both' if (hostvars[proxmox_host]['has_nvidia'] | default(false)) and (hostvars[proxmox_host]['has_intel'] | default(false)) else ('nvidia' if (hostvars[proxmox_host]['has_nvidia'] | default(false)) else ('intel' if (hostvars[proxmox_host]['has_intel'] | default(false)) else 'none')))
+        })) | dict2items }}"
+      when: (hostvars[proxmox_host]['has_nvidia'] | default(false)) or (hostvars[proxmox_host]['has_intel'] | default(false)) or (node_labels.gpu | default('false') != 'false')
+      delegate_to: "{{ groups['k3s_master'][0] }}"
+      ignore_errors: true
+
+
+- name: Post-Installation GitOps Setup (ArgoCD & Configs)
+  hosts: k3s_master
+  gather_facts: false
+
+  tasks:
+    - name: Wait for Kubernetes API to be completely ready
+      ansible.builtin.command: k3s kubectl get nodes
+      register: k8s_nodes
+      until: k8s_nodes.rc == 0
+      retries: 5
+      delay: 10
+      changed_when: false
+
+    - name: Create argocd namespace
+      ansible.builtin.command: k3s kubectl create namespace argocd
+      register: create_ns
+      failed_when: create_ns.rc != 0 and 'AlreadyExists' not in create_ns.stderr
+      changed_when: create_ns.rc == 0
+
+    - name: Install ArgoCD
+      ansible.builtin.command: k3s kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+      register: install_argo
+      changed_when: "'created' in install_argo.stdout or 'configured' in install_argo.stdout"
+
+    - name: Create GitOps directories on host for manual local apply
+      ansible.builtin.file:
+        path: "/opt/k8s"
+        state: directory
+        mode: '0755'

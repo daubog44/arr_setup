@@ -1,0 +1,72 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-config
+  namespace: mgmt
+data:
+  settings.yaml: |
+    title: "Nucleo Autogenerativo"
+    theme: dark
+    proxy: true
+    layout:
+      Media:
+        style: row
+        columns: 4
+      Management:
+        style: row
+        columns: 3
+  services.yaml: |
+    - Media:
+        - Jellyfin:
+            icon: jellyfin.png
+            href: "https://jellyfin.${DOMAIN_NAME}"
+            description: Media Server
+        - Sonarr:
+            icon: sonarr.png
+            href: "https://sonarr.${DOMAIN_NAME}"
+            description: TV Shows
+        - Radarr:
+            icon: radarr.png
+            href: "https://radarr.${DOMAIN_NAME}"
+            description: Movies
+        - Prowlarr:
+            icon: prowlarr.png
+            href: "https://prowlarr.${DOMAIN_NAME}"
+            description: Indexer Manager
+        - Autobrr:
+            icon: autobrr.png
+            href: "https://autobrr.${DOMAIN_NAME}"
+            description: RSS/IRC Downloader
+        - qBittorrent:
+            icon: qbittorrent.png
+            href: "https://qui.${DOMAIN_NAME}"
+            description: Torrent Client
+    - Management:
+        - ArgoCD:
+            icon: argocd.png
+            href: "https://argocd.${DOMAIN_NAME}"
+            description: GitOps CI/CD
+        - Longhorn:
+            icon: longhorn.png
+            href: "https://longhorn.${DOMAIN_NAME}"
+            description: Distributed Storage
+        - Headlamp:
+            icon: headlamp.png
+            href: "https://headlamp.${DOMAIN_NAME}"
+            description: K8s Dashboard
+  widgets.yaml: |
+    - greeting:
+        text: "Benvenuto nel Nucleo Autogenerativo"
+    - datetime:
+        format:
+          date: long
+          time: short
+  bookmarks.yaml: |
+    - Infrastructure:
+        - Proxmox:
+            - href: "https://192.168.0.211:8006"
+              icon: proxmox.png
+        - GitHub:
+            - href: "https://github.com"
+              icon: github.png

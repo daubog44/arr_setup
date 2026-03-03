@@ -1,0 +1,79 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autobrr
+  namespace: media
+spec:
+  selector:
+    matchLabels:
+      app: autobrr
+  template:
+    metadata:
+      labels:
+        app: autobrr
+    spec:
+      containers:
+        - name: autobrr
+          image: ghcr.io/autobrr/autobrr:latest
+          ports:
+            - containerPort: 7474
+              name: http
+          env:
+            - name: PUID
+              value: "${STORAGE_UID}"
+            - name: PGID
+              value: "${STORAGE_GID}"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: autobrr-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autobrr
+  namespace: media
+spec:
+  selector:
+    app: autobrr
+  ports:
+    - port: 80
+      targetPort: 7474
+      name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autobrr
+  namespace: media
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  rules:
+    - host: autobrr.${DOMAIN_NAME}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: autobrr
+                port:
+                  name: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autobrr-config
+  namespace: media
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,42 @@
+all:
+  vars:
+    nas_address: zimaos
+    host_nas_path: /mnt/pve/zima
+    nas_share_name: "{{ lookup('env', 'NAS_SHARE_NAME') | default('proxmox') }}"
+    storage_uid: "{{ lookup('env', 'STORAGE_UID') | default('13000') }}"
+    storage_gid: "{{ lookup('env', 'STORAGE_GID') | default('13000') }}"
+  children:
+
+    proxmox_host:
+      hosts:
+        pve:
+          ansible_user: root
+          ansible_password: "{{ lookup('env', 'PROXMOX_HOST_PASSWORD') }}"
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+    k3s_master:
+      hosts:
+        192.168.0.211:
+          ansible_user: root
+          ansible_ssh_private_key_file: ../.ssh/haac_ed25519
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=root@pve'
+          lxc_vmid: "100"
+          proxmox_host: "pve"
+    k3s_workers:
+      hosts:
+        192.168.0.212:
+          ansible_user: root
+          ansible_ssh_private_key_file: ../.ssh/haac_ed25519
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=root@pve'
+          lxc_vmid: "102"
+          worker_name: "worker1"
+          proxmox_host: "pve"
+          node_labels: {"gpu":"true","gpu_model":"gtx1050"}
+        192.168.0.213:
+          ansible_user: root
+          ansible_ssh_private_key_file: ../.ssh/haac_ed25519
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=root@pve'
+          lxc_vmid: "101"
+          worker_name: "worker2"
+          proxmox_host: "pve"
+          node_labels: {"gpu":"false"}
+

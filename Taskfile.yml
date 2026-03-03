@@ -1,0 +1,205 @@
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  TOFU_DIR: tofu
+  DEFAULT_GATEWAY:
+    sh: "ip route | grep default | awk '{print $3}' | head -n 1"
+
+tasks:
+  default:
+    cmds:
+      - task: up
+
+  check-env:
+    desc: Check if .env file exists and has required variables.
+    cmds:
+      - test -f .env || (echo "Please create a .env file based on .env.example" && exit 1)
+      - test -n "{{.LXC_PASSWORD}}" || (echo "LXC_PASSWORD is not set in .env" && exit 1)
+      - test -n "{{.LXC_MASTER_HOSTNAME}}" || (echo "LXC_MASTER_HOSTNAME is not set in .env" && exit 1)
+      - test -n "{{.DOMAIN_NAME}}" || (echo "DOMAIN_NAME is not set in .env" && exit 1)
+      - test -n "{{.NAS_ADDRESS}}" || (echo "NAS_ADDRESS is not set in .env" && exit 1)
+
+
+
+  up:
+    desc: Eroga l'intera infrastruttura (LXC + Ansible).
+    dir: "{{.TOFU_DIR}}"
+    deps: [check-env]
+    env:
+      # Unified Tofu Variables from .env
+      TF_VAR_lxc_password: "{{.LXC_PASSWORD}}"
+      TF_VAR_lxc_master_hostname: "{{.LXC_MASTER_HOSTNAME}}"
+      TF_VAR_master_target_node: "{{.MASTER_TARGET_NODE}}"
+      TF_VAR_k3s_master_ip: "{{.K3S_MASTER_IP}}"
+      TF_VAR_lxc_gateway: "{{.DEFAULT_GATEWAY}}"
+      TF_VAR_worker_nodes: "{{.WORKER_NODES_JSON}}"
+      TF_VAR_host_nas_path: "{{.HOST_NAS_PATH}}"
+      TF_VAR_cloudflare_tunnel_token: "{{.CLOUDFLARE_TUNNEL_TOKEN}}"
+      TF_VAR_domain_name: "{{.DOMAIN_NAME}}"
+      TF_VAR_protonvpn_openvpn_username: "{{.PROTONVPN_OPENVPN_USERNAME}}"
+      TF_VAR_protonvpn_openvpn_password: "{{.PROTONVPN_OPENVPN_PASSWORD}}"
+      TF_VAR_smb_user: "{{.SMB_USER}}"
+      TF_VAR_smb_password: "{{.SMB_PASSWORD}}"
+      TF_VAR_nas_address: "{{.NAS_ADDRESS}}"
+      TF_VAR_nas_share_name: "{{.NAS_SHARE_NAME}}"
+      TF_VAR_storage_uid: "{{.STORAGE_UID}}"
+      TF_VAR_storage_gid: "{{.STORAGE_GID}}"
+      
+      # Ansible / App Variables
+      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD}}"
+      LXC_PASSWORD: "{{.LXC_PASSWORD}}"
+      NAS_PATH: "{{.NAS_PATH}}"
+      HEADLAMP_USERNAME: "{{.HEADLAMP_USERNAME}}"
+      HEADLAMP_PASSWORD: "{{.HEADLAMP_PASSWORD}}"
+      ARGOCD_USERNAME: "{{.ARGOCD_USERNAME}}"
+      ARGOCD_PASSWORD: "{{.ARGOCD_PASSWORD}}"
+      QUI_USERNAME: "{{.QUI_USERNAME}}"
+      QUI_PASSWORD: "{{.QUI_PASSWORD}}"
+
+
+    cmds:
+      - tofu init
+      - tofu apply -auto-approve
+      - task: ansible
+      - task: deploy
+      - echo "Infrastructure and applications fully deployed."
+      - task: verify
+      - task: verify-web
+
+  ansible:
+    desc: Run the Ansible playbook independently with local vars.
+    dir: ansible
+    deps: [check-env]
+    env:
+      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD}}"
+      LXC_PASSWORD: "{{.LXC_PASSWORD}}"
+      NAS_PATH: "{{.NAS_PATH}}"
+
+    cmds:
+      - ansible-playbook {{.DEBUG_LEVEL}} -i inventory.yml playbook.yml
+
+  deploy:
+    desc: Applica i manifesti Kubernetes direttamente da locale (senza GitOps/ArgoCD).
+    deps: [check-env]
+    vars:
+      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
+      KUBECTL: "/home/daubog44/.local/bin/kubectl"
+      MASTER_IP:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
+      PROXMOX_HOST:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
+      QUI_USERNAME: "{{.QUI_USERNAME}}"
+      QUI_PASSWORD: "{{.QUI_PASSWORD}}"
+    cmds:
+      - echo "Opening SSH Tunnel to K3s Master via Proxmox alias {{.PROXMOX_HOST}}..."
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}}
+      - echo "Aggiorno l'IP del server nel kubeconfig..."
+      - sed -i "s/https:\/\/.*:6443/https:\/\/127.0.0.1:6443/g" {{.K3S_KUBECONFIG}}
+      - echo "Applicazione Namespace e Core..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f k8s/namespaces.yaml
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f k8s/core/traefik/helmrelease.yaml
+      - echo "Applicazione ArgoCD Core..."
+      - "find k8s/core/argocd -name \"*.yaml\" -type f | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
+      - echo "Applicazione Cloudflared con envsubst..."
+      - "{{.KUBECTL}} kustomize k8s/core/cloudflared/ | CLOUDFLARE_TUNNEL_TOKEN={{.CLOUDFLARE_TUNNEL_TOKEN}} envsubst '$CLOUDFLARE_TUNNEL_TOKEN' | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -"
+      - echo "Sincronizzazione API Cloudflare Tunnel..."
+      - echo "Attendo che Traefik sia pronto..."
+      - |
+        for i in $(seq 1 30); do
+          if KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get svc -n kube-system traefik > /dev/null 2>&1; then
+            echo "✅ Traefik service trovato."
+            break
+          fi
+          echo "⏳ Traefik non ancora pronto ($i/30)..."
+          sleep 10
+        done
+      - KUBECONFIG={{.K3S_KUBECONFIG}} KUBECTL={{.KUBECTL}} ./scripts/sync-cloudflare-tunnel.sh
+      - echo "Applicazione Longhorn via envsubst..."
+      - "find k8s/core/longhorn -name \"*.yaml\" -type f | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
+      - echo "Generazione configurazione Authelia (Hydrator)..."
+      - python3 scripts/hydrate-authelia.py
+      
+      # Create/Update the secret from the hydrated files
+      - |
+        KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} create secret generic authelia-config-files -n mgmt \
+          --from-file=configuration.yml=/tmp/authelia_configuration.yml \
+          --from-file=users.yml=/tmp/authelia_users.yml \
+          --dry-run=client -o yaml | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -
+      - echo "Applicazione Manifesti Authelia..."
+      - "find k8s/apps/mgmt/authelia -name \"authelia.yaml\" -type f | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
+      - echo "Setup secret ProtonVPN..."
+      - |-
+        if ! KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get secret protonvpn-key -n media >/dev/null 2>&1; then
+          COUNTRIES_FLAG=""
+          if [ -n "{{.PROTONVPN_SERVER_COUNTRIES}}" ]; then
+            COUNTRIES_FLAG="--from-literal=SERVER_COUNTRIES={{.PROTONVPN_SERVER_COUNTRIES}}"
+          fi
+          KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} create secret generic protonvpn-key -n media \
+            --from-literal=OPENVPN_USER="{{.PROTONVPN_OPENVPN_USERNAME}}+pmp" \
+            --from-literal=OPENVPN_PASSWORD="{{.PROTONVPN_OPENVPN_PASSWORD}}" \
+            $COUNTRIES_FLAG
+          echo "Secret ProtonVPN creato."
+        fi
+      - echo "Applicazione App via envsubst..."
+      - find k8s/apps -name "*.yaml" -type f | xargs -I {} sh -c "export DOMAIN_NAME={{.DOMAIN_NAME}} NAS_ADDRESS={{.NAS_ADDRESS}} NAS_PATH={{.NAS_PATH}} PROTONVPN_OPENVPN_USERNAME={{.PROTONVPN_OPENVPN_USERNAME}} PROTONVPN_OPENVPN_PASSWORD={{.PROTONVPN_OPENVPN_PASSWORD}} QUI_USERNAME={{.QUI_USERNAME}} QUI_PASSWORD={{.QUI_PASSWORD}} CLOUDFLARE_TUNNEL_TOKEN={{.CLOUDFLARE_TUNNEL_TOKEN}} STORAGE_UID={{.STORAGE_UID}} STORAGE_GID={{.STORAGE_GID}} HEADLAMP_OIDC_SECRET='{{.HEADLAMP_OIDC_SECRET}}' QUI_OIDC_SECRET='{{.QUI_OIDC_SECRET}}'; envsubst '\$DOMAIN_NAME \$NAS_ADDRESS \$NAS_PATH \$PROTONVPN_OPENVPN_USERNAME \$PROTONVPN_OPENVPN_PASSWORD \$QUI_USERNAME \$QUI_PASSWORD \$CLOUDFLARE_TUNNEL_TOKEN \$STORAGE_UID \$STORAGE_GID \$HEADLAMP_OIDC_SECRET \$QUI_OIDC_SECRET' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -"
+      - echo "Configuring App Authentications..."
+      - |
+        KUBECONFIG={{.K3S_KUBECONFIG}} KUBECTL={{.KUBECTL}} \
+        ARGOCD_USERNAME="{{.ARGOCD_USERNAME}}" ARGOCD_PASSWORD="{{.ARGOCD_PASSWORD}}" \
+        HEADLAMP_USERNAME="{{.HEADLAMP_USERNAME}}" HEADLAMP_PASSWORD="{{.HEADLAMP_PASSWORD}}" \
+        QUI_USERNAME="{{.QUI_USERNAME}}" QUI_PASSWORD="{{.QUI_PASSWORD}}" \
+        ./scripts/setup-auth.sh
+      - echo "Riavvio Cloudflared per prevenire disconnessioni silenti post-ansible..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} rollout restart deploy/cloudflared -n cloudflared
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
+      - echo "Deploy locale completato."
+
+  verify:
+    desc: Esegue lo script di verifica del cluster.
+    vars:
+      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
+      KUBECTL: "/home/daubog44/.local/bin/kubectl"
+      MASTER_IP:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
+      PROXMOX_HOST:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
+    cmds:
+      - echo "Opening SSH Tunnel to K3s Master for verification..."
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
+      - KUBECONFIG={{.K3S_KUBECONFIG}} ./verify_cluster.sh
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
+
+  verify-web:
+    desc: Verifica che i servizi siano raggiungibili via Cloudflare Tunnel.
+    cmds:
+      - DOMAIN_NAME="{{.DOMAIN_NAME}}" ./scripts/verify-web.sh
+
+  down:
+    desc: Distrugge l'infrastruttura (LXC e tutto il suo contenuto).
+    dir: "{{.TOFU_DIR}}"
+    deps: [check-env]
+    env:
+      # Unified Tofu Variables from .env
+      TF_VAR_lxc_password: "{{.LXC_PASSWORD}}"
+      TF_VAR_lxc_master_hostname: "{{.LXC_MASTER_HOSTNAME}}"
+      TF_VAR_master_target_node: "{{.MASTER_TARGET_NODE}}"
+      TF_VAR_k3s_master_ip: "{{.K3S_MASTER_IP}}"
+      TF_VAR_lxc_gateway: "{{.DEFAULT_GATEWAY}}"
+      TF_VAR_worker_nodes: "{{.WORKER_NODES_JSON}}"
+      TF_VAR_host_nas_path: "{{.HOST_NAS_PATH}}"
+      TF_VAR_cloudflare_tunnel_token: "{{.CLOUDFLARE_TUNNEL_TOKEN}}"
+      TF_VAR_domain_name: "{{.DOMAIN_NAME}}"
+      TF_VAR_protonvpn_openvpn_username: "{{.PROTONVPN_OPENVPN_USERNAME}}"
+      TF_VAR_protonvpn_openvpn_password: "{{.PROTONVPN_OPENVPN_PASSWORD}}"
+      TF_VAR_smb_user: "{{.SMB_USER}}"
+      TF_VAR_smb_password: "{{.SMB_PASSWORD}}"
+      TF_VAR_nas_address: "{{.NAS_ADDRESS}}"
+      TF_VAR_nas_share_name: "{{.NAS_SHARE_NAME}}"
+      TF_VAR_storage_uid: "{{.STORAGE_UID}}"
+      TF_VAR_storage_gid: "{{.STORAGE_GID}}"
+
+    cmds:
+      - tofu init
+      - tofu destroy -auto-approve
