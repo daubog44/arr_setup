@@ -33,7 +33,7 @@ spec:
                   name: protonvpn-key
                   key: OPENVPN_PASSWORD
             - name: SERVER_COUNTRIES
-              value: "${PROTONVPN_SERVER_COUNTRIES}"
+              value: "{{ .Values.vpn.serverCountries }}"
             - name: VPN_PORT_FORWARDING
               value: "on"
             - name: FIREWALL_OUTBOUND_SUBNETS
@@ -61,7 +61,7 @@ spec:
           image: curlimages/curl:latest
           env:
             - name: QBIT_USER
-              value: "${QUI_USERNAME}"
+              value: "{{ .Values.qui.username }}"
             - name: QBIT_PASS
               value: "${QUI_PASSWORD}"
           command: ["/bin/sh", "-c"]
@@ -94,9 +94,9 @@ spec:
           image: lscr.io/linuxserver/qbittorrent:latest
           env:
             - name: PUID
-              value: "${STORAGE_UID}"
+              value: "{{ .Values.storage.uid }}"
             - name: PGID
-              value: "${STORAGE_GID}"
+              value: "{{ .Values.storage.gid }}"
             - name: WEBUI_PORT
               value: "8080"
           ports:
@@ -120,7 +120,7 @@ spec:
             - name: QUI_OIDC_ENABLED
               value: "true"
             - name: QUI_OIDC_ISSUER_URL
-              value: "https://auth.${DOMAIN_NAME}"
+              value: "https://auth.{{ .Values.global.domainName }}"
             - name: QUI_OIDC_CLIENT_ID
               value: "qui"
             - name: QUI_OIDC_CLIENT_SECRET
@@ -192,7 +192,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.middlewares: mgmt-force-https@kubernetescrd,mgmt-authelia@kubernetescrd
 spec:
   rules:
-    - host: qui.${DOMAIN_NAME}
+    - host: qui.{{ .Values.global.domainName }}
       http:
         paths:
           - path: /

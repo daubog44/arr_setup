@@ -2,80 +2,73 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sonarr
+  name: prowlarr
   namespace: media
 spec:
   selector:
     matchLabels:
-      app: sonarr
+      app: prowlarr
   template:
     metadata:
       labels:
-        app: sonarr
+        app: prowlarr
     spec:
       containers:
-        - name: sonarr
-          image: lscr.io/linuxserver/sonarr:latest
+        - name: prowlarr
+          image: lscr.io/linuxserver/prowlarr:latest
           ports:
-            - containerPort: 8989
+            - containerPort: 9696
               name: http
           env:
             - name: PUID
-              value: "${STORAGE_UID}"
+              value: "{{ .Values.storage.uid }}"
             - name: PGID
-              value: "${STORAGE_GID}"
+              value: "{{ .Values.storage.gid }}"
           volumeMounts:
             - name: config
               mountPath: /config
-            - name: media
-              mountPath: /data
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: sonarr-config
-        - name: media
-          hostPath:
-            path: /data
-            type: Directory
-
+            claimName: prowlarr-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: sonarr
+  name: prowlarr
   namespace: media
 spec:
   selector:
-    app: sonarr
+    app: prowlarr
   ports:
     - port: 80
-      targetPort: 8989
+      targetPort: 9696
       name: http
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: sonarr
+  name: prowlarr
   namespace: media
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
   rules:
-    - host: sonarr.${DOMAIN_NAME}
+    - host: prowlarr.{{ .Values.global.domainName }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: sonarr
+                name: prowlarr
                 port:
                   name: http
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: sonarr-config
+  name: prowlarr-config
   namespace: media
 spec:
   accessModes:
@@ -83,4 +76,4 @@ spec:
   storageClassName: local-path
   resources:
     requests:
-      storage: 2Gi
+      storage: 1Gi

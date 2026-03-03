@@ -103,7 +103,7 @@ tasks:
       - echo "Applicazione ArgoCD Core..."
       - "find k8s/core/argocd -name \"*.yaml\" -type f | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
       - echo "Applicazione Cloudflared con envsubst..."
-      - "{{.KUBECTL}} kustomize k8s/core/cloudflared/ | CLOUDFLARE_TUNNEL_TOKEN={{.CLOUDFLARE_TUNNEL_TOKEN}} envsubst '$CLOUDFLARE_TUNNEL_TOKEN' | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -"
+      - cat k8s/core/cloudflared/*.yaml | CLOUDFLARE_TUNNEL_TOKEN={{.CLOUDFLARE_TUNNEL_TOKEN}} envsubst '$CLOUDFLARE_TUNNEL_TOKEN' | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -
       - echo "Sincronizzazione API Cloudflare Tunnel..."
       - echo "Attendo che Traefik sia pronto..."
       - |

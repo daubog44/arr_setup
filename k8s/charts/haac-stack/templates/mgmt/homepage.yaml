@@ -23,7 +23,7 @@ spec:
             - name: NODE_ENV
               value: "production"
             - name: HOMEPAGE_ALLOWED_HOSTS
-              value: "home.${DOMAIN_NAME}"
+              value: "home.{{ .Values.global.domainName }}"
           volumeMounts:
             - name: config-files
               mountPath: /app/config/settings.yaml
@@ -69,7 +69,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
   rules:
-    - host: home.${DOMAIN_NAME}
+    - host: home.{{ .Values.global.domainName }}
       http:
         paths:
           - path: /

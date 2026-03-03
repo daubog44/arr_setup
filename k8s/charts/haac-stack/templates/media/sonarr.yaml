@@ -2,28 +2,28 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: radarr
+  name: sonarr
   namespace: media
 spec:
   selector:
     matchLabels:
-      app: radarr
+      app: sonarr
   template:
     metadata:
       labels:
-        app: radarr
+        app: sonarr
     spec:
       containers:
-        - name: radarr
-          image: lscr.io/linuxserver/radarr:latest
+        - name: sonarr
+          image: lscr.io/linuxserver/sonarr:latest
           ports:
-            - containerPort: 7878
+            - containerPort: 8989
               name: http
           env:
             - name: PUID
-              value: "${STORAGE_UID}"
+              value: "{{ .Values.storage.uid }}"
             - name: PGID
-              value: "${STORAGE_GID}"
+              value: "{{ .Values.storage.gid }}"
           volumeMounts:
             - name: config
               mountPath: /config
@@ -32,7 +32,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: radarr-config
+            claimName: sonarr-config
         - name: media
           hostPath:
             path: /data
@@ -42,40 +42,40 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: radarr
+  name: sonarr
   namespace: media
 spec:
   selector:
-    app: radarr
+    app: sonarr
   ports:
     - port: 80
-      targetPort: 7878
+      targetPort: 8989
       name: http
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: radarr
+  name: sonarr
   namespace: media
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
   rules:
-    - host: radarr.${DOMAIN_NAME}
+    - host: sonarr.{{ .Values.global.domainName }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: radarr
+                name: sonarr
                 port:
                   name: http
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: radarr-config
+  name: sonarr-config
   namespace: media
 spec:
   accessModes:

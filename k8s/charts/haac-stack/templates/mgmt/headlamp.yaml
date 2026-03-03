@@ -25,7 +25,7 @@ spec:
           - "-in-cluster"
           - "-oidc-client-id=headlamp"
           - "-oidc-client-secret=${HEADLAMP_OIDC_SECRET}"
-          - "-oidc-idp-issuer-url=https://auth.${DOMAIN_NAME}"
+          - "-oidc-idp-issuer-url=https://auth.{{ .Values.global.domainName }}"
           - "-oidc-scopes=openid,profile,groups,email"
 ---
 apiVersion: v1

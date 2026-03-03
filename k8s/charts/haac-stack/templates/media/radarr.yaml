@@ -2,32 +2,28 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: jellyfin
+  name: radarr
   namespace: media
 spec:
-  replicas: 1
   selector:
     matchLabels:
-      app: jellyfin
+      app: radarr
   template:
     metadata:
       labels:
-        app: jellyfin
+        app: radarr
     spec:
-      nodeSelector:
-        gpu_nvidia: "true"
       containers:
-        - name: jellyfin
-          image: jellyfin/jellyfin:10.11.6
+        - name: radarr
+          image: lscr.io/linuxserver/radarr:latest
           ports:
-            - containerPort: 8096
+            - containerPort: 7878
               name: http
           env:
-            - name: JELLYFIN_PublishedServerUrl
-              value: "https://jellyfin.${DOMAIN_NAME}"
-          resources:
-            limits:
-              nvidia.com/gpu: 1
+            - name: PUID
+              value: "{{ .Values.storage.uid }}"
+            - name: PGID
+              value: "{{ .Values.storage.gid }}"
           volumeMounts:
             - name: config
               mountPath: /config
@@ -36,50 +32,50 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: jellyfin-config
+            claimName: radarr-config
         - name: media
           hostPath:
-            path: /data/media
-            type: DirectoryOrCreate
+            path: /data
+            type: Directory
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: jellyfin
+  name: radarr
   namespace: media
 spec:
   selector:
-    app: jellyfin
+    app: radarr
   ports:
     - port: 80
-      targetPort: 8096
+      targetPort: 7878
       name: http
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: jellyfin
+  name: radarr
   namespace: media
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
   rules:
-    - host: jellyfin.${DOMAIN_NAME}
+    - host: radarr.{{ .Values.global.domainName }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: jellyfin
+                name: radarr
                 port:
                   name: http
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: jellyfin-config
+  name: radarr-config
   namespace: media
 spec:
   accessModes:
@@ -87,4 +83,4 @@ spec:
   storageClassName: local-path
   resources:
     requests:
-      storage: 5Gi
+      storage: 2Gi

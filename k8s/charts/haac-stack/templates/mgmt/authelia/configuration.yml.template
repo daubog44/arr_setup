@@ -15,7 +15,7 @@ identity_validation:
 access_control:
   default_policy: deny
   rules:
-    - domain: "*.${DOMAIN_NAME}"
+    - domain: "*.{{ .Values.global.domainName }}"
       policy: one_factor
 session:
   name: authelia_session
@@ -24,8 +24,8 @@ session:
   remember_me_duration: 1M
   secret: "${AUTHELIA_SESSION_SECRET}"
   cookies:
-    - domain: "${DOMAIN_NAME}"
-      authelia_url: "https://auth.${DOMAIN_NAME}"
+    - domain: "{{ .Values.global.domainName }}"
+      authelia_url: "https://auth.{{ .Values.global.domainName }}"
 regulation:
   max_retries: 3
   find_time: 2m
@@ -51,7 +51,7 @@ identity_providers:
         public: false
         authorization_policy: one_factor
         redirect_uris:
-          - https://headlamp.${DOMAIN_NAME}/oidc/callback
+          - https://headlamp.{{ .Values.global.domainName }}/oidc/callback
         scopes:
           - openid
           - profile
@@ -64,7 +64,7 @@ identity_providers:
         public: false
         authorization_policy: one_factor
         redirect_uris:
-          - https://qui.${DOMAIN_NAME}/oidc/callback
+          - https://qui.{{ .Values.global.domainName }}/oidc/callback
         scopes:
           - openid
           - profile

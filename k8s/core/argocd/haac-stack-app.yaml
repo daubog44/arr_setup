@@ -2,20 +2,26 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: haac-root
+  name: haac-stack
   namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
     repoURL: https://github.com/daubog44/arr_setup
     targetRevision: HEAD
-    path: k8s/core
-    directory:
-      recurse: true
+    path: k8s/charts/haac-stack
+    helm:
+      valueFiles:
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
-    namespace: argocd
+    namespace: media
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

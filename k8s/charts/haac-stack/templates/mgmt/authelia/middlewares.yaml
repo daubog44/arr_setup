@@ -16,7 +16,7 @@ metadata:
   namespace: mgmt
 spec:
   forwardAuth:
-    address: http://authelia.mgmt.svc.cluster.local:9091/api/verify?rd=https://auth.${DOMAIN_NAME}/
+    address: http://authelia.mgmt.svc.cluster.local:9091/api/verify?rd=https://auth.{{ .Values.global.domainName }}/
     trustForwardHeader: true
     authResponseHeaders:
       - Remote-User

@@ -1,0 +1,12 @@
+global:
+  domainName: "nucleoautogenerativo.it"
+
+storage:
+  uid: "1000"
+  gid: "1000"
+
+vpn:
+  serverCountries: "Netherlands"
+
+qui:
+  username: "admin"

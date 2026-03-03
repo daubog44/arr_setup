@@ -20,40 +20,40 @@ data:
     - Media:
         - Jellyfin:
             icon: jellyfin.png
-            href: "https://jellyfin.${DOMAIN_NAME}"
+            href: "https://jellyfin.{{ .Values.global.domainName }}"
             description: Media Server
         - Sonarr:
             icon: sonarr.png
-            href: "https://sonarr.${DOMAIN_NAME}"
+            href: "https://sonarr.{{ .Values.global.domainName }}"
             description: TV Shows
         - Radarr:
             icon: radarr.png
-            href: "https://radarr.${DOMAIN_NAME}"
+            href: "https://radarr.{{ .Values.global.domainName }}"
             description: Movies
         - Prowlarr:
             icon: prowlarr.png
-            href: "https://prowlarr.${DOMAIN_NAME}"
+            href: "https://prowlarr.{{ .Values.global.domainName }}"
             description: Indexer Manager
         - Autobrr:
             icon: autobrr.png
-            href: "https://autobrr.${DOMAIN_NAME}"
+            href: "https://autobrr.{{ .Values.global.domainName }}"
             description: RSS/IRC Downloader
         - qBittorrent:
             icon: qbittorrent.png
-            href: "https://qui.${DOMAIN_NAME}"
+            href: "https://qui.{{ .Values.global.domainName }}"
             description: Torrent Client
     - Management:
         - ArgoCD:
             icon: argocd.png
-            href: "https://argocd.${DOMAIN_NAME}"
+            href: "https://argocd.{{ .Values.global.domainName }}"
             description: GitOps CI/CD
         - Longhorn:
             icon: longhorn.png
-            href: "https://longhorn.${DOMAIN_NAME}"
+            href: "https://longhorn.{{ .Values.global.domainName }}"
             description: Distributed Storage
         - Headlamp:
             icon: headlamp.png
-            href: "https://headlamp.${DOMAIN_NAME}"
+            href: "https://headlamp.{{ .Values.global.domainName }}"
             description: K8s Dashboard
   widgets.yaml: |
     - greeting:

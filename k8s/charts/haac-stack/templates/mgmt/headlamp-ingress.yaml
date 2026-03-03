@@ -16,7 +16,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`headlamp.${DOMAIN_NAME}`)
+    - match: Host(`headlamp.{{ .Values.global.domainName }}`)
       kind: Rule
       middlewares:
         - name: force-https

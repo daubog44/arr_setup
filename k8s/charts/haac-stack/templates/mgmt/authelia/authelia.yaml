@@ -85,7 +85,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`auth.${DOMAIN_NAME}`)
+    - match: Host(`auth.{{ .Values.global.domainName }}`)
       kind: Rule
       services:
         - name: authelia

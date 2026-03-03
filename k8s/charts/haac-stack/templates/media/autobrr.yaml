@@ -2,73 +2,73 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: prowlarr
+  name: autobrr
   namespace: media
 spec:
   selector:
     matchLabels:
-      app: prowlarr
+      app: autobrr
   template:
     metadata:
       labels:
-        app: prowlarr
+        app: autobrr
     spec:
       containers:
-        - name: prowlarr
-          image: lscr.io/linuxserver/prowlarr:latest
+        - name: autobrr
+          image: ghcr.io/autobrr/autobrr:latest
           ports:
-            - containerPort: 9696
+            - containerPort: 7474
               name: http
           env:
             - name: PUID
-              value: "${STORAGE_UID}"
+              value: "{{ .Values.storage.uid }}"
             - name: PGID
-              value: "${STORAGE_GID}"
+              value: "{{ .Values.storage.gid }}"
           volumeMounts:
             - name: config
               mountPath: /config
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: prowlarr-config
+            claimName: autobrr-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: prowlarr
+  name: autobrr
   namespace: media
 spec:
   selector:
-    app: prowlarr
+    app: autobrr
   ports:
     - port: 80
-      targetPort: 9696
+      targetPort: 7474
       name: http
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: prowlarr
+  name: autobrr
   namespace: media
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
   rules:
-    - host: prowlarr.${DOMAIN_NAME}
+    - host: autobrr.{{ .Values.global.domainName }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: prowlarr
+                name: autobrr
                 port:
                   name: http
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: prowlarr-config
+  name: autobrr-config
   namespace: media
 spec:
   accessModes:

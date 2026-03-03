@@ -2,7 +2,7 @@ users:
   admin:
     displayname: "Administrator"
     password: "${AUTHELIA_ADMIN_PASSWORD_HASH}"
-    email: "admin@${DOMAIN_NAME}"
+    email: "admin@{{ .Values.global.domainName }}"
     groups:
       - admins
       - dev
