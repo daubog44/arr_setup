@@ -25,7 +25,7 @@ fi
 
 echo "1. Creazione SealedSecret per ProtonVPN..."
 $KUBECTL create secret generic protonvpn-key -n media \
-  --from-literal=OPENVPN_USER="${PROTONVPN_OPENVPN_USERNAME}+pmp" \
+  --from-literal=OPENVPN_USER="${PROTONVPN_OPENVPN_USERNAME}+pmp+nr" \
   --from-literal=OPENVPN_PASSWORD="${PROTONVPN_OPENVPN_PASSWORD}" \
   --from-literal=SERVER_COUNTRIES="${PROTONVPN_SERVER_COUNTRIES}" \
   --dry-run=client -o yaml | \

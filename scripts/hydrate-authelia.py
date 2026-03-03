@@ -1,5 +1,8 @@
 import os
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(CURRENT_DIR, "../k8s/charts/haac-stack/config-templates")
+
 # Load .env
 env = {}
 if os.path.exists(".env"):
@@ -57,10 +60,10 @@ def hydrate(template_path, output_path):
 
 if __name__ == "__main__":
     hydrate(
-        os.path.join(TEMPLATE_DIR, "authelia/configuration.yml.template"),
+        os.path.join(TEMPLATE_DIR, "configuration.yml.template"),
         "/tmp/authelia_configuration.yml",
     )
     hydrate(
-        os.path.join(TEMPLATE_DIR, "authelia/users.yml.template"),
+        os.path.join(TEMPLATE_DIR, "users.yml.template"),
         "/tmp/authelia_users.yml",
     )

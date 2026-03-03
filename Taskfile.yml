@@ -168,7 +168,7 @@ tasks:
     cmds:
       - echo "Opening SSH Tunnel to K3s Master for verification..."
       - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
-      - KUBECONFIG={{.K3S_KUBECONFIG}} ./verify_cluster.sh
+      - KUBECONFIG={{.K3S_KUBECONFIG}} ./scripts/verify_cluster.sh
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
   verify-web:
