@@ -9,7 +9,7 @@ spec:
   source:
     repoURL: https://github.com/daubog44/arr_setup
     targetRevision: HEAD
-    path: HaaC/k8s
+    path: k8s
     directory:
       recurse: true
   destination:
