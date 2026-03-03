@@ -118,6 +118,30 @@ tasks:
       - ./scripts/generate-sealed-secrets.sh
       - echo "✅ Fatto! Ricordati di fare commit e push dei file generati in k8s/charts/haac-stack/templates/secrets/"
 
+  setup-hooks:
+    desc: Imposta i git hooks per automatizzare la generazione dei segreti prima del commit.
+    cmds:
+      - >
+        echo '#!/usr/bin/env bash' > .git/hooks/pre-commit
+      - >
+        echo 'echo "Esecuzione pre-commit hook: Generazione Sealed Secrets..."' >> .git/hooks/pre-commit
+      - >
+        echo './scripts/generate-sealed-secrets.sh' >> .git/hooks/pre-commit
+      - >
+        echo 'git add k8s/charts/haac-stack/templates/secrets/ k8s/charts/haac-stack/values.yaml' >> .git/hooks/pre-commit
+      - chmod +x .git/hooks/pre-commit
+      - echo "Git pre-commit hook configurato con successo."
+
+  deploy-test:
+    desc: Applica le modifiche locali di haac-stack al cluster K3s bypassando Git (solo per test).
+    deps: [generate-secrets]
+    vars:
+      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
+      KUBECTL: "/home/daubog44/.local/bin/kubectl"
+    cmds:
+      - echo "⚠️ Forzatura dell'applicazione dei template locali su Kubernetes..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n argocd
+      - echo "✅ Deploy di test eseguito. Quando hai finito, fai commit e push affinché ArgoCD renda definitive le modifiche."
 
   verify:
     desc: Esegue lo script di verifica del cluster.

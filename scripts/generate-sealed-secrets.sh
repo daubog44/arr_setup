@@ -20,9 +20,13 @@ CHART_DIR="$(dirname "$0")/../k8s/charts/haac-stack/templates"
 
 mkdir -p "$CHART_DIR/secrets"
 
-echo "Generazione certificato pubblico Sealed Secrets se non esiste..."
-if [ ! -f "$PUB_CERT" ]; then
-  KUBECONFIG="$KUBECONFIG" $KUBESEAL --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system > "$PUB_CERT"
+echo "Generazione/Verifica certificato pubblico Sealed Secrets..."
+if $KUBESEAL --kubeconfig="$KUBECONFIG" --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system > "$PUB_CERT.tmp" 2>/dev/null; then
+  mv "$PUB_CERT.tmp" "$PUB_CERT"
+  echo "Certificato pubblico aggiornato dal cluster."
+else
+  echo "Cluster non raggiungibile o controller non pronto. Uso il certificato pubblico in cache (se esiste)."
+  rm -f "$PUB_CERT.tmp"
 fi
 
 echo "1. Creazione SealedSecret per ProtonVPN..."
