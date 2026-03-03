@@ -19,6 +19,8 @@ spec:
     - match: Host(`headlamp.${DOMAIN_NAME}`)
       kind: Rule
       middlewares:
+        - name: force-https
+          namespace: mgmt
         - name: authelia
           namespace: mgmt
         - name: headlamp-token-header

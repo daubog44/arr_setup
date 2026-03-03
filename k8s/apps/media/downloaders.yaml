@@ -189,7 +189,7 @@ metadata:
   namespace: media
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-    traefik.ingress.kubernetes.io/router.middlewares: mgmt-authelia@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: mgmt-force-https@kubernetescrd,mgmt-authelia@kubernetescrd
 spec:
   rules:
     - host: qui.${DOMAIN_NAME}
