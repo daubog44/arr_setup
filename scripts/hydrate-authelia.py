@@ -57,8 +57,10 @@ def hydrate(template_path, output_path):
 
 if __name__ == "__main__":
     hydrate(
-        "k8s/apps/mgmt/authelia/configuration.yml.template",
+        os.path.join(TEMPLATE_DIR, "authelia/configuration.yml.template"),
         "/tmp/authelia_configuration.yml",
     )
-    hydrate("k8s/apps/mgmt/authelia/users.yml.template", "/tmp/authelia_users.yml")
-    print("Hydration complete.")
+    hydrate(
+        os.path.join(TEMPLATE_DIR, "authelia/users.yml.template"),
+        "/tmp/authelia_users.yml",
+    )

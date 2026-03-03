@@ -1,0 +1,73 @@
+server:
+  address: 'tcp://:9091/'
+log:
+  level: info
+totp:
+  issuer: authelia.com
+authentication_backend:
+  password_reset:
+    disable: true
+  file:
+    path: /config/config-files/users.yml
+identity_validation:
+  reset_password:
+    jwt_secret: "${AUTHELIA_JWT_SECRET}"
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "*.{{ .Values.global.domainName }}"
+      policy: one_factor
+session:
+  name: authelia_session
+  expiration: 1h
+  inactivity: 5m
+  remember_me_duration: 1M
+  secret: "${AUTHELIA_SESSION_SECRET}"
+  cookies:
+    - domain: "{{ .Values.global.domainName }}"
+      authelia_url: "https://auth.{{ .Values.global.domainName }}"
+regulation:
+  max_retries: 3
+  find_time: 2m
+  ban_time: 5m
+storage:
+  encryption_key: "${AUTHELIA_STORAGE_ENCRYPTION_KEY}"
+  local:
+    path: /config/db.sqlite3
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+identity_providers:
+  oidc:
+    hmac_secret: "${AUTHELIA_JWT_SECRET}"
+    jwks:
+      - algorithm: RS256
+        key: |
+          ${INDENTED_OIDC_KEY}
+    clients:
+      - client_id: headlamp
+        client_name: Headlamp
+        client_secret: "${HEADLAMP_OIDC_HASH}"
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://headlamp.{{ .Values.global.domainName }}/oidc/callback
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none
+      - client_id: qui
+        client_name: QUI
+        client_secret: "${QUI_OIDC_HASH}"
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://qui.{{ .Values.global.domainName }}/oidc/callback
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none
