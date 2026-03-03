@@ -4,7 +4,9 @@ set -e
 # Carica l'ambiente
 ENV_FILE="$(dirname "$0")/../.env"
 if [ -f "$ENV_FILE" ]; then
+  set -a
   source "$ENV_FILE"
+  set +a
 else
   echo ".env non trovato"
   exit 1
@@ -49,3 +51,7 @@ $KUBECTL create secret generic authelia-config-files -n mgmt \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/authelia-sealed-secret.yaml"
 
 echo "✅ Sealed Secrets generati con successo in $CHART_DIR/secrets"
+
+echo "5. Idratazione del file values.yaml centrale..."
+envsubst < "$(dirname "$0")/../k8s/charts/haac-stack/config-templates/values.yaml.template" > "$(dirname "$0")/../k8s/charts/haac-stack/values.yaml"
+echo "✅ values.yaml idratato con successo."

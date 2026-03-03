@@ -2,8 +2,8 @@ global:
   domainName: "nucleoautogenerativo.it"
 
 storage:
-  uid: "1000"
-  gid: "1000"
+  uid: "13000"
+  gid: "13000"
 
 vpn:
   serverCountries: "Netherlands"

@@ -1,0 +1,12 @@
+global:
+  domainName: "${DOMAIN_NAME}"
+
+storage:
+  uid: "${STORAGE_UID}"
+  gid: "${STORAGE_GID}"
+
+vpn:
+  serverCountries: "${PROTONVPN_SERVER_COUNTRIES}"
+
+qui:
+  username: "${QUI_USERNAME}"
