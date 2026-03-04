@@ -61,6 +61,16 @@
         "https://github\\.com/(?<depName>bitnami-labs/sealed-secrets)/releases/download/(?<currentValue>v[0-9.]+)/controller\\.yaml"
       ],
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^k8s/core/argocd/.*\\.yaml$/"
+      ],
+      "matchStrings": [
+        "# renovate: registryUrl=(?<registryUrl>[^\\s]+) chart=(?<depName>[^\\s]+)\\s+targetRevision: \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "helm"
     }
   ]
 }
