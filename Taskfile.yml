@@ -88,6 +88,7 @@ tasks:
       - task: deploy-argocd
       - task: generate-secrets
       - task: deploy-local
+      - task: sync-cloudflare
 
   verify-all:
     desc: "🔎 Pipeline di verifica totale: controlla salute del cluster Kubernetes e raggiungibilità dei servizi sul Web."
@@ -196,6 +197,12 @@ tasks:
     desc: "🌐 Controlla dinamicamente lo status HTTP di ogni applicazione esposta via Cloudflare Tunnel."
     cmds:
       - DOMAIN_NAME="{{.DOMAIN_NAME}}" ./scripts/verify-web.sh
+
+  sync-cloudflare:
+    desc: "☁️ Crea e aggiorna automaticamente le rotte Ingress e DNS su Cloudflare Zero Trust preservando record preesistenti."
+    deps: [check-env]
+    cmds:
+      - ./scripts/sync-cloudflare-tunnel.sh
 
   down:
     desc: Distrugge l'infrastruttura (LXC e tutto il suo contenuto).

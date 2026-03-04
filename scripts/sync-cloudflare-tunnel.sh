@@ -35,25 +35,25 @@ if ! echo "$CURRENT_CONFIG" | grep -q '"success":true'; then
 fi
 
 # 2. Prepara la configurazione desiderata tramite API (FQDN Traefik)
-# Recuperiamo l'IP del servizio traefik in modo dinamico per evitare hardcoding
-TRAEFIK_SERVICE_IP=$(KUBECONFIG="$KUBECONFIG_PATH" $KUBECTL get svc -n kube-system traefik -o jsonpath='{.spec.clusterIP}')
-if [ -z "$TRAEFIK_SERVICE_IP" ]; then
-  echo "❌ Error: Could not determine Traefik Service IP."
-  exit 1
-fi
-echo "📍 Traefik Service IP detected: $TRAEFIK_SERVICE_IP"
+# Usiamo il nome DNS interno di Kubernetes così sopravvive a ricreazioni del cluster
+TRAEFIK_SERVICE="http://traefik.kube-system.svc.cluster.local:80"
+echo "📍 Traefik Target: $TRAEFIK_SERVICE"
 
-# Rimuoviamo tutte le regole che contengono il dominio (sia specifiche che wildcard)
-NEW_CONFIG_PAYLOAD=$(echo "$CURRENT_CONFIG" | jq -c --arg domain "$DOMAIN_NAME" --arg service "http://$TRAEFIK_SERVICE_IP:80" '
+# Rimuoviamo SOLO le regole esatte "*.dominio" e "dominio", per non cancellare eventuali altre rotte custom dell'utente
+NEW_CONFIG_PAYLOAD=$(echo "$CURRENT_CONFIG" | jq -c --arg domain "$DOMAIN_NAME" --arg service "$TRAEFIK_SERVICE" '
   .result.config as $config |
   ($config.ingress | map(select(.service != "http_status:404"))) |
-  map(select(if .hostname != null then (.hostname | endswith($domain) | not) else true end)) as $filtered_ingress |
-  ($filtered_ingress + [{"hostname": "*.\($domain)", "service": $service, "originRequest": {"noTLSVerify": true}}, {"service": "http_status:404"}]) as $new_ingress |
+  map(select(.hostname != "*.\($domain)" and .hostname != "\($domain)")) as $filtered_ingress |
+  ($filtered_ingress + [
+    {"hostname": "*.\($domain)", "service": $service, "originRequest": {"noTLSVerify": true}},
+    {"hostname": "\($domain)", "service": $service, "originRequest": {"noTLSVerify": true}},
+    {"service": "http_status:404"}
+  ]) as $new_ingress |
   {config: ($config | .ingress = $new_ingress)}
 ')
 
 # 3. Aggiorna la configurazione su Cloudflare
-echo "📤 Pushing updated ingress routing rules to Cloudflare API..."
+echo "📤 Pushing updated ingress routing rules to Cloudflare API (preserving unrelated routes)..."
 UPDATE_RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -H "Content-Type: application/json" \
@@ -68,58 +68,57 @@ else
 fi
 
 # 4. Sincronizzazione Record DNS
-echo "🔍 Checking and purging conflicting DNS records for $DOMAIN_NAME..."
+echo "🔍 Checking DNS records for $DOMAIN_NAME (preserving unrelated records)..."
 # Recupera TUTTI i record A e CNAME
 ALL_RECORDS=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records?per_page=100" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   -H "Content-Type: application/json")
 
 EXPECTED_CONTENT="$TUNNEL_ID.cfargotunnel.com"
-WILDCARD_NAME="*.$DOMAIN_NAME"
+TARGET_RECORDS="*.$DOMAIN_NAME $DOMAIN_NAME"
 
-# Rimuovi record specifici che bloccano il wildcard o puntano a vecchi tunnel
-echo "$ALL_RECORDS" | jq -c '.result[] | select(.type=="A" or .type=="CNAME")' | while read -r record; do
-  NAME=$(echo "$record" | jq -r .name)
-  TYPE=$(echo "$record" | jq -r .type)
-  CONTENT=$(echo "$record" | jq -r .content)
-  ID=$(echo "$record" | jq -r .id)
-
-  # Salta se è esattamente il nostro record wildcard corretto (per evitare cicli di delete/create)
-  if [ "$NAME" = "$WILDCARD_NAME" ] && [ "$CONTENT" = "$EXPECTED_CONTENT" ]; then
-    continue
-  fi
-
-  # Se il nome finisce con il nostro dominio (o è il dominio stesso)
-  if echo "$NAME" | grep -qE "(^|\.)$DOMAIN_NAME$"; then
-    # Eliminiamo se:
-    # 1. È un record A (vogliamo solo tunnel CNAME)
-    # 2. È un CNAME ma punta a un tunnel diverso (.cfargotunnel.com ma non il nostro)
-    # 3. È un CNAME specifico (es. jellyfin...) e non vogliamo record specifici per far vincere il wildcard
-    if [ "$TYPE" = "A" ] || ( [ "$TYPE" = "CNAME" ] && echo "$CONTENT" | grep -q "\.cfargotunnel\.com$" ); then
-       echo "🗑️  Elimino record conflittuale: $NAME ($TYPE -> $CONTENT)"
-       curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/$ID" \
-         -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" >/dev/null
+for TARGET_NAME in $TARGET_RECORDS; do
+  echo "🌐 Verifico record DNS per $TARGET_NAME..."
+  
+  # Cerca se esiste già e con cosa conflitta
+  MATCHING_RECORDS=$(echo "$ALL_RECORDS" | jq -c --arg name "$TARGET_NAME" '.result[] | select(.name == $name)')
+  
+  NEEDS_CREATION=true
+  for record in $MATCHING_RECORDS; do
+    TYPE=$(echo "$record" | jq -r .type)
+    CONTENT=$(echo "$record" | jq -r .content)
+    ID=$(echo "$record" | jq -r .id)
+    
+    if [ "$TYPE" = "CNAME" ] && [ "$CONTENT" = "$EXPECTED_CONTENT" ]; then
+      echo "✅ Record corretto già esistente per $TARGET_NAME."
+      NEEDS_CREATION=false
+    else
+      echo "🗑️  Elimino record errato/conflittuale per $TARGET_NAME: ($TYPE -> $CONTENT)"
+      curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records/$ID" \
+        -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" >/dev/null
+    fi
+  done
+  
+  if [ "$NEEDS_CREATION" = true ]; then
+    echo "➕ Creo record CNAME per $TARGET_NAME -> $EXPECTED_CONTENT"
+    CREATE_RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"type\": \"CNAME\",
+        \"name\": \"$TARGET_NAME\",
+        \"content\": \"$EXPECTED_CONTENT\",
+        \"proxied\": true,
+        \"ttl\": 1
+      }")
+    if echo "$CREATE_RESPONSE" | grep -q '"success":true' || echo "$CREATE_RESPONSE" | grep -q "already exists"; then
+      echo "✅ DNS record ensured per $TARGET_NAME."
+    else
+      echo "❌ DNS setup failed per $TARGET_NAME: $CREATE_RESPONSE"
+      exit 1
     fi
   fi
 done
 
-# Ora creiamo il wildcard se non esiste
-echo "🌐 Verifico/Creo wildcard record..."
-CREATE_RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"type\": \"CNAME\",
-    \"name\": \"$WILDCARD_NAME\",
-    \"content\": \"$EXPECTED_CONTENT\",
-    \"proxied\": true,
-    \"ttl\": 1
-  }")
-
-if echo "$CREATE_RESPONSE" | grep -q '"success":true' || echo "$CREATE_RESPONSE" | grep -q "already exists"; then
-  echo "✅ DNS Wildcard record ensured ($WILDCARD_NAME -> $EXPECTED_CONTENT)."
-else
-  echo "❌ DNS setup failed: $CREATE_RESPONSE"
-  exit 1
-fi
+echo "🎉 All Cloudflare configurations strictly required for HaaC have been successfully synced without affecting other routes."
 
