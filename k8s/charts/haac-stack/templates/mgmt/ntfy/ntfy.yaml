@@ -50,7 +50,7 @@ spec:
             - name: NTFY_ENABLE_LOGIN
               value: "true"
             - name: NTFY_LOG_LEVEL
-              value: "DEBUG"
+              value: "INFO"
           ports:
             - containerPort: 80
           volumeMounts:
