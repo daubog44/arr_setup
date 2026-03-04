@@ -23,10 +23,16 @@ tasks:
 
 
 
+  sync:
+    desc: "🔄 Sincronizza il repository locale con GitHub (per caricare gli auto-merge di Renovate)."
+    cmds:
+      - git pull --rebase
+      - echo "✅ Repository locale aggiornato."
+
   up:
     desc: "🚀 Eroga l'intera infrastruttura da zero: Crea i container LXC, configura il SO, installa K3s e avvia il CD GitOps."
     dir: "{{.TOFU_DIR}}"
-    deps: [check-env]
+    deps: [check-env, sync]
     env:
       # Unified Tofu Variables from .env
       TF_VAR_lxc_password: "{{.LXC_PASSWORD}}"
@@ -90,6 +96,8 @@ tasks:
       - task: deploy-local
       - task: sync-cloudflare
       - task: configure-apps
+      - echo "📦 Sincronizzazione inventory Ansible nel cluster per il CronJob di manutenzione..."
+      - KUBECONFIG=/home/daubog44/.kube/haac-k3s.yaml /home/daubog44/.local/bin/kubectl create configmap ansible-inventory-cm -n mgmt --from-file=inventory.yml=ansible/inventory.yml --dry-run=client -o yaml | KUBECONFIG=/home/daubog44/.kube/haac-k3s.yaml /home/daubog44/.local/bin/kubectl apply -f -
 
   verify-all:
     desc: "🔎 Pipeline di verifica totale: controlla salute del cluster Kubernetes e raggiungibilità dei servizi sul Web."

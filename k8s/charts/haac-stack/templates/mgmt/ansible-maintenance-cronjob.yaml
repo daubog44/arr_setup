@@ -1,0 +1,74 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ansible-maintenance-playbook
+  namespace: mgmt
+data:
+  maintenance-playbook.yml: |
+    - name: Rolling OS Update
+      hosts: all
+      serial: 1  # Esegue un nodo alla volta
+      tasks:
+        - name: Update apt cache
+          ansible.builtin.apt:
+            update_cache: yes
+        - name: Upgrade all packages
+          ansible.builtin.apt:
+            upgrade: dist
+        - name: Check if reboot is required
+          ansible.builtin.stat:
+            path: /var/run/reboot-required
+          register: reboot_required
+        - name: Notify if reboot is needed
+          ansible.builtin.debug:
+            msg: "Node {{ inventory_hostname }} requires a reboot. Kured will handle it tonight."
+          when: reboot_required.stat.exists
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ansible-maintenance
+  namespace: mgmt
+spec:
+  schedule: "0 3 * * 1" # Ogni lunedì alle 03:00
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: ansible
+            image: alpine:3.19
+            command:
+            - /bin/sh
+            - -c
+            - |
+              apk add --no-cache ansible openssh-client
+              mkdir -p ~/.ssh
+              cp /etc/ansible-ssh/id_ed25519 ~/.ssh/id_ed25519
+              chmod 600 ~/.ssh/id_ed25519
+              # Disabilita check host key per automazione interna
+              echo "StrictHostKeyChecking no" > ~/.ssh/config
+              
+              ansible-playbook -i /etc/ansible-config/inventory.yml /etc/ansible-playbook/maintenance-playbook.yml
+            volumeMounts:
+            - name: playbook
+              mountPath: /etc/ansible-playbook
+            - name: inventory
+              mountPath: /etc/ansible-config
+            - name: ssh-key
+              mountPath: /etc/ansible-ssh
+              readOnly: true
+          restartPolicy: OnFailure
+          volumes:
+          - name: playbook
+            configMap:
+              name: ansible-maintenance-playbook
+          - name: inventory
+            configMap:
+              name: ansible-inventory-cm # Dovremo creare questo ConfigMap dinamico o usare quello generato
+          - name: ssh-key
+            secret:
+              secretName: haac-ssh-key # Il Secret con la tua chiave privata
