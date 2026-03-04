@@ -71,3 +71,16 @@ identity_providers:
           - groups
           - email
         userinfo_signed_response_alg: none
+      - client_id: semaphore
+        client_name: Semaphore Ansible
+        client_secret: "${SEMAPHORE_OIDC_HASH}"
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://ansible.${DOMAIN_NAME}/api/auth/oidc/redirect
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none

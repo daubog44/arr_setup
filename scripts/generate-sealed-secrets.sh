@@ -103,6 +103,15 @@ else
   echo "⚠️  Chiave SSH $SSH_KEY non trovata, salto la generazione del SealedSecret SSH."
 fi
 
-echo "7. Idratazione del file values.yaml centrale..."
+echo "7. Creazione SealedSecret per Semaphore UI..."
+$KUBECTL create secret generic semaphore-db-secret -n mgmt \
+  --from-literal=POSTGRES_PASSWORD="${SEMAPHORE_DB_PASSWORD}" \
+  --from-literal=APP_SECRET="${SEMAPHORE_APP_SECRET}" \
+  --from-literal=OIDC_SECRET="${SEMAPHORE_OIDC_SECRET}" \
+  --from-literal=ADMIN_PASSWORD="${SEMAPHORE_ADMIN_PASSWORD}" \
+  --dry-run=client -o yaml | \
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/semaphore-sealed-secret.yaml"
+
+echo "8. Idratazione del file values.yaml centrale..."
 envsubst < "$(dirname "$0")/../k8s/charts/haac-stack/config-templates/values.yaml.template" > "$(dirname "$0")/../k8s/charts/haac-stack/values.yaml"
 echo "✅ values.yaml idratato con successo."

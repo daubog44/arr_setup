@@ -1,0 +1,217 @@
+---
+# PostgreSQL for Semaphore (simple StatefulSet with internal service)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: semaphore-postgres-data
+  namespace: mgmt
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: semaphore-postgres
+  namespace: mgmt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: semaphore-postgres
+  template:
+    metadata:
+      labels:
+        app: semaphore-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: semaphore
+            - name: POSTGRES_USER
+              value: semaphore
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: POSTGRES_PASSWORD
+          ports:
+            - containerPort: 5432
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "semaphore"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "semaphore"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: semaphore-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: semaphore-postgres
+  namespace: mgmt
+spec:
+  selector:
+    app: semaphore-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# Semaphore UI
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: semaphore-data
+  namespace: mgmt
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: semaphore
+  namespace: mgmt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: semaphore
+  template:
+    metadata:
+      labels:
+        app: semaphore
+    spec:
+      containers:
+        - name: semaphore
+          image: semaphoreui/semaphore:v2.10.22
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: SEMAPHORE_DB_USER
+              value: semaphore
+            - name: SEMAPHORE_DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: POSTGRES_PASSWORD
+            - name: SEMAPHORE_DB_HOST
+              value: semaphore-postgres
+            - name: SEMAPHORE_DB_PORT
+              value: "5432"
+            - name: SEMAPHORE_DB_DIALECT
+              value: postgres
+            - name: SEMAPHORE_DB
+              value: semaphore
+            - name: SEMAPHORE_PLAYBOOK_PATH
+              value: /tmp/semaphore
+            - name: SEMAPHORE_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: ADMIN_PASSWORD
+            - name: SEMAPHORE_ADMIN_EMAIL
+              value: admin@localhost
+            - name: SEMAPHORE_ADMIN_NAME
+              value: Admin
+            - name: SEMAPHORE_ADMIN
+              value: admin
+            - name: SEMAPHORE_ACCESS_KEY_ENCRYPTION
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: APP_SECRET
+            # OIDC via Authelia
+            - name: SEMAPHORE_OIDC_ENABLED
+              value: "true"
+            - name: SEMAPHORE_OIDC_DISPLAY_NAME
+              value: "Login con Authelia"
+            - name: SEMAPHORE_OIDC_REDIRECT_URL
+              value: "https://ansible.{{ .Values.global.domainName }}/api/auth/oidc/redirect"
+            - name: SEMAPHORE_OIDC_ENDPOINT
+              value: "https://auth.{{ .Values.global.domainName }}"
+            - name: SEMAPHORE_OIDC_ID
+              value: "semaphore"
+            - name: SEMAPHORE_OIDC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: OIDC_SECRET
+            - name: SEMAPHORE_OIDC_SCOPES
+              value: "openid,profile,email,groups"
+            - name: SEMAPHORE_OIDC_USERNAME_CLAIM
+              value: "preferred_username"
+            - name: SEMAPHORE_OIDC_EMAIL_CLAIM
+              value: "email"
+            - name: SEMAPHORE_OIDC_NAME_CLAIM
+              value: "name"
+          livenessProbe:
+            httpGet:
+              path: /api/ping
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/ping
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /home/semaphore/.semaphore
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: semaphore-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: semaphore
+  namespace: mgmt
+spec:
+  selector:
+    app: semaphore
+  ports:
+    - port: 80
+      targetPort: 3000
+      name: http
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: semaphore
+  namespace: mgmt
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`ansible.{{ .Values.global.domainName }}`)
+      kind: Rule
+      services:
+        - name: semaphore
+          port: 80
