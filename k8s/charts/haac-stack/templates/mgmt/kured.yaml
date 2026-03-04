@@ -1,0 +1,94 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kured
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: kured
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: kured
+    spec:
+      serviceAccountName: kured
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      hostPID: true
+      restartPolicy: Always
+      containers:
+        - name: kured
+          image: ghcr.io/kubereboot/kured:1.16.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          env:
+            - name: KURED_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          command:
+            - /usr/bin/kured
+            - --reboot-sentinel=/var/run/reboot-required
+            - --period=1h
+            - --reboot-days=mon,tue,wed,thu,fri,sat,sun
+            - --start-time=01:00
+            - --end-time=05:00
+            - --time-zone=Europe/Rome
+            - --drain-grace-period=120
+            - --skip-wait-for-delete-timeout=60
+            - --notify-url=generic+http://ntfy.mgmt.svc.cluster.local:80/{{ .Values.global.ntfyTopic | default "haac_alerts" }}?title=Kured+Reboot&tags=arrows_counterclockwise
+          volumeMounts:
+            - name: sentinel
+              mountPath: /var/run
+              readOnly: true
+      volumes:
+        - name: sentinel
+          hostPath:
+            path: /var/run
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kured
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kured
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "delete", "get"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kured
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kured
+subjects:
+  - kind: ServiceAccount
+    name: kured
+    namespace: kube-system
