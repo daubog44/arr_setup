@@ -136,14 +136,19 @@ spec:
         - name: qui
           image: ghcr.io/autobrr/qui:v1.14.2
           env:
-            - name: QUI_OIDC_ENABLED
+            - name: QUI__OIDC_ENABLED
               value: "true"
-            - name: QUI_OIDC_ISSUER_URL
+            - name: QUI__OIDC_ISSUER
               value: "https://auth.{{ .Values.global.domainName }}"
-            - name: QUI_OIDC_CLIENT_ID
+            - name: QUI__OIDC_CLIENT_ID
               value: "qui"
-            - name: QUI_OIDC_CLIENT_SECRET
+            - name: QUI__OIDC_CLIENT_SECRET
               value: "${QUI_OIDC_SECRET}"
+            - name: QUI__OIDC_REDIRECT_URL
+              value: "https://qui.{{ .Values.global.domainName }}/api/auth/oidc/callback"
+            - name: QUI__OIDC_DISABLE_BUILT_IN_LOGIN
+              value: "true"
+
           ports:
             - containerPort: 7476
               name: qui-ui
