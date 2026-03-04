@@ -1,29 +1,42 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
+    "config:recommended",
     ":dependencyDashboard",
     ":semanticPrefixFixDepsChoreOthers"
   ],
   "kubernetes": {
-    "fileMatch": ["\\.yaml$"]
+    "managerFilePatterns": [
+      "/\\.yaml$/"
+    ]
   },
   "helmv3": {
-    "fileMatch": ["(^|/)Chart\\.yaml$"]
+    "managerFilePatterns": [
+      "/(^|/)Chart\\.yaml$/"
+    ]
   },
   "packageRules": [
     {
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "automerge": true,
       "automergeType": "pr"
     },
     {
-      "matchPackageNames": ["ghcr.io/linuxserver/*", "lscr.io/linuxserver/*", "ghcr.io/hotio/*"],
+      "matchPackageNames": [
+        "ghcr.io/linuxserver/*",
+        "lscr.io/linuxserver/*",
+        "ghcr.io/hotio/*"
+      ],
       "groupName": "linuxserver-media-apps",
       "automerge": true
     },
     {
-      "matchPackageNames": ["argoproj/argo-cd"],
+      "matchPackageNames": [
+        "argoproj/argo-cd"
+      ],
       "groupName": "argocd",
       "automerge": false
     }
@@ -31,7 +44,9 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^Taskfile\\.yml$"],
+      "managerFilePatterns": [
+        "/^Taskfile\\.yml$/"
+      ],
       "matchStrings": [
         "https://raw\\.githubusercontent\\.com/(?<depName>argoproj/argo-cd)/(?<currentValue>v[0-9.]+)/manifests/install\\.yaml"
       ],
@@ -39,7 +54,9 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^Taskfile\\.yml$"],
+      "managerFilePatterns": [
+        "/^Taskfile\\.yml$/"
+      ],
       "matchStrings": [
         "https://github\\.com/(?<depName>bitnami-labs/sealed-secrets)/releases/download/(?<currentValue>v[0-9.]+)/controller\\.yaml"
       ],
