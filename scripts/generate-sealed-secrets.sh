@@ -32,13 +32,18 @@ CHART_DIR="$(dirname "$0")/../k8s/charts/haac-stack/templates"
 
 mkdir -p "$CHART_DIR/secrets"
 
-echo "Generazione/Verifica certificato pubblico Sealed Secrets..."
-if $KUBESEAL --kubeconfig="$KUBECONFIG" --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system > "$PUB_CERT.tmp" 2>/dev/null; then
-  mv "$PUB_CERT.tmp" "$PUB_CERT"
-  echo "Certificato pubblico aggiornato dal cluster."
+echo "Generazione/Verifica certificato pubblico Sealed Secrets dal cluster locale..."
+
+# Rimuovi il vecchio certificato se esiste per forzare il fetch da K3s
+rm -f "$PUB_CERT"
+
+if $KUBESEAL --kubeconfig="$KUBECONFIG" --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system > "$PUB_CERT"; then
+  echo "Certificato pubblico aggiornato con successo dal cluster."
 else
-  echo "Cluster non raggiungibile o controller non pronto. Uso il certificato pubblico in cache (se esiste)."
-  rm -f "$PUB_CERT.tmp"
+  echo "ERRORE CRITICO: Cluster non raggiungibile o controller Sealed Secrets non pronto."
+  echo "Impossibile cifrare i segreti in modo sicuro. Assicurati che K3s sia in esecuzione e usa 'task deploy-argocd' per installare il controller."
+  rm -f "$PUB_CERT"
+  exit 1
 fi
 
 echo "1. Creazione SealedSecret per ProtonVPN..."

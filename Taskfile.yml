@@ -132,9 +132,17 @@ tasks:
   generate-secrets:
     desc: "🔐 Estrae valori dal .env locale, idrata i template e cripta i SealedSecrets in locale (Non tocca il cluster)."
     deps: [check-env]
+    vars:
+      MASTER_IP:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
+      PROXMOX_HOST:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
     cmds:
+      - echo "Opening SSH Tunnel to K3s Master for kubeseal cert fetch..."
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
       - echo "🔐 Generazione dei Sealed Secrets per il setup GitOps..."
       - ./scripts/generate-sealed-secrets.sh
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
       - echo "✅ Fatto! Ricordati di fare commit e push dei file generati in k8s/charts/haac-stack/templates/secrets/"
 
   setup-hooks:
