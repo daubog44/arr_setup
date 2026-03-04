@@ -1,9 +1,0 @@
-dependencies:
-- name: kured
-  repository: https://kubereboot.github.io/charts
-  version: 5.5.1
-- name: node-problem-detector
-  repository: https://charts.deliveryhero.io
-  version: 2.3.13
-digest: sha256:10bb9a2613ddaacb243719cedcb7efb75c9864de08b7939d80a01ce591593a5c
-generated: "2026-03-04T22:56:14.377389694+01:00"
