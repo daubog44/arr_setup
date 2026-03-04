@@ -15,6 +15,18 @@ fi
 KUBECONFIG="${KUBECONFIG:-$HOME/.kube/haac-k3s.yaml}"
 KUBECTL="${KUBECTL:-kubectl}"
 KUBESEAL="${KUBESEAL:-$HOME/.local/bin/kubeseal}"
+KUBESEAL_VERSION="0.36.0"
+
+if ! command -v "$KUBESEAL" >/dev/null 2>&1 || ! "$KUBESEAL" --version 2>&1 | grep -q "$KUBESEAL_VERSION"; then
+  echo "Scaricamento kubeseal v$KUBESEAL_VERSION..."
+  wget -qO /tmp/kubeseal.tar.gz "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz"
+  tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
+  mkdir -p ~/.local/bin
+  mv /tmp/kubeseal "$KUBESEAL"
+  chmod +x "$KUBESEAL"
+  rm -f /tmp/kubeseal.tar.gz
+fi
+
 PUB_CERT="$(dirname "$0")/pub-sealed-secrets.pem"
 CHART_DIR="$(dirname "$0")/../k8s/charts/haac-stack/templates"
 
