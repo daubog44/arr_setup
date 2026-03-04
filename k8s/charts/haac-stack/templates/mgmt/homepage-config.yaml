@@ -67,6 +67,18 @@ data:
             icon: ansible.png
             href: "https://ansible.{{ .Values.global.domainName }}"
             description: Ansible Dashboard
+        - Grafana:
+            icon: grafana.png
+            href: "https://grafana.{{ .Values.global.domainName }}"
+            description: Observability Metrics
+        - Falco:
+            icon: falco.png
+            href: "https://falco.{{ .Values.global.domainName }}"
+            description: Security Events
+        - Litmus:
+            icon: kubernetes.png
+            href: "https://litmus.{{ .Values.global.domainName }}"
+            description: Chaos Engineering
   widgets.yaml: |
     - greeting:
         text: "Benvenuto nel Nucleo Autogenerativo"

@@ -1,0 +1,18 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: litmus-portal
+  namespace: chaos
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`litmus.{{ .Values.global.domainName }}`)
+      kind: Rule
+      middlewares:
+        - name: authelia
+          namespace: mgmt
+      services:
+        - name: litmus-portal-server
+          port: 9002
+  tls: {}
