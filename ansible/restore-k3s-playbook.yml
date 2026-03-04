@@ -1,0 +1,47 @@
+---
+- name: Restore K3s Database from NAS
+  hosts: k3s_master
+  gather_facts: false
+  vars:
+    # This can be overridden in Semaphore UI using "Extra Variables" JSON
+    BACKUP_FILE: "k3s-state-latest.db"
+    NAS_MOUNT_PATH: "/mnt/pve/HaaC-Storage/media/k3s"
+
+  tasks:
+    - name: Ensure target backup file is defined
+      ansible.builtin.assert:
+        that:
+          - BACKUP_FILE is defined
+        fail_msg: "BACKUP_FILE is not defined"
+
+    - name: Stop K3s service on Master
+      ansible.builtin.systemd:
+        name: k3s
+        state: stopped
+
+    - name: Rename current corrupted db
+      ansible.builtin.command: >
+        mv /var/lib/rancher/k3s/server/db/state.db /var/lib/rancher/k3s/server/db/state.db.corrupted-{{ ansible_date_time.epoch }}
+      ignore_errors: true
+
+    - name: Copy backup from NAS
+      ansible.builtin.copy:
+        src: "{{ NAS_MOUNT_PATH }}/{{ BACKUP_FILE }}"
+        dest: /var/lib/rancher/k3s/server/db/state.db
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Start K3s service on Master
+      ansible.builtin.systemd:
+        name: k3s
+        state: started
+
+    - name: Wait for Kubernetes API to be completely ready
+      ansible.builtin.command: k3s kubectl get nodes
+      register: k8s_nodes
+      until: k8s_nodes.rc == 0
+      retries: 10
+      delay: 5
+      changed_when: false

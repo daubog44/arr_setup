@@ -162,6 +162,27 @@ spec:
           volumeMounts:
             - name: qui-config
               mountPath: /app/config
+        - name: exporter
+          image: guillaumedsde/qbittorrent-exporter:v1.2.0
+          ports:
+            - containerPort: 8000
+              name: metrics
+          env:
+            - name: QBITTORRENT_BASE_URL
+              value: "http://127.0.0.1:8080" # Localhost since it's a sidecar
+            # Use default credentials if not changed, else we would need secrets.
+            # Assuming basic auth is off for local network in qbittorrent, or using default admin/adminadmin
+            - name: QBITTORRENT_USERNAME
+              value: "admin"
+            - name: QBITTORRENT_PASSWORD
+              value: "adminadmin"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
       volumes:
         - name: config
           persistentVolumeClaim:
@@ -205,6 +226,27 @@ spec:
     - port: 80
       targetPort: 7476
       name: qui-ui
+    - port: 8000
+      targetPort: 8000
+      name: metrics
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: qbittorrent
+  namespace: media
+  labels:
+    release: kube-prometheus-stack # Required to be picked up by the default Prometheus configuration
+spec:
+  selector:
+    matchLabels:
+      app: downloaders
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

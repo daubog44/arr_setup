@@ -121,6 +121,14 @@ spec:
               TPL_PVE_ID=$(echo "$TPL_PVE" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created Proxmox template ID: $TPL_PVE_ID"
 
+              # 7.5 Create task template: K3s Database Restore
+              # It will run a local bash script generated dynamically via an inline playbook since Semaphore runs ansible natively
+              TPL_RESTORE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/tasks" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"⚠️ Restore K3s Database (from NAS)\",\"project_id\":$PROJECT_ID,\"playbook\":\"HaaC/ansible/restore-k3s-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Ripristina il db SQLite dal NAS sul master nodo. USARE CON CAUTELA. Parametro BACKUP_FILE facoltativo (es. BACKUP_FILE=k3s-state-2023.db)\"}")
+              TPL_RESTORE_ID=$(echo "$TPL_RESTORE" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created Restore DB template ID: $TPL_RESTORE_ID"
+
               # 8. Create schedules (every Monday at 03:00 Rome = 02:00 UTC)
               curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/schedules" \
                 -H "Content-Type: application/json" \

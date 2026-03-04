@@ -52,7 +52,34 @@ spec:
               root_url: "https://grafana.${DOMAIN_NAME}"
           ingress:
             enabled: false # We will manage ingress manually if needed or via Traefik IngressRoute later
+          
+          # Provision Dashboard from Grafana.com
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+              - name: 'default'
+                orgId: 1
+                folder: ''
+                type: file
+                disableDeletion: false
+                editable: false
+                options:
+                  path: /var/lib/grafana/dashboards/default
+          dashboards:
+            default:
+              trivy-operator:
+                # https://grafana.com/grafana/dashboards/17813-trivy-operator-dashboard/
+                gnetId: 17813
+                revision: 1
+                datasource: Prometheus
+              qbittorrent:
+                # A standard qBittorrent dashboard matching the exporter we will set up
+                gnetId: 17897
+                revision: 1
+                datasource: Prometheus
             
+
         prometheus:
           prometheusSpec:
             ruleSelectorNilUsesHelmValues: false
