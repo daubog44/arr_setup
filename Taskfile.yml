@@ -157,9 +157,16 @@ tasks:
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
       KUBECTL: "/home/daubog44/.local/bin/kubectl"
+      MASTER_IP:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
+      PROXMOX_HOST:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
     cmds:
+      - echo "Opening SSH Tunnel to K3s Master for local deploy..."
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
       - echo "⚠️ Forzatura dell'applicazione dei template locali su Kubernetes..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n argocd
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
       - echo "✅ Deploy di test eseguito. Quando hai finito, fai commit e push affinché ArgoCD renda definitive le modifiche."
 
   verify-cluster:
