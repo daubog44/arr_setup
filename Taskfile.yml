@@ -222,6 +222,29 @@ tasks:
       - KUBECONFIG={{.K3S_KUBECONFIG}} ./scripts/setup-auth.sh
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
+  restore-k3s:
+    desc: "⏪ Ripristina il database SQLite K3s (state.db) da un backup presente sul NAS. Usage: go-task restore-k3s BACKUP_FILE=k3s-state-20231025.db"
+    deps: [check-env]
+    vars:
+      MASTER_TARGET_NODE: "{{.MASTER_TARGET_NODE}}"
+      BACKUP_FILE: '{{default "k3s-state-latest.db" .BACKUP_FILE}}'
+      NAS_MOUNT_PATH: '/mnt/pve/HaaC-Storage/media/k3s' # Using the Proxmox bind mount path
+    cmds:
+      - echo "⚠️ Iniziando il ripristino di K3s dal backup: {{.BACKUP_FILE}}"
+      - echo "1. Fermo il servizio K3s sul master..."
+      - ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} pct exec $(tofu -chdir={{.TOFU_DIR}} output -raw master_vmid) -- systemctl stop k3s
+      - echo "2. Sposto il database attuale e ripristino il backup..."
+      - |
+        ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} << 'EOF'
+        LXC_ID=$(pct list | grep "haacarr-master" | awk '{print $1}')
+        pct exec $LXC_ID -- mv /var/lib/rancher/k3s/server/db/state.db /var/lib/rancher/k3s/server/db/state.db.corrupted-$(date +%s)
+        cp {{.NAS_MOUNT_PATH}}/{{.BACKUP_FILE}} /var/lib/lxc/$LXC_ID/rootfs/var/lib/rancher/k3s/server/db/state.db
+        pct exec $LXC_ID -- chown root:root /var/lib/rancher/k3s/server/db/state.db
+        EOF
+      - echo "3. Riaccendo il servizio K3s..."
+      - ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} pct exec $(tofu -chdir={{.TOFU_DIR}} output -raw master_vmid) -- systemctl start k3s
+      - echo "✅ K3s ripristinato con successo! Controlla i pod con: kubectl get pods -A"
+
   down:
     desc: Distrugge l'infrastruttura (LXC e tutto il suo contenuto).
     dir: "{{.TOFU_DIR}}"
