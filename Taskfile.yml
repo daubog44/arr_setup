@@ -182,8 +182,12 @@ tasks:
     cmds:
       - echo "Opening SSH Tunnel to K3s Master for local deploy..."
       - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
+      - echo "⚙️ Pre-installazione CRD system-upgrade-controller (richiesto da haac-stack)..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f https://github.com/rancher/system-upgrade-controller/releases/latest/download/system-upgrade-controller.yaml || true
+      - echo "⏳ Attendo che il CRD upgrade.cattle.io/v1 sia disponibile..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} wait --for=condition=established crd/plans.upgrade.cattle.io --timeout=60s || true
       - echo "⚠️ Forzatura dell'applicazione dei template locali su Kubernetes..."
-      - KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n argocd
+      - KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n media --create-namespace
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
       - echo "✅ Deploy di test eseguito. Quando hai finito, fai commit e push affinché ArgoCD renda definitive le modifiche."
 
