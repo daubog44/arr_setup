@@ -4,14 +4,14 @@ metadata:
   name: kube-prometheus-stack
   namespace: argocd
   annotations:
-    # renovate: registryUrl=https://prometheus-community.github.io/helm-charts chart=kube-prometheus-stack
     renovate/helm-chart: "kube-prometheus-stack"
 spec:
   project: default
   source:
     repoURL: https://prometheus-community.github.io/helm-charts
     chart: kube-prometheus-stack
-    targetRevision: 58.2.2 # Latest as of now
+    # renovate: registryUrl=https://prometheus-community.github.io/helm-charts chart=kube-prometheus-stack
+    targetRevision: "58.2.2"
     helm:
       values: |
         # Disable default rules that are too noisy for homelabs or not applicable

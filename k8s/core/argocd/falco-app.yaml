@@ -4,14 +4,14 @@ metadata:
   name: falco
   namespace: argocd
   annotations:
-    # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
     renovate/helm-chart: "falco"
 spec:
   project: default
   source:
     repoURL: https://falcosecurity.github.io/charts
     chart: falco
-    targetRevision: 4.10.0 # Latest as of now
+    # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
+    targetRevision: "4.10.0"
     helm:
       values: |
         # Use eBPF driver which is safer and modern for newer kernels (Proxmox 8 / K3s)

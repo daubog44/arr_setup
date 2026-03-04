@@ -4,14 +4,14 @@ metadata:
   name: loki
   namespace: argocd
   annotations:
-    # renovate: registryUrl=https://grafana.github.io/helm-charts chart=loki
     renovate/helm-chart: "loki"
 spec:
   project: default
   source:
     repoURL: https://grafana.github.io/helm-charts
     chart: loki
-    targetRevision: 6.2.2 # Latest as of now
+    # renovate: registryUrl=https://grafana.github.io/helm-charts chart=loki
+    targetRevision: "6.2.2"
     helm:
       values: |
         loki:

@@ -4,14 +4,14 @@ metadata:
   name: trivy-operator
   namespace: argocd
   annotations:
-    # renovate: registryUrl=https://aquasecurity.github.io/helm-charts/ chart=trivy-operator
     renovate/helm-chart: "trivy-operator"
 spec:
   project: default
   source:
     repoURL: https://aquasecurity.github.io/helm-charts/
     chart: trivy-operator
-    targetRevision: 0.24.1 # Latest as of now
+    # renovate: registryUrl=https://aquasecurity.github.io/helm-charts/ chart=trivy-operator
+    targetRevision: "0.24.1"
     helm:
       values: |
         trivy:
@@ -25,7 +25,7 @@ spec:
         # Expose reports in the cluster
         operator:
           # Scan workloads in these namespaces (or all if empty)
-          targetNamespaces: "media,mgmt,kube-system,security,monitoring"
+          targetNamespaces: ""
           
   destination:
     server: https://kubernetes.default.svc
