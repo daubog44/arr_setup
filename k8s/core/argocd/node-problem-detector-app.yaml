@@ -1,0 +1,65 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: node-problem-detector
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.ntfy: ""
+    notifications.argoproj.io/subscribe.on-degraded.ntfy: ""
+spec:
+  project: default
+  source:
+    repoURL: https://charts.deliveryhero.io
+    chart: node-problem-detector
+    targetRevision: "2.3.13"
+    helm:
+      values: |
+        image:
+          tag: "v0.8.19"
+
+        # Run on all nodes including master
+        tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
+          - key: node-role.kubernetes.io/master
+            operator: Exists
+            effect: NoSchedule
+
+        # Monitor kernel OOM, filesystem corruption, systemd failures
+        settings:
+          log_monitors:
+            - /config/kernel-monitor.json
+            - /config/docker-monitor.json
+          custom_plugin_monitors: []
+
+        resources:
+          requests:
+            cpu: 20m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+        securityContext:
+          privileged: true
+
+        env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

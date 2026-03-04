@@ -1,0 +1,76 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kured
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.ntfy: ""
+    notifications.argoproj.io/subscribe.on-degraded.ntfy: ""
+spec:
+  project: default
+  source:
+    repoURL: https://kubereboot.github.io/charts
+    chart: kured
+    targetRevision: "5.5.1"
+    helm:
+      values: |
+        image:
+          tag: "1.16.0"
+
+        # Run on all nodes including master
+        tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
+          - key: node-role.kubernetes.io/master
+            operator: Exists
+            effect: NoSchedule
+
+        configuration:
+          # Check every hour for the reboot sentinel
+          period: 1h
+          rebootSentinelFile: /var/run/reboot-required
+          # Maintenance window: 01:00–05:00 Europe/Rome (= 00:00–04:00 UTC)
+          startTime: "01:00"
+          endTime: "05:00"
+          timeZone: Europe/Rome
+          # Reboot any day of the week (Kured will wait for the maintenance window)
+          rebootDays:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          drainGracePeriod: 120s
+          skipWaitForDeleteTimeoutSeconds: 60
+          # Notify via Ntfy before rebooting
+          notifyUrl: "generic+http://ntfy.mgmt.svc.cluster.local:80/haac_alerts?title=Kured+Reboot&tags=arrows_counterclockwise"
+
+        securityContext:
+          privileged: true
+
+        hostPID: true
+
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
