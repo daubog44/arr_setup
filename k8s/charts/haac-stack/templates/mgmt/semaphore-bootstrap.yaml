@@ -1,0 +1,138 @@
+---
+# Post-install bootstrap Job: configures Semaphore completely via API
+# Runs once after Semaphore is deployed and sets up:
+#   - SSH Key (from SealedSecret)
+#   - Git repository (arr_setup repo)
+#   - Inventory (from the repo)
+#   - Environment (sets ANSIBLE_HOST_KEY_CHECKING=False)
+#   - Task Template: Rolling OS Update K3s
+#   - Task Template: Rolling OS Update Proxmox
+#   - Schedules for both templates (every Monday 03:00)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: semaphore-bootstrap
+  namespace: mgmt
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrapper
+          image: curlimages/curl:8.6.0
+          env:
+            - name: SEMAPHORE_URL
+              value: "http://semaphore.mgmt.svc.cluster.local:3000"
+            - name: SEMAPHORE_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: ADMIN_PASSWORD
+            - name: REPO_URL
+              value: "https://github.com/daubog44/arr_setup.git"
+          volumeMounts:
+            - name: ssh-key
+              mountPath: /etc/ansible-ssh
+              readOnly: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BASE="$SEMAPHORE_URL"
+              PASS="$SEMAPHORE_ADMIN_PASSWORD"
+
+              # Wait for Semaphore to be ready
+              echo "Waiting for Semaphore to be ready..."
+              until curl -sf "$BASE/api/ping" > /dev/null 2>&1; do
+                echo "  Not ready yet, sleeping 5s..."
+                sleep 5
+              done
+              echo "Semaphore is ready!"
+
+              # Authenticate and get cookie
+              AUTH=$(curl -sf -c /tmp/cookies.txt -X POST "$BASE/api/auth/login" \
+                -H "Content-Type: application/json" \
+                -d "{\"auth\":\"admin\",\"password\":\"$PASS\"}")
+              echo "Authenticated: $AUTH"
+
+              HDR='-H "Content-Type: application/json"'
+
+              # Check if project already exists to make this idempotent
+              EXISTING=$(curl -sf -b /tmp/cookies.txt "$BASE/api/projects")
+              if echo "$EXISTING" | grep -q "HaaC Maintenance"; then
+                echo "Project already exists, skipping bootstrap."
+                exit 0
+              fi
+
+              # 1. Create project
+              PROJECT=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/projects" \
+                -H "Content-Type: application/json" \
+                -d '{"name":"HaaC Maintenance","alert":true,"alert_chat":"","max_parallel_tasks":1}')
+              PROJECT_ID=$(echo "$PROJECT" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created project ID: $PROJECT_ID"
+
+              # 2. Create SSH Key from mounted secret
+              SSH_KEY_CONTENT=$(cat /etc/ansible-ssh/id_ed25519 | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+              KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"HaaC SSH Key\",\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$(cat /etc/ansible-ssh/id_ed25519 | base64 | tr -d '\n')\"}}")
+              KEY_ID=$(echo "$KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created SSH key ID: $KEY_ID"
+
+              # 3. Create Git repository
+              REPO=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/repositories" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"main\",\"ssh_key_id\":$KEY_ID}")
+              REPO_ID=$(echo "$REPO" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created repository ID: $REPO_ID"
+
+              # 4. Create inventory
+              INV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/inventory" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"HaaC/ansible/inventory.yml\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}")
+              INV_ID=$(echo "$INV" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created inventory ID: $INV_ID"
+
+              # 5. Create environment (suppress host key checking)
+              ENV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/environment" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"False\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}")
+              ENV_ID=$(echo "$ENV" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created environment ID: $ENV_ID"
+
+              # 6. Create task template: K3s Nodes Update
+              TPL_K3S=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/tasks" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"Rolling OS Update - K3s Nodes\",\"project_id\":$PROJECT_ID,\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna i nodi K3s (serial: 1) ogni lunedi notte\"}")
+              TPL_K3S_ID=$(echo "$TPL_K3S" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created K3s template ID: $TPL_K3S_ID"
+
+              # 7. Create task template: Proxmox Hosts Update
+              TPL_PVE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/tasks" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"Rolling OS Update - Proxmox Hosts\",\"project_id\":$PROJECT_ID,\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna gli host Proxmox (serial: 1) ogni lunedi notte\"}")
+              TPL_PVE_ID=$(echo "$TPL_PVE" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              echo "Created Proxmox template ID: $TPL_PVE_ID"
+
+              # 8. Create schedules (every Monday at 03:00 Rome = 02:00 UTC)
+              curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/schedules" \
+                -H "Content-Type: application/json" \
+                -d "{\"project_id\":$PROJECT_ID,\"template_id\":$TPL_K3S_ID,\"cron_format\":\"0 2 * * 1\",\"enabled\":true}" > /dev/null
+              echo "Created K3s schedule"
+
+              curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/schedules" \
+                -H "Content-Type: application/json" \
+                -d "{\"project_id\":$PROJECT_ID,\"template_id\":$TPL_PVE_ID,\"cron_format\":\"30 2 * * 1\",\"enabled\":true}" > /dev/null
+              echo "Created Proxmox schedule (30min after K3s)"
+
+              echo "✅ Semaphore bootstrap complete!"
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: haac-ssh-key
