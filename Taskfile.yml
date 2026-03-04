@@ -116,7 +116,7 @@ tasks:
       - sed -i "s/https:\/\/.*:6443/https:\/\/127.0.0.1:6443/g" {{.K3S_KUBECONFIG}}
       - echo "Applicazione Namespace e Core..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f k8s/namespaces.yaml
-      - echo "Installazione Sealed Secrets Controller ufficiale v0.36.0..."
+      - echo "Installazione Sealed Secrets Controller ufficiale..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.36.0/controller.yaml
       - echo "Attendo l'avvio di Sealed Secrets..."
       - sleep 10
