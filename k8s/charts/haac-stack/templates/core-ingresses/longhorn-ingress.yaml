@@ -10,7 +10,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`longhorn.${DOMAIN_NAME}`)
+      match: Host(`longhorn.{{ .Values.global.domainName }}`)
       services:
         - name: longhorn-frontend
           port: 80

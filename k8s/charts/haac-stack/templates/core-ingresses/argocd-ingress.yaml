@@ -3,7 +3,8 @@
 # ArgoCD è in modalità insecure (server.insecure: true), quindi serve HTTP.
 # Usa h2c (HTTP/2 cleartext) per supportare sia la Web UI che le chiamate gRPC-web.
 # Cloudflare → Traefik (HTTP:80) → ArgoCD (h2c:80)
-# URL: https://argocd.${DOMAIN_NAME}
+# URL: https://argocd.{{ .Values.global.domainName }}
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -15,7 +16,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`argocd.${DOMAIN_NAME}`)
+      match: Host(`argocd.{{ .Values.global.domainName }}`)
       services:
         - name: argocd-server
           port: 80
