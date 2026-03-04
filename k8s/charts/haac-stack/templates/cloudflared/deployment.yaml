@@ -30,8 +30,6 @@ spec:
             - --token
             - $(TUNNEL_TOKEN)
           env:
-            - name: TUNNEL_LOGLEVEL
-              value: "debug"
             - name: TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
