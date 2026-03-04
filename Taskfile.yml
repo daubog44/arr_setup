@@ -153,7 +153,7 @@ tasks:
       - >
         echo 'echo "Esecuzione pre-commit hook: Generazione Sealed Secrets..."' >> .git/hooks/pre-commit
       - >
-        echo './scripts/generate-sealed-secrets.sh' >> .git/hooks/pre-commit
+        echo 'if KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl get ns kube-system >/dev/null 2>&1; then ./scripts/generate-sealed-secrets.sh; else echo "⚠️ K3s non raggiungibile dal pre-commit hook. Salto la rigenerazione secrets per evitare di corromperli."; exit 0; fi' >> .git/hooks/pre-commit
       - >
         echo 'git add k8s/charts/haac-stack/templates/secrets/ k8s/charts/haac-stack/values.yaml' >> .git/hooks/pre-commit
       - chmod +x .git/hooks/pre-commit
