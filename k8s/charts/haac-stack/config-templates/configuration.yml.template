@@ -15,7 +15,7 @@ identity_validation:
 access_control:
   default_policy: deny
   rules:
-      - domain: "*.${DOMAIN_NAME}"
+    - domain: "*.${DOMAIN_NAME}"
       policy: one_factor
 session:
   name: authelia_session
