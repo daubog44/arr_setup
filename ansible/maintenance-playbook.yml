@@ -39,6 +39,22 @@
       ansible.builtin.wait_for_connection:
         timeout: 60
 
+    - name: Disable Proxmox Enterprise repo (idempotent)
+      ansible.builtin.replace:
+        path: /etc/apt/sources.list.d/pve-enterprise.list
+        regexp: '^(deb .*enterprise.*)'
+        replace: '# \1'
+      ignore_errors: true
+
+    - name: Ensure Proxmox No-Subscription repo is present (idempotent)
+      ansible.builtin.blockinfile:
+        path: /etc/apt/sources.list
+        marker: "# {mark} ANSIBLE MANAGED: Proxmox no-subscription repo"
+        block: |
+          deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription
+        create: true
+        mode: '0644'
+
     - name: Update apt cache and upgrade all packages
       ansible.builtin.apt:
         update_cache: yes

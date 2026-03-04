@@ -6,6 +6,34 @@
       ansible.builtin.wait_for_connection:
         timeout: 60
 
+    - name: Disable Proxmox Enterprise repository (requires paid subscription)
+      ansible.builtin.replace:
+        path: /etc/apt/sources.list.d/pve-enterprise.list
+        regexp: '^(deb .*enterprise.*)'
+        replace: '# \1'
+      ignore_errors: true  # file may not exist on fresh installs
+
+    - name: Disable Ceph Enterprise repository if present
+      ansible.builtin.replace:
+        path: /etc/apt/sources.list.d/ceph.list
+        regexp: '^(deb .*enterprise.*)'
+        replace: '# \1'
+      ignore_errors: true
+
+    - name: Enable Proxmox No-Subscription repository
+      ansible.builtin.blockinfile:
+        path: /etc/apt/sources.list
+        marker: "# {mark} ANSIBLE MANAGED: Proxmox no-subscription repo"
+        block: |
+          deb http://download.proxmox.com/debian/pve {{ ansible_facts['distribution_release'] | default('bookworm') }} pve-no-subscription
+        create: true
+        mode: '0644'
+
+    - name: Update apt cache after repo changes
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+
     - name: Install CIFS utilities
       ansible.builtin.apt:
         name: cifs-utils
