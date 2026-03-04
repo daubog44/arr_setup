@@ -49,6 +49,8 @@ spec:
               value: "/var/cache/ntfy/attachments"
             - name: NTFY_ENABLE_LOGIN
               value: "true"
+            - name: NTFY_LOG_LEVEL
+              value: "DEBUG"
           ports:
             - containerPort: 80
           volumeMounts:
