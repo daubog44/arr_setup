@@ -78,7 +78,7 @@ metadata:
   namespace: mgmt
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-    traefik.ingress.kubernetes.io/router.middlewares: mgmt-force-https@kubernetescrd,mgmt-authelia@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: mgmt-force-https@kubernetescrd
 spec:
   entryPoints:
     - web
