@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: litmus
+  namespace: argocd
+  annotations:
+    # renovate: registryUrl=https://litmuschaos.github.io/litmus-helm/ chart=litmus
+    renovate/helm-chart: "litmus"
+spec:
+  project: default
+  source:
+    repoURL: https://litmuschaos.github.io/litmus-helm/
+    chart: litmus
+    targetRevision: 3.8.0 # Latest as of now
+    helm:
+      values: |
+        portal:
+          server:
+            # We don't expose Litmus to the internet. We can port-forward or add IngressRoute later.
+            service:
+              type: ClusterIP
+        
+        # Deploy the chaos center and agent together for homelab simplicity
+        adminMode: true
+        
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: chaos
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

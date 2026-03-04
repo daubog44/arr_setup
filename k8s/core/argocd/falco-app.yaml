@@ -1,0 +1,58 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falco
+  namespace: argocd
+  annotations:
+    # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
+    renovate/helm-chart: "falco"
+spec:
+  project: default
+  source:
+    repoURL: https://falcosecurity.github.io/charts
+    chart: falco
+    targetRevision: 4.10.0 # Latest as of now
+    helm:
+      values: |
+        # Use eBPF driver which is safer and modern for newer kernels (Proxmox 8 / K3s)
+        # However, eBPF requires kernel headers. Falco's modern ebpf probe builder handles this well.
+        driver:
+          kind: modern_ebpf
+
+        # Collect metrics for kube-prometheus-stack
+        metrics:
+          enabled: true
+
+        # Falco rules configuration
+        customRules:
+          my_rules.yaml: |-
+            - rule: Detect bash in container
+              desc: A shell was spawned by a container (might be normal, but good to know)
+              condition: container.id != host and spawned_process and proc.name in (bash, sh, zsh)
+              output: "Shell %proc.name spawned in container (user=%user.name container_id=%container.id container_name=%container.name)"
+              priority: WARNING
+              tags: [container, shell]
+
+        # Use Falcosidekick to route alerts and provide a WebUI
+        falcosidekick:
+          enabled: true
+          webui:
+            enabled: true
+            # We don't expose it to the internet by default, accessible via port-forward or internal network
+            # To expose, we would add an IngressRoute in extraManifests
+          config:
+            # Route Falco alerts directly to Ntfy
+            ntfy:
+              url: "https://ntfy.${DOMAIN_NAME}/haac-alerts"
+              checkcert: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: security
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

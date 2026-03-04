@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: trivy-operator
+  namespace: argocd
+  annotations:
+    # renovate: registryUrl=https://aquasecurity.github.io/helm-charts/ chart=trivy-operator
+    renovate/helm-chart: "trivy-operator"
+spec:
+  project: default
+  source:
+    repoURL: https://aquasecurity.github.io/helm-charts/
+    chart: trivy-operator
+    targetRevision: 0.24.1 # Latest as of now
+    helm:
+      values: |
+        trivy:
+          # Automatically scan new workloads and configmaps
+          ignoreUnfixed: true # In a homelab, only care about actionable/fixed CVEs
+          
+        # Enable Prometheus metrics for Vulnerability counts
+        serviceMonitor:
+          enabled: true
+          
+        # Expose reports in the cluster
+        operator:
+          # Scan workloads in these namespaces (or all if empty)
+          targetNamespaces: "media,mgmt,kube-system,security,monitoring"
+          
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: security
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
