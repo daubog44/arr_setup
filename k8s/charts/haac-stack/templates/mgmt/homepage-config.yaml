@@ -63,6 +63,10 @@ data:
             icon: authelia.png
             href: "https://auth.{{ .Values.global.domainName }}"
             description: Identity Provider
+        - Semaphore:
+            icon: ansible.png
+            href: "https://ansible.{{ .Values.global.domainName }}"
+            description: Ansible Dashboard
   widgets.yaml: |
     - greeting:
         text: "Benvenuto nel Nucleo Autogenerativo"
