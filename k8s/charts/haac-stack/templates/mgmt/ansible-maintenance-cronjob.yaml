@@ -6,24 +6,51 @@ metadata:
   namespace: mgmt
 data:
   maintenance-playbook.yml: |
-    - name: Rolling OS Update
-      hosts: all
-      serial: 1  # Esegue un nodo alla volta
+    - name: Rolling OS Update (K3s Nodes)
+      hosts: k3s_master,k3s_workers
+      serial: 1
+      gather_facts: false
       tasks:
-        - name: Update apt cache
+        - name: Wait for node to be reachable
+          ansible.builtin.wait_for_connection:
+            timeout: 60
+        - name: Update apt cache and upgrade all packages
           ansible.builtin.apt:
             update_cache: yes
-        - name: Upgrade all packages
-          ansible.builtin.apt:
             upgrade: dist
+            dpkg_options: 'force-confold,force-confdef'
+          environment:
+            DEBIAN_FRONTEND: noninteractive
         - name: Check if reboot is required
           ansible.builtin.stat:
             path: /var/run/reboot-required
           register: reboot_required
-        - name: Notify if reboot is needed
+        - name: Log reboot status
           ansible.builtin.debug:
-            msg: "Node {{ inventory_hostname }} requires a reboot. Kured will handle it tonight."
-          when: reboot_required.stat.exists
+            msg: "Node {{ inventory_hostname }} {{ 'NEEDS REBOOT (Kured will handle it tonight)' if reboot_required.stat.exists else 'is up to date' }}"
+
+    - name: Rolling OS Update (Proxmox Hosts)
+      hosts: proxmox_host
+      serial: 1
+      gather_facts: false
+      tasks:
+        - name: Wait for host to be reachable
+          ansible.builtin.wait_for_connection:
+            timeout: 60
+        - name: Update apt cache and upgrade all packages
+          ansible.builtin.apt:
+            update_cache: yes
+            upgrade: dist
+            dpkg_options: 'force-confold,force-confdef'
+          environment:
+            DEBIAN_FRONTEND: noninteractive
+        - name: Check if reboot is required
+          ansible.builtin.stat:
+            path: /var/run/reboot-required
+          register: reboot_required
+        - name: Log Proxmox host reboot status
+          ansible.builtin.debug:
+            msg: "Proxmox host {{ inventory_hostname }} {{ 'needs a manual reboot when convenient' if reboot_required.stat.exists else 'is up to date' }}"
 
 ---
 apiVersion: batch/v1
@@ -34,8 +61,11 @@ metadata:
 spec:
   schedule: "0 3 * * 1" # Ogni lunedì alle 03:00
   concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 1800  # Timeout 30 minuti
       template:
         spec:
           containers:
@@ -45,15 +75,19 @@ spec:
             - /bin/sh
             - -c
             - |
-              apk add --no-cache ansible openssh-client
+              apk add --no-cache ansible openssh-client sshpass
               mkdir -p ~/.ssh
               cp /etc/ansible-ssh/id_ed25519 ~/.ssh/id_ed25519
               chmod 600 ~/.ssh/id_ed25519
-              # Disabilita check host key per automazione interna
               echo "StrictHostKeyChecking no" > ~/.ssh/config
-              
-              ansible-playbook -i /etc/ansible-config/inventory.yml /etc/ansible-playbook/maintenance-playbook.yml
-            volumeMounts:
+              echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
+
+              echo "[defaults]" > /tmp/ansible.cfg
+              echo "host_key_checking = False" >> /tmp/ansible.cfg
+              export ANSIBLE_CONFIG=/tmp/ansible.cfg
+
+              ansible-playbook -i /etc/ansible-config/inventory.yml /etc/ansible-playbook/maintenance-playbook.yml -v
+            volumMounts:
             - name: playbook
               mountPath: /etc/ansible-playbook
             - name: inventory
@@ -68,7 +102,7 @@ spec:
               name: ansible-maintenance-playbook
           - name: inventory
             configMap:
-              name: ansible-inventory-cm # Dovremo creare questo ConfigMap dinamico o usare quello generato
+              name: ansible-inventory-cm
           - name: ssh-key
             secret:
-              secretName: haac-ssh-key # Il Secret con la tua chiave privata
+              secretName: haac-ssh-key

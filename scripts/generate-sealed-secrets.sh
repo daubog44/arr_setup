@@ -92,6 +92,17 @@ $KUBECTL create secret generic argocd-notifications-secret -n argocd \
 
 echo "✅ Sealed Secrets generati con successo in $CHART_DIR/secrets"
 
-echo "6. Idratazione del file values.yaml centrale..."
+SSH_KEY="$(dirname "$0")/../.ssh/haac_ed25519"
+if [ -f "$SSH_KEY" ]; then
+  echo "6. Creazione SealedSecret per chiave SSH Ansible CronJob..."
+  $KUBECTL create secret generic haac-ssh-key -n mgmt \
+    --from-file=id_ed25519="$SSH_KEY" \
+    --dry-run=client -o yaml | \
+    $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/haac-ssh-sealed-secret.yaml"
+else
+  echo "⚠️  Chiave SSH $SSH_KEY non trovata, salto la generazione del SealedSecret SSH."
+fi
+
+echo "7. Idratazione del file values.yaml centrale..."
 envsubst < "$(dirname "$0")/../k8s/charts/haac-stack/config-templates/values.yaml.template" > "$(dirname "$0")/../k8s/charts/haac-stack/values.yaml"
 echo "✅ values.yaml idratato con successo."
