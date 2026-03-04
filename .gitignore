@@ -31,3 +31,4 @@ test.txt
 *.log
 pub-sealed-secrets.pem
 k8s/charts/haac-stack/charts/*.tgz
+ansible/inventory.yml
