@@ -24,7 +24,7 @@ tasks:
 
 
   up:
-    desc: Eroga l'intera infrastruttura (LXC + Ansible).
+    desc: "🚀 Eroga l'intera infrastruttura da zero: Crea i container LXC, configura il SO, installa K3s e avvia il CD GitOps."
     dir: "{{.TOFU_DIR}}"
     deps: [check-env]
     env:
@@ -58,21 +58,20 @@ tasks:
       QUI_USERNAME: "{{.QUI_USERNAME}}"
       QUI_PASSWORD: "{{.QUI_PASSWORD}}"
 
-
     cmds:
       - task: setup-hooks
+      - echo "🏗️ Avvio provisioning layer fisico (OpenTofu)..."
       - tofu init
       - tofu apply -auto-approve
+      - echo "⚙️ Avvio configurazione OS e K3s (Ansible)..."
       - task: ansible
-      - task: deploy
-      - task: generate-secrets
-      - task: deploy-test
-      - echo "Infrastructure and applications fully deployed."
-      - task: verify
-      - task: verify-web
+      - echo "🚢 Inizializzazione flotta GitOps Kubernetes..."
+      - task: gitops-bootstrap
+      - echo "✅ Infrastruttura e applicazioni completamente deployate."
+      - task: verify-all
 
   ansible:
-    desc: Run the Ansible playbook independently with local vars.
+    desc: "⚙️ Esegue *solo* il playbook Ansible per configurare i nodi LXC (utile in caso di fix veloci all'OS)."
     dir: ansible
     deps: [check-env]
     env:
@@ -83,8 +82,21 @@ tasks:
     cmds:
       - ansible-playbook {{.DEBUG_LEVEL}} -i inventory.yml playbook.yml
 
+  gitops-bootstrap:
+    desc: "📦 Pipeline che raggruppa il deploy base (ArgoCD + Namespace), la generazione dei secret ed il primo deploy di test."
+    cmds:
+      - task: deploy
+      - task: generate-secrets
+      - task: deploy-test
+
+  verify-all:
+    desc: "🔎 Pipeline di verifica totale: controlla salute del cluster Kubernetes e raggiungibilità dei servizi sul Web."
+    cmds:
+      - task: verify
+      - task: verify-web
+
   deploy:
-    desc: Applica i manifesti Kubernetes direttamente da locale (senza GitOps/ArgoCD).
+    desc: "🧱 Installa le fondamenta nel cluster: Namespace, ArgoCD e Sealed Secrets Controller."
     deps: [check-env]
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
@@ -118,7 +130,7 @@ tasks:
       - echo "Deploy base completato. Controlla l'interfaccia di ArgoCD per lo stato del cluster."
 
   generate-secrets:
-    desc: Legge il .env locale, inietta i valori nei template e genera i SealedSecrets per Kubernetes.
+    desc: "🔐 Estrae valori dal .env locale, idrata i template e cripta i SealedSecrets in locale (Non tocca il cluster)."
     deps: [check-env]
     cmds:
       - echo "🔐 Generazione dei Sealed Secrets per il setup GitOps..."
@@ -126,7 +138,7 @@ tasks:
       - echo "✅ Fatto! Ricordati di fare commit e push dei file generati in k8s/charts/haac-stack/templates/secrets/"
 
   setup-hooks:
-    desc: Imposta i git hooks per automatizzare la generazione dei segreti prima del commit.
+    desc: "🪝 Inietta un hook in Git: automatizza 'generate-secrets' ad ogni commit per non perdere mai password aggiornate."
     cmds:
       - >
         echo '#!/usr/bin/env bash' > .git/hooks/pre-commit
@@ -140,7 +152,7 @@ tasks:
       - echo "Git pre-commit hook configurato con successo."
 
   deploy-test:
-    desc: Applica le modifiche locali di haac-stack al cluster K3s bypassando Git (solo per test).
+    desc: "⚡ Applica le modifiche locali di haac-stack al cluster K3s bypassando Git (ideale per Fast Feedback testing)."
     deps: [generate-secrets]
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
@@ -151,7 +163,7 @@ tasks:
       - echo "✅ Deploy di test eseguito. Quando hai finito, fai commit e push affinché ArgoCD renda definitive le modifiche."
 
   verify:
-    desc: Esegue lo script di verifica del cluster.
+    desc: "🛠️ Riesegue i ping al cluster master/worker e controlla il networking dei nodi K3s interni."
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
       KUBECTL: "/home/daubog44/.local/bin/kubectl"
@@ -166,7 +178,7 @@ tasks:
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
   verify-web:
-    desc: Verifica che i servizi siano raggiungibili via Cloudflare Tunnel.
+    desc: "🌐 Controlla dinamicamente lo status HTTP di ogni applicazione esposta via Cloudflare Tunnel."
     cmds:
       - DOMAIN_NAME="{{.DOMAIN_NAME}}" ./scripts/verify-web.sh
 
