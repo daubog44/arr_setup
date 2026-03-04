@@ -64,13 +64,13 @@ tasks:
       - tofu init
       - tofu apply -auto-approve
       - echo "⚙️ Avvio configurazione OS e K3s (Ansible)..."
-      - task: ansible
+      - task: configure-os
       - echo "🚢 Inizializzazione flotta GitOps Kubernetes..."
       - task: gitops-bootstrap
       - echo "✅ Infrastruttura e applicazioni completamente deployate."
       - task: verify-all
 
-  ansible:
+  configure-os:
     desc: "⚙️ Esegue *solo* il playbook Ansible per configurare i nodi LXC (utile in caso di fix veloci all'OS)."
     dir: ansible
     deps: [check-env]
@@ -85,17 +85,17 @@ tasks:
   gitops-bootstrap:
     desc: "📦 Pipeline che raggruppa il deploy base (ArgoCD + Namespace), la generazione dei secret ed il primo deploy di test."
     cmds:
-      - task: deploy
+      - task: deploy-argocd
       - task: generate-secrets
-      - task: deploy-test
+      - task: deploy-local
 
   verify-all:
     desc: "🔎 Pipeline di verifica totale: controlla salute del cluster Kubernetes e raggiungibilità dei servizi sul Web."
     cmds:
-      - task: verify
-      - task: verify-web
+      - task: verify-cluster
+      - task: verify-endpoints
 
-  deploy:
+  deploy-argocd:
     desc: "🧱 Installa le fondamenta nel cluster: Namespace, ArgoCD e Sealed Secrets Controller."
     deps: [check-env]
     vars:
@@ -151,7 +151,7 @@ tasks:
       - chmod +x .git/hooks/pre-commit
       - echo "Git pre-commit hook configurato con successo."
 
-  deploy-test:
+  deploy-local:
     desc: "⚡ Applica le modifiche locali di haac-stack al cluster K3s bypassando Git (ideale per Fast Feedback testing)."
     deps: [generate-secrets]
     vars:
@@ -162,7 +162,7 @@ tasks:
       - KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n argocd
       - echo "✅ Deploy di test eseguito. Quando hai finito, fai commit e push affinché ArgoCD renda definitive le modifiche."
 
-  verify:
+  verify-cluster:
     desc: "🛠️ Riesegue i ping al cluster master/worker e controlla il networking dei nodi K3s interni."
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
@@ -177,7 +177,7 @@ tasks:
       - KUBECONFIG={{.K3S_KUBECONFIG}} ./scripts/verify_cluster.sh
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
-  verify-web:
+  verify-endpoints:
     desc: "🌐 Controlla dinamicamente lo status HTTP di ogni applicazione esposta via Cloudflare Tunnel."
     cmds:
       - DOMAIN_NAME="{{.DOMAIN_NAME}}" ./scripts/verify-web.sh
