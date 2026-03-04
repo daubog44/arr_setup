@@ -89,6 +89,7 @@ tasks:
       - task: generate-secrets
       - task: deploy-local
       - task: sync-cloudflare
+      - task: configure-apps
 
   verify-all:
     desc: "🔎 Pipeline di verifica totale: controlla salute del cluster Kubernetes e raggiungibilità dei servizi sul Web."
@@ -203,6 +204,21 @@ tasks:
     deps: [check-env]
     cmds:
       - ./scripts/sync-cloudflare-tunnel.sh
+
+  configure-apps:
+    desc: "⚙️ Configura le password e le API iniziali (ArgoCD, Headlamp, QUI) post-deploy."
+    deps: [check-env]
+    vars:
+      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
+      MASTER_IP:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
+      PROXMOX_HOST:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
+    cmds:
+      - echo "Opening SSH Tunnel for app configuration..."
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
+      - KUBECONFIG={{.K3S_KUBECONFIG}} ./scripts/setup-auth.sh
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
   down:
     desc: Distrugge l'infrastruttura (LXC e tutto il suo contenuto).
