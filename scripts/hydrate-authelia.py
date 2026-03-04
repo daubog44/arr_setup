@@ -32,6 +32,9 @@ if not key_content and os.path.exists("/tmp/oidc_key.pem"):
     with open("/tmp/oidc_key.pem") as f:
         key_content = f.read().strip()
 
+# Get DOMAIN_NAME from environment with a default
+domain_name = os.environ.get("DOMAIN_NAME", "nucleoautogenerativo.it")
+
 
 def hydrate(template_path, output_path):
     with open(template_path) as f:
