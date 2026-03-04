@@ -750,24 +750,102 @@
       ansible.builtin.command: k3s kubectl get nodes
       register: k8s_nodes
       until: k8s_nodes.rc == 0
-      retries: 5
+      retries: 10
       delay: 10
       changed_when: false
 
-    - name: Create argocd namespace
-      ansible.builtin.command: k3s kubectl create namespace argocd
-      register: create_ns
-      failed_when: create_ns.rc != 0 and 'AlreadyExists' not in create_ns.stderr
-      changed_when: create_ns.rc == 0
+    # --- Namespaces ---
+    - name: Create required namespaces (idempotent)
+      ansible.builtin.command: >
+        k3s kubectl create namespace {{ item }}
+      register: ns_result
+      failed_when: ns_result.rc != 0 and 'AlreadyExists' not in ns_result.stderr
+      changed_when: ns_result.rc == 0
+      loop:
+        - argocd
+        - media
+        - mgmt
+        - longhorn-system
+        - cloudflared
 
+    # --- Sealed Secrets Controller ---
+    - name: Install Sealed Secrets Controller
+      ansible.builtin.command: >
+        k3s kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.36.0/controller.yaml
+      register: sealed_secrets_result
+      changed_when: "'created' in sealed_secrets_result.stdout or 'configured' in sealed_secrets_result.stdout"
+
+    - name: Wait for Sealed Secrets controller to be ready
+      ansible.builtin.command: >
+        k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=60s
+      register: ss_ready
+      retries: 6
+      delay: 10
+      until: ss_ready.rc == 0
+      changed_when: false
+      ignore_errors: true
+
+    # --- ArgoCD ---
     - name: Install ArgoCD
-      ansible.builtin.command: k3s kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+      ansible.builtin.command: >
+        k3s kubectl apply -n argocd --server-side --force-conflicts
+        -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.2/manifests/install.yaml
       register: install_argo
       changed_when: "'created' in install_argo.stdout or 'configured' in install_argo.stdout"
 
-    - name: Create GitOps directories on host for manual local apply
+    - name: Wait for ArgoCD server to be ready
+      ansible.builtin.command: >
+        k3s kubectl rollout status deploy/argocd-server -n argocd --timeout=120s
+      register: argo_ready
+      retries: 10
+      delay: 15
+      until: argo_ready.rc == 0
+      changed_when: false
+
+    - name: Patch ArgoCD to disable TLS (Traefik handles TLS termination)
+      ansible.builtin.command: >
+        k3s kubectl patch configmap argocd-cmd-params-cm -n argocd
+        --type merge -p '{"data":{"server.insecure":"true"}}'
+      changed_when: false
+
+    # --- ArgoCD Root App ---
+    - name: Upload ArgoCD root app manifest
+      ansible.builtin.copy:
+        dest: /tmp/argocd-apps.yaml
+        content: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: haac-root
+            namespace: argocd
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: default
+            source:
+              repoURL: https://github.com/daubog44/arr_setup.git
+              targetRevision: HEAD
+              path: HaaC/k8s/core/argocd
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: argocd
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - ServerSideApply=true
+        mode: '0644'
+
+    - name: Apply ArgoCD root app (ArgoCD will then sync everything else)
+      ansible.builtin.command: k3s kubectl apply -f /tmp/argocd-apps.yaml
+      register: root_app
+      changed_when: "'created' in root_app.stdout or 'configured' in root_app.stdout"
+
+    - name: Create GitOps working directory
       ansible.builtin.file:
-        path: "/opt/k8s"
+        path: /opt/k8s
         state: directory
         mode: '0755'
 
