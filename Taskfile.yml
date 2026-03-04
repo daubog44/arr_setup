@@ -26,7 +26,9 @@ tasks:
   sync:
     desc: "🔄 Sincronizza il repository locale con GitHub (per caricare gli auto-merge di Renovate)."
     cmds:
+      - git stash --include-untracked || true
       - git pull --rebase
+      - git stash pop || true
       - echo "✅ Repository locale aggiornato."
 
   up:
