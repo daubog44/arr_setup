@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: gluetun
-          image: qmcgaw/gluetun:latest
+          image: qmcgaw/gluetun:v3.39.0
           env:
             - name: VPN_SERVICE_PROVIDER
               value: protonvpn
@@ -58,7 +58,7 @@ spec:
               mountPath: /tmp/gluetun
 
         - name: port-sync
-          image: curlimages/curl:latest
+          image: curlimages/curl:8.6.0
           env:
             - name: QBIT_USER
               value: "{{ .Values.qui.username }}"
@@ -91,7 +91,7 @@ spec:
               readOnly: true
 
         - name: qbittorrent
-          image: lscr.io/linuxserver/qbittorrent:latest
+          image: lscr.io/linuxserver/qbittorrent:4.6.3
           env:
             - name: PUID
               value: "{{ .Values.storage.uid }}"
@@ -115,7 +115,7 @@ spec:
             - name: media
               mountPath: /data
         - name: qui
-          image: ghcr.io/autobrr/qui:latest
+          image: ghcr.io/autobrr/qui:v1.14.2
           env:
             - name: QUI_OIDC_ENABLED
               value: "true"

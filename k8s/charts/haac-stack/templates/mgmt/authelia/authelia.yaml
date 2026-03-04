@@ -33,14 +33,14 @@ spec:
         fsGroup: 1000
       initContainers:
         - name: init-permissions
-          image: busybox:latest
+          image: busybox:1.36.1
           command: ["sh", "-c", "chown -R 1000:1000 /config"]
           volumeMounts:
             - name: data
               mountPath: /config
       containers:
         - name: authelia
-          image: authelia/authelia:latest
+          image: authelia/authelia:v4.38.15
           args: ["--config", "/config/config-files/configuration.yml"]
           securityContext:
             runAsUser: 1000

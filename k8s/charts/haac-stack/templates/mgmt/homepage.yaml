@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: homepage
-          image: ghcr.io/gethomepage/homepage:latest
+          image: ghcr.io/gethomepage/homepage:v0.8.9
           ports:
             - containerPort: 3000
               name: http

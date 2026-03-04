@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: flaresolverr
-          image: ghcr.io/flaresolverr/flaresolverr:latest
+          image: ghcr.io/flaresolverr/flaresolverr:v3.3.16
           ports:
             - containerPort: 8191
               name: http
@@ -47,7 +47,7 @@ spec:
         spec:
           initContainers:
             - name: recyclarr-init
-              image: ghcr.io/recyclarr/recyclarr:latest
+              image: ghcr.io/recyclarr/recyclarr:v7.3.2
               args: ["init"]
               # Runs `recyclarr init` only if config doesn't exist yet.
               # The command exits 0 even if already initialized, so it's idempotent.
@@ -56,7 +56,7 @@ spec:
                   mountPath: /config
           containers:
             - name: recyclarr
-              image: ghcr.io/recyclarr/recyclarr:latest
+              image: ghcr.io/recyclarr/recyclarr:v7.3.2
               args: ["sync"]
               volumeMounts:
                 - name: config

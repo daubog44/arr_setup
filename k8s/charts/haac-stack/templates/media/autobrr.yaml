@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: autobrr
-          image: ghcr.io/autobrr/autobrr:latest
+          image: ghcr.io/autobrr/autobrr:v1.40.1
           ports:
             - containerPort: 7474
               name: http
