@@ -18,7 +18,7 @@ spec:
       serviceAccountName: headlamp-admin
       containers:
       - name: headlamp
-        image: ghcr.io/headlamp-k8s/headlamp:v0.40.0
+        image: ghcr.io/headlamp-k8s/headlamp:v0.40.1
         ports:
         - containerPort: 4466
         args:
