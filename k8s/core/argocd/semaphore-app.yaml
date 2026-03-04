@@ -103,6 +103,17 @@ spec:
             cpu: 500m
             memory: 512Mi
 
+        # Mount the dynamic Ansible inventory from ConfigMap
+        # Updated by Taskfile after each Terraform run
+        extraVolumes:
+          - name: ansible-inventory
+            configMap:
+              name: ansible-inventory-cm
+        extraVolumeMounts:
+          - name: ansible-inventory
+            mountPath: /opt/ansible
+            readOnly: true
+
   destination:
     server: https://kubernetes.default.svc
     namespace: mgmt

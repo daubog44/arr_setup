@@ -92,10 +92,11 @@ spec:
               REPO_ID=$(echo "$REPO" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created repository ID: $REPO_ID"
 
-              # 4. Create inventory
+              # 4. Create inventory — uses ConfigMap mounted at /opt/ansible/inventory.yml
+              # This file auto-updates when Terraform regenerates inventory + Taskfile updates the ConfigMap
               INV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/inventory" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"HaaC/ansible/inventory.yml\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}")
+                -d "{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"/opt/ansible/inventory.yml\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}")
               INV_ID=$(echo "$INV" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created inventory ID: $INV_ID"
 
