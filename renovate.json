@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":dependencyDashboard",
+    ":semanticPrefixFixDepsChoreOthers"
+  ],
+  "kubernetes": {
+    "fileMatch": ["\\.yaml$"]
+  },
+  "helmv3": {
+    "fileMatch": ["(^|/)Chart\\.yaml$"]
+  },
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "matchPackageNames": ["ghcr.io/linuxserver/*", "lscr.io/linuxserver/*", "ghcr.io/hotio/*"],
+      "groupName": "linuxserver-media-apps",
+      "automerge": true
+    },
+    {
+      "matchPackageNames": ["argoproj/argo-cd"],
+      "groupName": "argocd",
+      "automerge": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^Taskfile\\.yml$"],
+      "matchStrings": [
+        "https://raw\\.githubusercontent\\.com/(?<depName>argoproj/argo-cd)/(?<currentValue>v[0-9.]+)/manifests/install\\.yaml"
+      ],
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^Taskfile\\.yml$"],
+      "matchStrings": [
+        "https://github\\.com/(?<depName>bitnami-labs/sealed-secrets)/releases/download/(?<currentValue>v[0-9.]+)/controller\\.yaml"
+      ],
+      "datasourceTemplate": "github-releases"
+    }
+  ]
+}
