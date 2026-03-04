@@ -16,7 +16,7 @@ spec:
     repoURL: https://charts.semaphoreui.com
     chart: semaphore
     # renovate: registryUrl=https://charts.semaphoreui.com chart=semaphore
-    targetRevision: "2.10.22"
+    targetRevision: "16.0.11"
     helm:
       values: |
         # Deployment basics

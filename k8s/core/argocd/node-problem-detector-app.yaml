@@ -15,7 +15,7 @@ spec:
     repoURL: https://charts.deliveryhero.io
     chart: node-problem-detector
     # renovate: registryUrl=https://charts.deliveryhero.io chart=node-problem-detector
-    targetRevision: "2.3.13"
+    targetRevision: "2.3.14"
     helm:
       values: |
         tolerations:
