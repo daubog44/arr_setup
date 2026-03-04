@@ -55,6 +55,14 @@ data:
             icon: headlamp.png
             href: "https://headlamp.{{ .Values.global.domainName }}"
             description: K8s Dashboard
+        - Ntfy:
+            icon: ntfy.png
+            href: "https://ntfy.{{ .Values.global.domainName }}"
+            description: Push Notifications
+        - Authelia:
+            icon: authelia.png
+            href: "https://auth.{{ .Values.global.domainName }}"
+            description: Identity Provider
   widgets.yaml: |
     - greeting:
         text: "Benvenuto nel Nucleo Autogenerativo"
