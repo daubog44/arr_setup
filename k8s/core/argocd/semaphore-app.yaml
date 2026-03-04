@@ -15,6 +15,7 @@ spec:
   source:
     repoURL: https://charts.semaphoreui.com
     chart: semaphore
+    # renovate: registryUrl=https://charts.semaphoreui.com chart=semaphore
     targetRevision: "2.10.22"
     helm:
       values: |
