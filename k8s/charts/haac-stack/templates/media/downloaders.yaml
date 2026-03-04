@@ -56,6 +56,12 @@ spec:
           volumeMounts:
             - name: gluetun-port
               mountPath: /tmp/gluetun
+          livenessProbe:
+            tcpSocket:
+              port: 8888
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
 
         - name: port-sync
           image: curlimages/curl:8.6.0
@@ -102,6 +108,19 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
           resources:
             requests:
               cpu: 100m

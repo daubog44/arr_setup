@@ -21,6 +21,19 @@ spec:
         image: ghcr.io/headlamp-k8s/headlamp:v0.40.1
         ports:
         - containerPort: 4466
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 4466
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 4466
+          initialDelaySeconds: 5
+          periodSeconds: 10
         args:
           - "-in-cluster"
           - "-oidc-client-id=headlamp"

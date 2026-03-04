@@ -19,6 +19,19 @@ spec:
           ports:
             - containerPort: 3000
               name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
           env:
             - name: NODE_ENV
               value: "production"
