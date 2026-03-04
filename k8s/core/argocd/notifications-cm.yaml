@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/part-of: argocd
 data:
   service.webhook.ntfy: |
-    url: http://ntfy.mgmt.svc.cluster.local:80/haac_alerts
+    url: $ntfy-webhook-url
     headers:
       - name: Content-Type
         value: text/plain

@@ -84,8 +84,14 @@ $KUBECTL create secret generic authelia-config-files -n mgmt \
   --dry-run=client -o yaml | \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/authelia-sealed-secret.yaml"
 
+echo "5. Creazione SealedSecret per ArgoCD Notifications (Ntfy)..."
+$KUBECTL create secret generic argocd-notifications-secret -n argocd \
+  --from-literal=ntfy-webhook-url="http://ntfy.mgmt.svc.cluster.local:80/${NTFY_TOPIC}" \
+  --dry-run=client -o yaml | \
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-notifications-sealed-secret.yaml"
+
 echo "✅ Sealed Secrets generati con successo in $CHART_DIR/secrets"
 
-echo "5. Idratazione del file values.yaml centrale..."
+echo "6. Idratazione del file values.yaml centrale..."
 envsubst < "$(dirname "$0")/../k8s/charts/haac-stack/config-templates/values.yaml.template" > "$(dirname "$0")/../k8s/charts/haac-stack/values.yaml"
 echo "✅ values.yaml idratato con successo."
