@@ -58,13 +58,14 @@ $KUBECTL create secret generic protonvpn-key -n media \
   --from-literal=OPENVPN_PASSWORD="${PROTONVPN_OPENVPN_PASSWORD}" \
   --from-literal=SERVER_COUNTRIES="${PROTONVPN_SERVER_COUNTRIES}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/protonvpn-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/protonvpn-sealed.yaml" && mv "/tmp/protonvpn-sealed.yaml" "$CHART_DIR/secrets/protonvpn-sealed-secret.yaml"
 
 echo "2. Creazione SealedSecret per Cloudflare Tunnel..."
-$KUBECTL create secret generic cloudflare-tunnel-token -n cloudflared \
-  --from-literal=token="${CLOUDFLARE_TUNNEL_TOKEN}" \
+$KUBECTL create secret generic cloudflared-credentials -n cloudflared \
+  --from-literal=CLOUDFLARE_TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN}" \
+  --from-literal=CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/cloudflared-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/cf-sealed.yaml" && mv "/tmp/cf-sealed.yaml" "$CHART_DIR/secrets/cloudflared-sealed-secret.yaml"
 
 echo "3. Generazione configurazione Authelia temporanea..."
 export DOMAIN_NAME="${DOMAIN_NAME}"
@@ -75,25 +76,25 @@ $KUBECTL create secret generic authelia-config-files -n mgmt \
   --from-file=configuration.yml=/tmp/authelia_configuration.yml \
   --from-file=users.yml=/tmp/authelia_users.yml \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/authelia-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/authelia-sealed.yaml" && mv "/tmp/authelia-sealed.yaml" "$CHART_DIR/secrets/authelia-sealed-secret.yaml"
 
 echo "5. Creazione SealedSecret per ArgoCD Notifications (Ntfy)..."
 $KUBECTL create secret generic argocd-notifications-secret -n argocd \
   --from-literal=ntfy-webhook-url="http://ntfy.mgmt.svc.cluster.local:80/${NTFY_TOPIC}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-notifications-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/argocd-notif-sealed.yaml" && mv "/tmp/argocd-notif-sealed.yaml" "$CHART_DIR/secrets/argocd-notifications-sealed-secret.yaml"
 
 echo "5.5 Creazione SealedSecret per ArgoCD OIDC..."
 $KUBECTL create secret generic argocd-oidc-secret -n argocd \
   --from-literal=oidc.authelia.clientSecret="${ARGOCD_OIDC_SECRET}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-oidc-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/argocd-oidc-sealed.yaml" && mv "/tmp/argocd-oidc-sealed.yaml" "$CHART_DIR/secrets/argocd-oidc-sealed-secret.yaml"
 
 echo "5.6 Creazione SealedSecret per Grafana OIDC..."
 $KUBECTL create secret generic grafana-oidc-secret -n monitoring \
   --from-literal=GRAFANA_OIDC_SECRET="${GRAFANA_OIDC_SECRET}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/grafana-oidc-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/grafana-oidc-sealed.yaml" && mv "/tmp/grafana-oidc-sealed.yaml" "$CHART_DIR/secrets/grafana-oidc-sealed-secret.yaml"
 
 echo "✅ Sealed Secrets generati con successo in $CHART_DIR/secrets"
 
@@ -103,7 +104,7 @@ if [ -f "$SSH_KEY" ]; then
   $KUBECTL create secret generic haac-ssh-key -n mgmt \
     --from-file=id_ed25519="$SSH_KEY" \
     --dry-run=client -o yaml | \
-    $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/haac-ssh-sealed-secret.yaml"
+    $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/ssh-sealed.yaml" && mv "/tmp/ssh-sealed.yaml" "$CHART_DIR/secrets/haac-ssh-sealed-secret.yaml"
 else
   echo "⚠️  Chiave SSH $SSH_KEY non trovata, salto la generazione del SealedSecret SSH."
 fi
@@ -115,7 +116,7 @@ $KUBECTL create secret generic semaphore-db-secret -n mgmt \
   --from-literal=OIDC_SECRET="${SEMAPHORE_OIDC_SECRET}" \
   --from-literal=ADMIN_PASSWORD="${SEMAPHORE_ADMIN_PASSWORD}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/semaphore-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "/tmp/semaphore-sealed.yaml" && mv "/tmp/semaphore-sealed.yaml" "$CHART_DIR/secrets/semaphore-sealed-secret.yaml"
 
 echo "8. Idratazione del file values.yaml centrale..."
 envsubst < "$(dirname "$0")/../k8s/charts/haac-stack/config-templates/values.yaml.template" > "$(dirname "$0")/../k8s/charts/haac-stack/values.yaml"
