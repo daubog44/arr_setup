@@ -9,6 +9,22 @@ spec:
     customRequestHeaders:
       X-Forwarded-Proto: "https"
 ---
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: authelia
+  namespace: monitoring
+spec:
+  forwardAuth:
+    address: http://authelia.mgmt.svc.cluster.local:9091/api/authz/forward-auth?strategy=header
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Remote-User
+      - Remote-Groups
+      - Remote-Name
+      - Remote-Email
+---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -16,7 +32,7 @@ metadata:
   namespace: mgmt
 spec:
   forwardAuth:
-    address: http://authelia.mgmt.svc.cluster.local:9091/api/verify?rd=https://auth.{{ .Values.global.domainName }}/
+    address: http://authelia.mgmt.svc.cluster.local:9091/api/authz/forward-auth?strategy=header
     trustForwardHeader: true
     authResponseHeaders:
       - Remote-User
