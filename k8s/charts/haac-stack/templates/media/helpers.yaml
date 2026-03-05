@@ -48,9 +48,9 @@ spec:
           initContainers:
             - name: recyclarr-init
               image: ghcr.io/recyclarr/recyclarr:7.5.2
-              args: ["init"]
-              # Runs `recyclarr init` only if config doesn't exist yet.
-              # The command exits 0 even if already initialized, so it's idempotent.
+              command: ["/bin/sh", "-c"]
+              args: ["if [ ! -f /config/recyclarr.yml ]; then recyclarr config create; fi"]
+              # Recyclarr >= 6.0 uses 'config create' instead of 'init'
               volumeMounts:
                 - name: config
                   mountPath: /config
