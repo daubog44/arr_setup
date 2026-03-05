@@ -140,6 +140,12 @@ spec:
             volumes:
               - name: etc-prometheus
                 emptyDir: {}
+            # Ensure the operator doesn't try to mount config-out to /etc/prometheus
+            prometheusSpec:
+              volumeMounts:
+              - name: config-out
+                mountPath: /prometheus/config_out
+                readOnly: true
             ruleSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
             podMonitorSelectorNilUsesHelmValues: false
