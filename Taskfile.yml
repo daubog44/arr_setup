@@ -91,10 +91,11 @@ tasks:
       - ansible-playbook {{.DEBUG_LEVEL}} -i inventory.yml playbook.yml
 
   gitops-bootstrap:
-    desc: "📦 Pipeline che raggruppa il deploy base (ArgoCD + Namespace) e la generazione dei secret. ArgoCD gestirà autonomamente il resto."
+    desc: "📦 Pipeline che raggruppa il deploy base (ArgoCD + Namespace), la generazione dei secret ed il primo deploy locale condizionale."
     cmds:
       - task: deploy-argocd
       - task: generate-secrets
+      - task: deploy-local
       - task: sync-cloudflare
       - task: configure-apps
       - echo "📦 Sincronizzazione inventory Ansible nel cluster per il CronJob di manutenzione..."
@@ -178,10 +179,15 @@ tasks:
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply --server-side -f https://github.com/rancher/system-upgrade-controller/releases/latest/download/crd.yaml || true
       - echo "⏳ Attendo che il CRD upgrade.cattle.io/v1 sia disponibile..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} wait --for=condition=established crd/plans.upgrade.cattle.io --timeout=60s || true
-      - echo "⚠️ Forzatura dell'applicazione dei template locali su Kubernetes..."
-      - KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n mgmt --create-namespace
+      - |
+        if KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get application haac-stack -n argocd >/dev/null 2>&1; then
+          echo "⏭️  ArgoCD sta già gestendo attivamente il cluster. Salto il comando 'helm upgrade' locale per evitare conflitti Server-Side Apply."
+        else
+          echo "⚠️  Forzatura dell'applicazione dei template locali su Kubernetes (ArgoCD non ancora attivo)..."
+          KUBECONFIG={{.K3S_KUBECONFIG}} helm upgrade --install haac-stack ./k8s/charts/haac-stack -n mgmt --create-namespace
+        fi
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
-      - echo "✅ Deploy di test eseguito. Quando hai finito, fai commit e push affinché ArgoCD renda definitive le modifiche."
+      - echo "✅ Task deploy-local completato."
 
   verify-cluster:
     desc: "🛠️ Riesegue i ping al cluster master/worker e controlla il networking dei nodi K3s interni."
