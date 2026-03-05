@@ -84,6 +84,10 @@ resource "proxmox_virtual_environment_container" "k3s_worker" {
   description = "K3s Worker Node - ${each.key} (HaaC v2)"
   node_name   = each.value.target_node
 
+  depends_on = [
+    proxmox_virtual_environment_container.k3s_master
+  ]
+
 
   initialization {
     hostname = each.value.hostname
@@ -133,8 +137,12 @@ resource "proxmox_virtual_environment_container" "k3s_worker" {
   start_on_boot = true
 
   started = true
-}
 
+  # Stagger creation to prevent Proxmox ZFS locking timeouts when cloning templates concurrently
+  provisioner "local-exec" {
+    command = "sleep 15"
+  }
+}
 
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
