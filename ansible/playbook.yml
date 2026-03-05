@@ -11,14 +11,14 @@
         path: /etc/apt/sources.list.d/pve-enterprise.list
         regexp: '^(deb .*enterprise.*)'
         replace: '# \1'
-      ignore_errors: true  # file may not exist on fresh installs
+      failed_when: false  # file may not exist on fresh installs, avoid red errors
 
     - name: Disable Ceph Enterprise repository if present
       ansible.builtin.replace:
         path: /etc/apt/sources.list.d/ceph.list
         regexp: '^(deb .*enterprise.*)'
         replace: '# \1'
-      ignore_errors: true
+      failed_when: false
 
     - name: Enable Proxmox No-Subscription repository
       ansible.builtin.blockinfile:
