@@ -111,6 +111,11 @@ spec:
             podMonitorSelectorNilUsesHelmValues: false
             probeSelectorNilUsesHelmValues: false
             retention: 15d
+            resources:
+              requests:
+                memory: 512Mi
+              limits:
+                memory: 1500Mi
             storageSpec:
               volumeClaimTemplate:
                 spec:
@@ -129,6 +134,20 @@ spec:
           enabled: false
         kubeProxy:
           enabled: false
+
+        additionalPrometheusRulesMap:
+          node-problem-detector-rules:
+            groups:
+              - name: node-problem-detector
+                rules:
+                  - alert: NodeProblemDetected
+                    expr: problem_gauge > 0
+                    for: 1m
+                    labels:
+                      severity: critical
+                    annotations:
+                      summary: "Node problem detected on {{ $labels.node }}"
+                      description: "Node {{ $labels.node }} reported a Kernel/System event: {{ $labels.reason }}."
 
   destination:
     server: https://kubernetes.default.svc
