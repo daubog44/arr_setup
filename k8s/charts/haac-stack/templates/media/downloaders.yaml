@@ -169,7 +169,9 @@ spec:
               name: metrics
           env:
             - name: QBITTORRENT_BASE_URL
-              value: "http://127.0.0.1:8080" # Localhost since it's a sidecar
+              value: "http://127.0.0.1:8080"
+            - name: QBITTORRENT_PORT
+              value: "8080" # Localhost since it's a sidecar
             # Use default credentials if not changed, else we would need secrets.
             # Assuming basic auth is off for local network in qbittorrent, or using default admin/adminadmin
             - name: QBITTORRENT_USERNAME
