@@ -108,13 +108,19 @@ tasks:
       - task: verify-endpoints
 
   monitor:
-    desc: "👀 Dashboard live per monitorare i Pod e gli Ingress che stanno nascendo. Premi Ctrl+C per uscire."
+    desc: "👀 Avvia K9s (il non plus ultra per monitorare Kubernetes da terminale). Lo scarica in automatico se ti manca."
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
-      KUBECTL: "/home/daubog44/.local/bin/kubectl"
     cmds:
-      - echo "👀 Avvio monitoraggio live del cluster (premi Ctrl+C per terminare)..."
-      - watch -n 2 "KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get pods,ingress -A --sort-by=.metadata.creationTimestamp"
+      - |
+        if ! command -v k9s &> /dev/null; then
+          echo "📥 K9s non trovato. Lo scarico per te in ~/.local/bin/k9s..."
+          mkdir -p ~/.local/bin
+          wget -qO- https://github.com/derailed/k9s/releases/download/v0.32.4/k9s_Linux_amd64.tar.gz | tar -xz -C ~/.local/bin k9s
+          chmod +x ~/.local/bin/k9s
+        fi
+        echo "� Avvio K9s... Premi ':' e scrivi 'ns' per cambiare namespace, o 'ctrl+c' per uscire!"
+        KUBECONFIG={{.K3S_KUBECONFIG}} ~/.local/bin/k9s --all-namespaces
 
   deploy-argocd:
     desc: "🧱 Applica le configurazioni ArgoCD con sostituzione del dominio (sealed secrets e namespace li gestisce il playbook Ansible)."
