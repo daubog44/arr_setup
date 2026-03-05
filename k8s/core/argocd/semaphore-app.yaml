@@ -13,7 +13,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://charts.semaphoreui.com
+    repoURL: https://semaphoreui.github.io/charts
     chart: semaphore
     # renovate: registryUrl=https://charts.semaphoreui.com chart=semaphore
     targetRevision: "16.0.11"
