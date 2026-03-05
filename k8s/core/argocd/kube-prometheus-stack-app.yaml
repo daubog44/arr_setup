@@ -133,15 +133,13 @@ spec:
                   readOnlyRootFilesystem: false
                 volumeMounts:
                   - name: config-out
-                    mountPath: /etc/prometheus/config_out
+                    mountPath: /prometheus/config_out
                     readOnly: true
                   - name: etc-prometheus
                     mountPath: /etc/prometheus
             volumes:
               - name: etc-prometheus
-                hostPath:
-                  path: /tmp/prometheus-etc
-                  type: DirectoryOrCreate
+                emptyDir: {}
             ruleSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
             podMonitorSelectorNilUsesHelmValues: false
