@@ -21,7 +21,6 @@ spec:
         - values.yaml
   destination:
     server: https://kubernetes.default.svc
-    namespace: mgmt
   syncPolicy:
     automated:
       prune: true
