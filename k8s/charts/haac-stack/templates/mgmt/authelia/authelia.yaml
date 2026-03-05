@@ -40,7 +40,7 @@ spec:
               mountPath: /config
       containers:
         - name: authelia
-          image: authelia/authelia:v4.38.15
+          image: authelia/authelia:4.39.15
           args: ["--config", "/config/config-files/configuration.yml"]
           securityContext:
             runAsUser: 1000
