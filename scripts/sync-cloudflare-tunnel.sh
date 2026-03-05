@@ -36,7 +36,7 @@ fi
 
 # 2. Prepara la configurazione desiderata tramite API (FQDN Traefik)
 # Usiamo il nome DNS interno abbreviato per evitare fastidi IPv6
-TRAEFIK_SERVICE="http://traefik.kube-system.svc:80"
+TRAEFIK_SERVICE="http://traefik.kube-system.svc.cluster.local:80"
 echo "📍 Traefik Target: $TRAEFIK_SERVICE"
 
 # Rimuoviamo SOLO le regole esatte "*.dominio" e "dominio", per non cancellare eventuali altre rotte custom dell'utente

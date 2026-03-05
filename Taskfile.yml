@@ -157,10 +157,10 @@ tasks:
       - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
       - echo "🔐 Generazione dei Sealed Secrets per il setup GitOps..."
       - ./scripts/generate-sealed-secrets.sh
-      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
       - echo "📦 Caricamento Ansible Inventory su Kubernetes come ConfigMap per Semaphore..."
       - KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl create namespace mgmt --dry-run=client -o yaml | KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl apply -f -
       - KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl create configmap ansible-inventory-cm -n mgmt --from-file=inventory.yml=./ansible/inventory.yml --dry-run=client -o yaml | KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl apply -f -
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
       - echo "✅ Fatto! Ricordati di fare commit e push dei file generati in k8s/charts/haac-stack/templates/secrets/"
 
   setup-hooks:
