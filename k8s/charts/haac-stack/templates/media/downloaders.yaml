@@ -134,7 +134,7 @@ spec:
             - name: media
               mountPath: /data
         - name: qui
-          image: ghcr.io/autobrr/qui:v1.14.2
+          image: ghcr.io/autobrr/qui:v1.14.1
           env:
             - name: QUI__OIDC_ENABLED
               value: "true"
@@ -163,7 +163,7 @@ spec:
             - name: qui-config
               mountPath: /app/config
         - name: exporter
-          image: guillaumedsde/qbittorrent-exporter:v1.2.0
+          image: caseyscarborough/qbittorrent-exporter:latest
           ports:
             - containerPort: 8000
               name: metrics
