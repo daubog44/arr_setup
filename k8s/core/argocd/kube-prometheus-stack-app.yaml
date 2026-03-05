@@ -139,7 +139,9 @@ spec:
                     mountPath: /etc/prometheus
             volumes:
               - name: etc-prometheus
-                emptyDir: {}
+                hostPath:
+                  path: /tmp/prometheus-etc
+                  type: DirectoryOrCreate
             ruleSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
             podMonitorSelectorNilUsesHelmValues: false
