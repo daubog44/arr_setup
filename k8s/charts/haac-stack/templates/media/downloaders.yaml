@@ -45,7 +45,7 @@ spec:
             - name: HTTP_CONTROL_SERVER
               value: "on"
             - name: HTTP_CONTROL_SERVER_ADDRESS
-              value: ":8888"
+              value: ":8000"
           securityContext:
             capabilities:
               add: ["NET_ADMIN", "NET_RAW"]
@@ -62,7 +62,7 @@ spec:
               mountPath: /tmp/gluetun
           livenessProbe:
             tcpSocket:
-              port: 8888
+              port: 8000
             initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 5
