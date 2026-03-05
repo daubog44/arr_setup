@@ -84,10 +84,10 @@ $KUBECTL create secret generic argocd-notifications-secret -n argocd \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-notifications-sealed-secret.yaml"
 
 echo "5.5 Creazione SealedSecret per ArgoCD OIDC..."
-$KUBECTL create secret generic argocd-oidc-secret -n argocd \
+$KUBECTL create secret generic argocd-sso-secret -n argocd \
   --from-literal=client_secret="${ARGOCD_OIDC_SECRET}" \
   --dry-run=client -o yaml | \
-  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-oidc-sealed-secret.yaml"
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-sso-sealed-secret.yaml"
 
 echo "5.6 Creazione SealedSecret per Grafana OIDC..."
 $KUBECTL create secret generic grafana-oidc-secret -n monitoring \
