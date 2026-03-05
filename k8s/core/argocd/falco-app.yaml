@@ -17,7 +17,7 @@ spec:
         # Use eBPF driver which is safer and modern for newer kernels (Proxmox 8 / K3s)
         # However, eBPF requires kernel headers. Falco's modern ebpf probe builder handles this well.
         driver:
-          kind: modern-ebpf
+          kind: modern_ebpf
 
         # Collect metrics for kube-prometheus-stack
         metrics:
