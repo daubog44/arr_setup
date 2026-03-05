@@ -10,3 +10,18 @@ vpn:
 
 qui:
   username: "admin"
+
+longhorn:
+  defaultSettings:
+    # NAS is mounted natively into the Proxmox nodes (and thus LXC/K3s) at HOST_NAS_PATH
+    backupTarget: "file:///mnt/pve/zima/longhorn-backups"
+    backupTargetCredentialSecret: ""
+    # Create a default recurring job that runs daily at 2:00 AM
+  persistence:
+    defaultClassReplicaCount: 2
+  recurringJobSelector:
+    enable: true
+    jobList: |
+      [
+        {"name":"daily-backup", "task":"backup", "cron":"0 2 * * *", "retain":7}
+      ]

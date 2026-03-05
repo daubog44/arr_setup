@@ -231,24 +231,6 @@ spec:
       name: metrics
 
 ---
-{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: qbittorrent
-  namespace: media
-  labels:
-    release: kube-prometheus-stack # Required to be picked up by the default Prometheus configuration
-spec:
-  selector:
-    matchLabels:
-      app: downloaders
-  endpoints:
-    - port: metrics
-      path: /metrics
-      interval: 30s
-{{- end }}
----
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
