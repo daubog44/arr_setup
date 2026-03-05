@@ -18,6 +18,10 @@ spec:
         # However, eBPF requires kernel headers. Falco's modern ebpf probe builder handles this well.
         driver:
           kind: modern_ebpf
+        # Explicitly grant privileges for eBPF on LXC
+        containerSecurityContext:
+          privileged: true
+          allowPrivilegeEscalation: true
 
         # Collect metrics for kube-prometheus-stack
         metrics:
