@@ -107,10 +107,30 @@ spec:
                   interval: 30s
           prometheusSpec:
             securityContext:
-              runAsNonRoot: true
-              runAsUser: 65534
-              runAsGroup: 65534
-              fsGroup: 65534
+              runAsNonRoot: false
+              runAsUser: 0
+              runAsGroup: 0
+              fsGroup: 0
+            configMaps: []
+            # Override the default config-out mount path which causes issues in LXC
+            prometheusConfigReloaderSpec:
+              extraArgs:
+                - --config-envsubst-file=/prometheus-config/config_out/prometheus.env.yaml
+              volumeMounts:
+                - name: config-out
+                  mountPath: /prometheus-config/config_out
+            containers:
+              - name: prometheus
+                args:
+                  - --config.file=/prometheus-config/config_out/prometheus.env.yaml
+                  - --storage.tsdb.path=/prometheus
+                  - --web.console.templates=/etc/prometheus/consoles
+                  - --web.console.libraries=/etc/prometheus/console_libraries
+                  - --web.enable-lifecycle
+                volumeMounts:
+                  - name: config-out
+                    mountPath: /prometheus-config/config_out
+                    readOnly: true
             ruleSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
             podMonitorSelectorNilUsesHelmValues: false
