@@ -42,4 +42,78 @@ echo "--- 6. Certificate Verification (Cert-Manager/Traefik) ---"
 kubectl get certificates -A 2>/dev/null || echo "Cert-Manager non installato o non pronto."
 
 echo ""
+echo "--- 7. eBPF Passthrough Verification (inside pod) ---"
+echo "[eBPF] Launching privileged debug pod on a worker node to validate eBPF filesystem access..."
+kubectl run ebpf-verify --image=busybox:1.36 \
+  --restart=Never \
+  --overrides='{
+    "spec": {
+      "nodeName": null,
+      "hostPID": true,
+      "hostNetwork": true,
+      "containers": [{
+        "name": "ebpf-verify",
+        "image": "busybox:1.36",
+        "command": ["sh", "-c", "echo === BPF mounts ===; mount | grep bpf; echo === /sys/fs/bpf contents ===; ls /sys/fs/bpf && echo OK || echo MISSING"],
+        "securityContext": {"privileged": true},
+        "volumeMounts": [{"name": "bpf", "mountPath": "/sys/fs/bpf"}]
+      }],
+      "volumes": [{"name": "bpf", "hostPath": {"path": "/sys/fs/bpf", "type": "Directory"}}]
+    }
+  }' \
+  --rm -it --timeout=60s 2>/dev/null \
+  || echo "[eBPF] ⚠️  Test pod fallito o timeout. Controlla che /sys/fs/bpf sia montato sull'host."
+
+echo ""
+echo "--- 8. Authelia Middleware Verification ---"
+echo "[MW] Middleware presenti nel cluster:"
+MW_NAMESPACES=("mgmt" "monitoring" "media" "security" "chaos")
+MW_FAIL=0
+for NS in "${MW_NAMESPACES[@]}"; do
+  EXISTS=$(kubectl get middleware authelia -n "$NS" --no-headers 2>/dev/null | wc -l)
+  if [ "$EXISTS" -gt 0 ]; then
+    echo "  ✅ Middleware 'authelia' trovato in namespace: $NS"
+  else
+    echo "  ❌ Middleware 'authelia' MANCANTE in namespace: $NS"
+    MW_FAIL=1
+  fi
+done
+
+FORCE_EXISTS=$(kubectl get middleware force-https -n mgmt --no-headers 2>/dev/null | wc -l)
+if [ "$FORCE_EXISTS" -gt 0 ]; then
+  echo "  ✅ Middleware 'force-https' trovato in namespace: mgmt"
+else
+  echo "  ❌ Middleware 'force-https' MANCANTE in namespace mgmt"
+  MW_FAIL=1
+fi
+
+echo ""
+echo "[MW] IngressRoutes che referenziano 'authelia' middleware:"
+kubectl get ingressroute -A -o json 2>/dev/null \
+  | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+found = 0
+for item in data.get('items', []):
+  ns = item['metadata']['namespace']
+  name = item['metadata']['name']
+  routes = item.get('spec', {}).get('routes', [])
+  for route in routes:
+    for mw in route.get('middlewares', []):
+      if 'authelia' in mw.get('name', ''):
+        print(f'  ✅ {ns}/{name} -> middleware: {mw[\"name\"]}')
+        found += 1
+if found == 0:
+  print('  ⚠️  Nessun IngressRoute con middleware authelia trovato!')
+" 2>/dev/null || echo "  [skip] python3 non disponibile o kubectl error."
+
+if [ "$MW_FAIL" -eq 0 ]; then
+  echo ""
+  echo "  ✅ Tutti i Middleware Authelia sono configurati correttamente."
+else
+  echo ""
+  echo "  ❌ Alcuni Middleware mancano — controlla la sincronizzazione ArgoCD (haac-stack)."
+fi
+
+echo ""
 echo "✅ Validazione Cluster Completata."

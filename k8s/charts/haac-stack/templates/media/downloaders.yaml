@@ -37,7 +37,7 @@ spec:
             - name: VPN_PORT_FORWARDING
               value: "on"
             - name: FIREWALL_OUTBOUND_SUBNETS
-              value: "10.42.0.0/16,10.43.0.0/16"
+              value: "{{ .Values.vpn.podSubnet }},{{ .Values.vpn.svcSubnet }}"
             - name: FIREWALL_VPN_INPUT_PORTS
               value: "8080,7476"
             - name: DOT
@@ -46,6 +46,10 @@ spec:
               value: "on"
             - name: HTTP_CONTROL_SERVER_ADDRESS
               value: ":8000"
+            - name: VPN_DNS_ADDRESS
+              value: "{{ .Values.vpn.dnsIp }}"
+            - name: DNS_KEEP_NAMESERVER
+              value: "on"
           securityContext:
             capabilities:
               add: ["NET_ADMIN", "NET_RAW"]
@@ -143,7 +147,7 @@ spec:
             - name: QUI__OIDC_ENABLED
               value: "true"
             - name: QUI__OIDC_ISSUER
-              value: "http://10.43.251.19:9091"
+              value: "http://authelia.mgmt.svc.cluster.local:9091"
             - name: QUI__OIDC_CLIENT_ID
               value: "qui"
             - name: QUI__OIDC_CLIENT_SECRET
@@ -151,7 +155,7 @@ spec:
             - name: QUI__OIDC_REDIRECT_URL
               value: "https://qui.{{ .Values.global.domainName }}/api/auth/oidc/callback"
             - name: QUI__OIDC_DISABLE_BUILT_IN_LOGIN
-              value: "true"
+              value: "false"
 
           ports:
             - containerPort: 7476

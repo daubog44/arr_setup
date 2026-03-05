@@ -1,4 +1,14 @@
-{{- range $ns := (list "mgmt" "monitoring" "media" "security" "chaos") }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: force-https
+  namespace: mgmt
+spec:
+  headers:
+    customRequestHeaders:
+      X-Forwarded-Proto: "https"
+{{ range $ns := list "mgmt" "monitoring" "media" "security" "chaos" }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -14,14 +24,4 @@ spec:
       - Remote-Groups
       - Remote-Name
       - Remote-Email
-{{- end }}
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: force-https
-  namespace: mgmt
-spec:
-  headers:
-    customRequestHeaders:
-      X-Forwarded-Proto: "https"
+{{ end }}

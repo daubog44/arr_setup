@@ -112,13 +112,22 @@ QUI_PASS="${HEADLAMP_PASSWORD:-MySecretPassword123!}"
 
 # Wait for qui pod to exist and be ready
 echo "Waiting for QUI pod to become available..."
+QUI_WAIT_TIMEOUT=600
+QUI_ELAPSED=0
 while true; do
-  POD=$($KUBECTL get pod -l app=downloaders -n media -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || true)
-  if [ -n "$POD" ] && $KUBECTL exec -n media $POD -c qui -- wget --spider -S http://localhost:7476/api/auth/validate 2>&1 | grep "HTTP/" >/dev/null; then
+  POD=$($KUBECTL --kubeconfig=$K3S_KUBECONFIG get pod -l app=downloaders -n media --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+  if [ -n "$POD" ] && $KUBECTL exec -n media $POD -c qui -- wget --spider -S http://localhost:7476/api/auth/validate 2>&1 | grep "HTTP/" > /dev/null; then
     break
   fi
-  echo "  ...waiting for QUI API inside pod $POD..."
+  if [ $QUI_ELAPSED -ge $QUI_WAIT_TIMEOUT ]; then
+    echo "❌ Timeout dopo ${QUI_WAIT_TIMEOUT}s: QUI API non disponibile nel pod ${POD}."
+    echo "   Controlla i log del pod: kubectl logs -n media ${POD} -c qui"
+    echo "   Controlla i logs di Gluetun: kubectl logs -n media ${POD} -c gluetun"
+    exit 1
+  fi
+  echo "  ...waiting for QUI API inside pod $POD... (${QUI_ELAPSED}s/${QUI_WAIT_TIMEOUT}s)"
   sleep 5
+  QUI_ELAPSED=$((QUI_ELAPSED + 5))
 done
 
 echo "Setting up QUI initial admin..."
