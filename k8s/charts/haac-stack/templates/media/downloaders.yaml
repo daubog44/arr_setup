@@ -42,6 +42,10 @@ spec:
               value: "8080,7476"
             - name: DOT
               value: "off"
+            - name: HTTP_CONTROL_SERVER
+              value: "on"
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: ":8888"
           securityContext:
             capabilities:
               add: ["NET_ADMIN", "NET_RAW"]
