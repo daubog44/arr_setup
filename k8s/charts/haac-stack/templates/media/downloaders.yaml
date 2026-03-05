@@ -231,6 +231,7 @@ spec:
       name: metrics
 
 ---
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -246,7 +247,7 @@ spec:
     - port: metrics
       path: /metrics
       interval: 30s
-
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
