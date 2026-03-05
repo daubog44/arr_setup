@@ -11,7 +11,6 @@ spec:
       kind: Rule
       middlewares:
         - name: authelia
-          namespace: mgmt
       services:
         - name: kube-prometheus-stack-grafana
           port: 80
