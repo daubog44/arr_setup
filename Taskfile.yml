@@ -116,7 +116,7 @@ tasks:
         if ! command -v k9s &> /dev/null; then
           echo "📥 K9s non trovato. Lo scarico per te in ~/.local/bin/k9s..."
           mkdir -p ~/.local/bin
-          wget -qO- https://github.com/derailed/k9s/releases/download/v0.32.4/k9s_Linux_amd64.tar.gz | tar -xz -C ~/.local/bin k9s
+          wget -qO- https://github.com/derailed/k9s/releases/download/v0.50.18/k9s_Linux_amd64.tar.gz | tar -xz -C ~/.local/bin k9s
           chmod +x ~/.local/bin/k9s
         fi
         echo "� Avvio K9s... Premi ':' e scrivi 'ns' per cambiare namespace, o 'ctrl+c' per uscire!"
