@@ -91,11 +91,10 @@ tasks:
       - ansible-playbook {{.DEBUG_LEVEL}} -i inventory.yml playbook.yml
 
   gitops-bootstrap:
-    desc: "📦 Pipeline che raggruppa il deploy base (ArgoCD + Namespace), la generazione dei secret ed il primo deploy di test."
+    desc: "📦 Pipeline che raggruppa il deploy base (ArgoCD + Namespace) e la generazione dei secret. ArgoCD gestirà autonomamente il resto."
     cmds:
       - task: deploy-argocd
       - task: generate-secrets
-      - task: deploy-local
       - task: sync-cloudflare
       - task: configure-apps
       - echo "📦 Sincronizzazione inventory Ansible nel cluster per il CronJob di manutenzione..."
