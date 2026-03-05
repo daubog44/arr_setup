@@ -45,7 +45,7 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^Taskfile\\.yml$/"
+        "/^ansible/playbook\\.yml$/"
       ],
       "matchStrings": [
         "https://raw\\.githubusercontent\\.com/(?<depName>argoproj/argo-cd)/(?<currentValue>v[0-9.]+)/manifests/install\\.yaml"
@@ -55,7 +55,7 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^Taskfile\\.yml$/"
+        "/^ansible/playbook\\.yml$/"
       ],
       "matchStrings": [
         "https://github\\.com/(?<depName>bitnami-labs/sealed-secrets)/releases/download/(?<currentValue>v[0-9.]+)/controller\\.yaml"

@@ -84,3 +84,29 @@ identity_providers:
           - groups
           - email
         userinfo_signed_response_alg: none
+      - client_id: grafana
+        client_name: Grafana
+        client_secret: "${GRAFANA_OIDC_HASH}"
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://grafana.${DOMAIN_NAME}/login/generic_oauth
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none
+      - client_id: argocd
+        client_name: ArgoCD
+        client_secret: "${ARGOCD_OIDC_HASH}"
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://argocd.${DOMAIN_NAME}/api/dex/callback
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none

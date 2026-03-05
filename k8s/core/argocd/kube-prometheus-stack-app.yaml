@@ -50,6 +50,19 @@ spec:
           grafana.ini:
             server:
               root_url: "https://grafana.${DOMAIN_NAME}"
+            auth.generic_oauth:
+              enabled: true
+              name: Authelia
+              icon: signin
+              client_id: grafana
+              client_secret: "${GRAFANA_OIDC_SECRET}"
+              scopes: openid profile email groups
+              empty_scopes: false
+              auth_url: https://auth.${DOMAIN_NAME}/api/oidc/authorization
+              token_url: https://auth.${DOMAIN_NAME}/api/oidc/token
+              api_url: https://auth.${DOMAIN_NAME}/api/oidc/userinfo
+              # Map groups to Grafana roles. Assuming Authelia users are in 'admins' group.
+              role_attribute_path: contains(groups[*], 'admins') && 'Admin' || 'Viewer'
           ingress:
             enabled: false # We will manage ingress manually if needed or via Traefik IngressRoute later
           

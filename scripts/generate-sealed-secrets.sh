@@ -90,6 +90,12 @@ $KUBECTL create secret generic argocd-notifications-secret -n argocd \
   --dry-run=client -o yaml | \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-notifications-sealed-secret.yaml"
 
+echo "5.5 Creazione SealedSecret per ArgoCD OIDC..."
+$KUBECTL create secret generic argocd-oidc-secret -n argocd \
+  --from-literal=oidc.authelia.clientSecret="${ARGOCD_OIDC_SECRET}" \
+  --dry-run=client -o yaml | \
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-oidc-sealed-secret.yaml"
+
 echo "✅ Sealed Secrets generati con successo in $CHART_DIR/secrets"
 
 SSH_KEY="$(dirname "$0")/../.ssh/haac_ed25519"

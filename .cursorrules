@@ -1,0 +1,34 @@
+# HaaC Project AI Directives
+# These rules MUST be followed by any AI Assistant (Cursor, Github Copilot, etc.) interacting with this codebase.
+
+## 1. Absolutely No Hardcoding
+- **Never** hardcode values like domain names, passwords, or deployment variables directly into manifests.
+- **Always** rely on template variables (`${DOMAIN_NAME}`, `{{ .Values.global.domainName }}`).
+- **Environment Variables**: For variables injected at bootstrap time, define them in `.env.example` and read them in scripts/Taskfile.
+- **Secrets Management**: All secrets must be encrypted via Bitnami Sealed Secrets. Do not commit raw secrets. Use `scripts/generate-sealed-secrets.sh` to generate encrypted files.
+
+## 2. Strict Version Management (Renovate)
+- **Do not manually hardcode unmanaged latest container tags or Helm chart versions.**
+- Whenever adding a new Helm chart or container image, you must use a pinned version (e.g., `1.2.3`).
+- You MUST prepend the version with a specific `renovatebot` annotation so that the automated regex manager updates it.
+  - *Example for Helm Charts (HelmRelease/Application):*
+    ```yaml
+    # renovate: registryUrl=https://prometheus-community.github.io/helm-charts chart=kube-prometheus-stack
+    targetRevision: "58.2.2"
+    ```
+- Let Renovate evaluate, test, and perform the bumps via Pull Requests. Do not update versions directly unless requested for a specific hotfix.
+
+## 3. Observability First
+- Every new application deployed must have its metrics and logs tracked.
+- **Metrics**: Ensure the application exposes Prometheus `/metrics` and includes a `ServiceMonitor` or `PodMonitor` object mapped to the `release: kube-prometheus-stack` label.
+- **Logs**: Applications must log to `stdout`/`stderr` so Grafana Alloy can scrape them using CRI.
+- **Dashboards**: A relevant Grafana dashboard (from `grafana.com` or custom) must be auto-provisioned via the `dashboardProviders` config in the `kube-prometheus-stack` values.
+
+## 4. OIDC & Secure Authentication
+- Never expose applications generically or use default basic auth.
+- If an application supports **OpenID Connect (OIDC)**, use it! Configure its OIDC client against our Authelia Single Sign-On provider.
+- If an application doesn't natively support OIDC, expose it via a Traefik `IngressRoute` protected by the `authelia` Middleware.
+
+## 5. Idempotent Automation
+- Make sure Ansible playbooks and bash scripts (`setup-*.sh`) are completely idempotent.
+- Running them 1 or 100 times should result in the same state without throwing errors.
