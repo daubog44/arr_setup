@@ -282,8 +282,8 @@
           register: nvidia_devs
           changed_when: false
 
-- name: Worker Hardware Mapping & Passthrough
-  hosts: k3s_workers
+- name: LXC Node Hardware Mapping & eBPF Setup
+  hosts: k3s_master, k3s_workers
   gather_facts: false
   tasks:
     - name: Get Video and Render GIDs
@@ -388,7 +388,7 @@
       delegate_to: "{{ proxmox_host }}"
 
     - name: Clean up old LXC custom mappings
-      ansible.builtin.shell: "sed -i '/^lxc\\.idmap:/d; /^lxc\\.cgroup2\\.devices\\.allow:/d; /^lxc\\.mount\\.entry: \\/dev\\//d; /^lxc\\.mount\\.entry: \\/usr\\/lib\\//d; /^lxc\\.mount\\.entry: \\/usr\\/bin\\/nvidia/d' /etc/pve/lxc/{{ lxc_vmid }}.conf"
+      ansible.builtin.shell: "sed -i '/^lxc\\.idmap:/d; /^lxc\\.cgroup2\\.devices\\.allow:/d; /^lxc\\.mount\\.entry: \\/dev\\//d; /^lxc\\.mount\\.entry: \\/usr\\/lib\\//d; /^lxc\\.mount\\.entry: \\/usr\\/bin\\/nvidia/d; /^lxc\\.apparmor\\.profile:/d; /^lxc\\.cap\\.drop:/d; /^lxc\\.mount\\.auto:/d; /^lxc\\.mount\\.entry: \\/sys\\/kernel\\/debug/d; /^lxc\\.mount\\.entry: \\/sys\\/kernel\\/btf/d' /etc/pve/lxc/{{ lxc_vmid }}.conf"
       changed_when: false
       delegate_to: "{{ proxmox_host }}"
 
@@ -397,7 +397,12 @@
         path: "/etc/pve/lxc/{{ lxc_vmid }}.conf"
         line: "{{ item }}"
       loop: "{{ (gpu_passthrough_config.stdout_lines + lxc_idmap_config.stdout_lines + [
-          'lxc.cgroup2.devices.allow: c 10:200 rwm',
+          'lxc.cgroup2.devices.allow: a',
+          'lxc.cap.drop: ',
+          'lxc.apparmor.profile: unconfined',
+          'lxc.mount.auto: proc:rw sys:rw',
+          'lxc.mount.entry: /sys/kernel/debug sys/kernel/debug none bind,optional 0 0',
+          'lxc.mount.entry: /sys/kernel/btf sys/kernel/btf none bind,optional 0 0',
           'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file',
           'lxc.mount.entry: ' + (host_nas_path) + ' data none bind,create=dir'
         ]) | reject('equalto', '') | list }}"
