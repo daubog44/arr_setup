@@ -32,31 +32,24 @@ CHART_DIR="$(dirname "$0")/../k8s/charts/haac-stack/templates"
 
 mkdir -p "$CHART_DIR/secrets"
 
-echo "Generazione/Verifica certificato pubblico Sealed Secrets dal cluster locale..."
+echo "Generazione/Verifica certificato pubblico Sealed Secrets..."
 
-# Rimuovi il vecchio certificato se esiste per forzare il fetch da K3s
-rm -f "$PUB_CERT"
+# Provo a prelevare il certificato aggiornato dal cluster
+echo "Tento la connessione al cluster per aggiornare il certificato pubblico..."
 
-MAX_RETRIES=15
-RETRY_DELAY=5
-SUCCESS=false
-
-for i in $(seq 1 $MAX_RETRIES); do
-  if $KUBESEAL --kubeconfig="$KUBECONFIG" --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system > "$PUB_CERT" 2>/dev/null; then
-    echo "Certificato pubblico aggiornato con successo dal cluster."
-    SUCCESS=true
-    break
+if $KUBESEAL --kubeconfig="$KUBECONFIG" --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system > "/tmp/new-pub-cert.pem" 2>/dev/null; then
+  echo "✅ Certificato pubblico aggiornato con successo dal cluster."
+  mv "/tmp/new-pub-cert.pem" "$PUB_CERT"
+else
+  echo "⚠️ Impossibile contattare il cluster (timeout o errore)."
+  if [ -f "$PUB_CERT" ]; then
+    echo "✅ Utilizzo il certificato locale salvato in precedenza in $PUB_CERT"
   else
-    echo "⏳ Tentativo $i/$MAX_RETRIES: Controller Sealed Secrets in avvio, attendo $RETRY_DELAY secondi..."
-    sleep $RETRY_DELAY
+    echo "❌ ERRORE CRITICO: Nessun certificato locale trovato e cluster non raggiungibile."
+    echo "Impossibile cifrare i segreti. Assicurati che K3s sia up almeno una volta per scaricare la chiave pubblica."
+    rm -f "/tmp/new-pub-cert.pem"
+    exit 1
   fi
-done
-
-if [ "$SUCCESS" = false ]; then
-  echo "ERRORE CRITICO: Cluster non raggiungibile o controller Sealed Secrets non pronto."
-  echo "Impossibile cifrare i segreti in modo sicuro. Assicurati che K3s sia in esecuzione e usa 'task deploy-argocd' per installare il controller."
-  rm -f "$PUB_CERT"
-  exit 1
 fi
 
 echo "1. Creazione SealedSecret per ProtonVPN..."
