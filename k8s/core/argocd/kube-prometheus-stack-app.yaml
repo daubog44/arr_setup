@@ -129,6 +129,7 @@ spec:
                   - --web.enable-lifecycle
                 securityContext:
                   privileged: true
+                  allowPrivilegeEscalation: true
                   readOnlyRootFilesystem: false
                 volumeMounts:
                   - name: config-out
