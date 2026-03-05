@@ -112,15 +112,13 @@ QUI_PASS="${HEADLAMP_PASSWORD:-MySecretPassword123!}"
 
 # Wait for qui pod to exist and be ready
 echo "Waiting for QUI pod to become available..."
-POD=$($KUBECTL get pod -l app=downloaders -n media -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || true)
-while [ -z "$POD" ]; do
-  sleep 5
+while true; do
   POD=$($KUBECTL get pod -l app=downloaders -n media -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || true)
-done
-
-until $KUBECTL exec -n media $POD -c qui -- wget --spider -S http://localhost:7476/api/auth/validate 2>&1 | grep "HTTP/" >/dev/null; do
-    echo "  ...waiting for QUI API inside pod $POD..."
-    sleep 5
+  if [ -n "$POD" ] && $KUBECTL exec -n media $POD -c qui -- wget --spider -S http://localhost:7476/api/auth/validate 2>&1 | grep "HTTP/" >/dev/null; then
+    break
+  fi
+  echo "  ...waiting for QUI API inside pod $POD..."
+  sleep 5
 done
 
 echo "Setting up QUI initial admin..."

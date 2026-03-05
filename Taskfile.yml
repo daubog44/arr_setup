@@ -78,6 +78,34 @@ tasks:
       - echo "✅ Infrastruttura e applicazioni completamente deployate."
       - task: verify-all
 
+  plan:
+    desc: "🔍 Run tofu plan safely with all variables."
+    dir: "{{.TOFU_DIR}}"
+    deps: [check-env]
+    env:
+      # Unified Tofu Variables from .env
+      TF_VAR_lxc_password: "{{.LXC_PASSWORD}}"
+      TF_VAR_lxc_master_hostname: "{{.LXC_MASTER_HOSTNAME}}"
+      TF_VAR_master_target_node: "{{.MASTER_TARGET_NODE}}"
+      TF_VAR_k3s_master_ip: "{{.K3S_MASTER_IP}}"
+      TF_VAR_lxc_gateway: "{{.DEFAULT_GATEWAY}}"
+      TF_VAR_worker_nodes: "{{.WORKER_NODES_JSON}}"
+      TF_VAR_host_nas_path: "{{.HOST_NAS_PATH}}"
+      TF_VAR_cloudflare_tunnel_token: "{{.CLOUDFLARE_TUNNEL_TOKEN}}"
+      TF_VAR_domain_name: "{{.DOMAIN_NAME}}"
+      TF_VAR_protonvpn_openvpn_username: "{{.PROTONVPN_OPENVPN_USERNAME}}"
+      TF_VAR_protonvpn_openvpn_password: "{{.PROTONVPN_OPENVPN_PASSWORD}}"
+      TF_VAR_smb_user: "{{.SMB_USER}}"
+      TF_VAR_smb_password: "{{.SMB_PASSWORD}}"
+      TF_VAR_nas_address: "{{.NAS_ADDRESS}}"
+      TF_VAR_nas_share_name: "{{.NAS_SHARE_NAME}}"
+      TF_VAR_storage_uid: "{{.STORAGE_UID}}"
+      TF_VAR_storage_gid: "{{.STORAGE_GID}}"
+    cmds:
+      - echo "🔍 Running tofu plan..."
+      - tofu init
+      - tofu plan
+
   configure-os:
     desc: "⚙️ Esegue *solo* il playbook Ansible per configurare i nodi LXC (utile in caso di fix veloci all'OS)."
     dir: ansible

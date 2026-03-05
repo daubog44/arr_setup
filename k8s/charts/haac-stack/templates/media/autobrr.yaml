@@ -37,6 +37,8 @@ spec:
               value: "{{ .Values.storage.uid }}"
             - name: PGID
               value: "{{ .Values.storage.gid }}"
+            - name: AUTOBRR__HOST
+              value: "0.0.0.0"
           volumeMounts:
             - name: config
               mountPath: /config

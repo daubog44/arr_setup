@@ -49,7 +49,7 @@ resource "proxmox_virtual_environment_container" "k3s_master" {
 
   disk {
     datastore_id = local.chosen_rootfs_datastore
-    size         = 8
+    size         = 20
   }
 
   operating_system {
@@ -111,7 +111,7 @@ resource "proxmox_virtual_environment_container" "k3s_worker" {
 
   disk {
     datastore_id = local.chosen_rootfs_datastore
-    size         = 8
+    size         = 20
   }
 
   operating_system {
