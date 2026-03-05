@@ -19,6 +19,9 @@ spec:
         driver:
           enabled: false
           kind: nodriver
+        falco:
+          audit_log:
+            enabled: true
         # Explicitly grant privileges for eBPF on LXC
         containerSecurityContext:
           privileged: true
