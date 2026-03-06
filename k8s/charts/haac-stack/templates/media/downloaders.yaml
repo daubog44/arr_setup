@@ -72,7 +72,7 @@ spec:
             failureThreshold: 5
 
         - name: port-sync
-          image: curlimages/curl:8.6.0
+          image: curlimages/curl:8.18.0
           env:
             - name: QBIT_USER
               value: "{{ .Values.qui.username }}"
