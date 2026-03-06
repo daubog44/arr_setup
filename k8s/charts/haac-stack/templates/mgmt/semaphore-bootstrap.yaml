@@ -24,7 +24,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: bootstrapper
-          image: curlimages/curl:8.6.0
+          image: curlimages/curl:8.18.0
           env:
             - name: SEMAPHORE_URL
               value: "http://semaphore.mgmt.svc.cluster.local:3000"
