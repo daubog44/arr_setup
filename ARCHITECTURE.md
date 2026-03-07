@@ -78,5 +78,5 @@ Se vuoi provare una modifica ai file YAML **subito**, senza dover pushare su Git
 ```bash
 # By-passa ArgoCD, compila e applica l'Helm Chart usando il tuo terminale direttamente in K3s.
 # Utile se non sei sicuro che la configurazione funzioni e non vuoi "sporcare" i commit su Git.
-task deploy-test
+task deploy-local
 ```

@@ -148,7 +148,7 @@ resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
     proxmox_hosts      = distinct(concat([var.master_target_node], [for k, v in var.worker_nodes : v.target_node]))
     proxmox_host_user  = "root"
-    master_ip          = try(element(split("/", lookup(proxmox_virtual_environment_container.k3s_master.ipv4, "eth0", "")), 0), "")
+    master_ip          = var.k3s_master_ip != "" && var.k3s_master_ip != "dhcp" ? element(split("/", var.k3s_master_ip), 0) : try(element(split("/", lookup(proxmox_virtual_environment_container.k3s_master.ipv4, "eth0", "")), 0), "")
     master_vmid        = proxmox_virtual_environment_container.k3s_master.vm_id
     master_target_node = var.master_target_node
     workers            = proxmox_virtual_environment_container.k3s_worker

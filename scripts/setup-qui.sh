@@ -6,7 +6,7 @@ if [ -f .env ]; then
   source .env
 fi
 
-QUI_URL="https://qui.${DOMAIN_NAME:-nucleoautogenerativo.it}"
+QUI_URL="https://qui.${DOMAIN_NAME}"
 # Default credentials or from env
 QUI_USER="${QUI_USERNAME:-admin}"
 QUI_PASS="${QUI_PASSWORD:-MySecretPassword123!}"

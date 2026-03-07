@@ -781,6 +781,9 @@
         - mgmt
         - longhorn-system
         - cloudflared
+        - chaos
+        - monitoring
+        - security
 
     # --- Sealed Secrets Controller ---
     - name: Install Sealed Secrets Controller

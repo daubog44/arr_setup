@@ -5,7 +5,7 @@ dotenv: [".env"]
 vars:
   TOFU_DIR: tofu
   DEFAULT_GATEWAY:
-    sh: "ip route | grep default | awk '{print $3}' | head -n 1"
+    sh: "ssh -o StrictHostKeyChecking=no root@$(grep '^MASTER_TARGET_NODE=' .env | cut -d'=' -f2) \"ip route | grep default | awk '{print \\$3}' | head -n 1\""
 
 tasks:
   default:
@@ -75,6 +75,7 @@ tasks:
       - task: configure-os
       - echo "🚢 Inizializzazione flotta GitOps Kubernetes..."
       - task: gitops-bootstrap
+        vars: { PUSH_ALL: "{{.PUSH_ALL}}" }
       - echo "✅ Infrastruttura e applicazioni completamente deployate."
       - task: verify-all
 
@@ -124,7 +125,8 @@ tasks:
       # ① Prima genera i sealed secrets con la chiave del NUOVO cluster...
       - task: generate-secrets
       # ② ...poi committali e pushali su git PRIMA che ArgoCD inizi a sincronizzare
-      - task: push-secrets
+      - task: push-changes
+        vars: { PUSH_ALL: "{{.PUSH_ALL}}" }
       # ③ Ora deploya ArgoCD: sincronizzerà i secrets già corretti
       - task: deploy-argocd
       - task: deploy-local
@@ -171,7 +173,9 @@ tasks:
       - echo "Aggiorno l'IP del server nel kubeconfig..."
       - sed -i "s/https:\/\/.*:6443/https:\/\/127.0.0.1:6443/g" {{.K3S_KUBECONFIG}}
       - echo "Applicazione ArgoCD Applications (con sostituzione DOMAIN_NAME)..."
-      - "find k8s/core/argocd -name \"*.yaml\" -type f | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
+      - "find k8s/core/argocd -name \"*.yaml\" -type f -not -name \"reposerver-patch.yaml\" | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
+      - echo "Patching ArgoCD Repo Server for idempotency..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} patch deployment argocd-repo-server -n argocd --patch-file k8s/core/argocd/reposerver-patch.yaml
       - echo "Patch configmap ArgoCD per disabilitare TLS interno (Traefik lo gestisce)..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} patch configmap argocd-cmd-params-cm -n argocd --type merge -p '{"data":{"server.insecure":"true"}}' || true
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
@@ -196,18 +200,30 @@ tasks:
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
       - echo "✅ Fatto! Ricordati di fare commit e push dei file generati in k8s/charts/haac-stack/templates/secrets/"
 
-  push-secrets:
-    desc: "📤 Aggiorna i SealedSecrets su git senza sporcare la history (amend + force-with-lease)."
+  push-changes:
+    desc: "📤 Aggiorna i file su git. Se PUSH_ALL=true, include tutto. Default: solo secrets (amend)."
     cmds:
-      - echo "📤 Aggiornamento SealedSecrets su git (amend dell'ultimo commit)..."
-      - git add k8s/charts/haac-stack/templates/secrets/ k8s/charts/haac-stack/values.yaml
       - |
-        if git diff --cached --quiet; then
-          echo "  ℹ️  Nessuna modifica ai secrets (già aggiornati con la chiave corrente)."
+        if [ "{{.PUSH_ALL}}" == "true" ]; then
+          echo "📤 PUSH_ALL=true: Aggiunta di tutte le modifiche (inclusi file non tracciati)..."
+          git add .
+          if git diff --cached --quiet; then
+            echo "  ℹ️  Nessuna modifica rilevata."
+          else
+            git commit -m "🚀 Auto-push infrastructure fixes and patches [skip ci]" || git commit --amend --no-edit
+            git push --force-with-lease
+            echo "  ✅ Tutte le modifiche caricate su GitHub."
+          fi
         else
-          git commit --amend --no-edit
-          git push --force-with-lease
-          echo "  ✅ SealedSecrets aggiornati nell'ultimo commit. History git pulita."
+          echo "📤 Aggiornamento solo SealedSecrets (amend)..."
+          git add k8s/charts/haac-stack/templates/secrets/ k8s/charts/haac-stack/values.yaml
+          if git diff --cached --quiet; then
+            echo "  ℹ️  Nessuna modifica ai secrets."
+          else
+            git commit --amend --no-edit
+            git push --force-with-lease
+            echo "  ✅ SealedSecrets aggiornati. History pulita."
+          fi
         fi
 
   setup-hooks:
