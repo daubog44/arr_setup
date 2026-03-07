@@ -11,7 +11,7 @@ spec:
     repoURL: https://falcosecurity.github.io/charts
     chart: falco
     # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
-    targetRevision: "4.10.0"
+    targetRevision: "4.22.0"
     helm:
       values: |
         # Use eBPF driver which is safer and modern for newer kernels (Proxmox 8 / K3s)
