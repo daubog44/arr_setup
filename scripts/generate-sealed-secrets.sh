@@ -78,7 +78,7 @@ $KUBECTL create secret generic authelia-config-files -n mgmt \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/authelia-sealed-secret.yaml"
 
 echo "5. Creazione SealedSecret per ArgoCD Notifications (Ntfy)..."
-$KUBECTL create secret generic argocd-notifications-secret -n argocd \
+$KUBECTL create secret generic argocd-notifications-custom-secret -n argocd \
   --from-literal=ntfy-webhook-url="http://ntfy.mgmt.svc.cluster.local:80/${NTFY_TOPIC}" \
   --dry-run=client -o yaml | \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-notifications-sealed-secret.yaml"
