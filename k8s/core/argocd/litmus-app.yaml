@@ -11,7 +11,7 @@ spec:
     repoURL: https://litmuschaos.github.io/litmus-helm/
     chart: litmus
     # renovate: registryUrl=https://litmuschaos.github.io/litmus-helm/ chart=litmus
-    targetRevision: "3.8.0"
+    targetRevision: "3.26.0"
     helm:
       values: |
         portal:
