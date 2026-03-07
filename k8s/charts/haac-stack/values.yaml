@@ -7,6 +7,9 @@ storage:
 
 vpn:
   serverCountries: "Netherlands"
+  podSubnet: "10.42.0.0/16"
+  svcSubnet: "10.43.0.0/16"
+  dnsIp: "10.43.0.10"
 
 qui:
   username: "admin"

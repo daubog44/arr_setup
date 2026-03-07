@@ -7,6 +7,9 @@ storage:
 
 vpn:
   serverCountries: "${PROTONVPN_SERVER_COUNTRIES}"
+  podSubnet: "${VPN_POD_SUBNET}"
+  svcSubnet: "${VPN_SVC_SUBNET}"
+  dnsIp: "${VPN_DNS_IP}"
 
 qui:
   username: "${QUI_USERNAME}"
