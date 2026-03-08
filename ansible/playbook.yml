@@ -522,6 +522,17 @@
         state: directory
         mode: '0755'
 
+    - name: Configure K3s Registry Mirror (Docker Hub Rate Limit Bypass)
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/registries.yaml
+        content: |
+          mirrors:
+            docker.io:
+              endpoint:
+                - "https://mirror.gcr.io"
+        owner: root
+        group: root
+        mode: '0644'
 
     - name: Tell Proxmox / LXC to stop managing resolv.conf
       ansible.builtin.file:

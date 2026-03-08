@@ -1,6 +1,6 @@
 output "master_ip" {
   description = "The designated IP address of the K3s Master LXC container"
-  value       = try(element(split("/", lookup(proxmox_virtual_environment_container.k3s_master.ipv4, "eth0", "")), 0), "")
+  value       = try(element(split("/", lookup(proxmox_virtual_environment_container.k3s_master.ipv4, "eth0", var.k3s_master_ip)), 0), "")
 }
 
 output "master_vmid" {
@@ -17,7 +17,7 @@ output "workers" {
   description = "Map of worker nodes with their IP addresses and VMIDs"
   value = {
     for k, v in proxmox_virtual_environment_container.k3s_worker : k => {
-      ip   = try(element(split("/", lookup(v.ipv4, "eth0", "")), 0), "")
+      ip   = try(element(split("/", lookup(v.ipv4, "eth0", var.worker_nodes[k].ip)), 0), "")
       vmid = v.vm_id
     }
   }
