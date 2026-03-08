@@ -13,4 +13,5 @@ spec:
       match: Host(`longhorn.{{ .Values.global.domainName }}`)
       services:
         - name: longhorn-frontend
+          namespace: longhorn-system
           port: 80

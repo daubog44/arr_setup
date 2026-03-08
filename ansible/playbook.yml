@@ -842,7 +842,9 @@
             source:
               repoURL: https://github.com/daubog44/arr_setup.git
               targetRevision: HEAD
-              path: HaaC/k8s/core/argocd
+              path: k8s/core
+              directory:
+                recurse: true
             destination:
               server: https://kubernetes.default.svc
               namespace: argocd

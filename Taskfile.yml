@@ -142,9 +142,16 @@ tasks:
 
   monitor:
     desc: "👀 Avvia K9s (il non plus ultra per monitorare Kubernetes da terminale). Lo scarica in automatico se ti manca."
+    interactive: true
     vars:
       K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
+      MASTER_IP:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
+      PROXMOX_HOST:
+        sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
     cmds:
+      - echo "🔭 Apertura SSH Tunnel per K9s..."
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
       - |
         if ! command -v k9s &> /dev/null; then
           echo "📥 K9s non trovato. Lo scarico per te in ~/.local/bin/k9s..."
@@ -152,8 +159,9 @@ tasks:
           wget -qO- https://github.com/derailed/k9s/releases/download/v0.50.18/k9s_Linux_amd64.tar.gz | tar -xz -C ~/.local/bin k9s
           chmod +x ~/.local/bin/k9s
         fi
-        echo "� Avvio K9s... Premi ':' e scrivi 'ns' per cambiare namespace, o 'ctrl+c' per uscire!"
+        echo "🚀 Avvio K9s... Premi ':' e scrivi 'ns' per cambiare namespace, o 'ctrl+c' per uscire!"
         KUBECONFIG={{.K3S_KUBECONFIG}} ~/.local/bin/k9s --all-namespaces
+      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
   deploy-argocd:
     desc: "🧱 Applica le configurazioni ArgoCD con sostituzione del dominio (sealed secrets e namespace li gestisce il playbook Ansible)."
