@@ -167,44 +167,54 @@ tasks:
     desc: "🧱 Applica le configurazioni ArgoCD con sostituzione del dominio (sealed secrets e namespace li gestisce il playbook Ansible)."
     deps: [check-env]
     vars:
-      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
       KUBECTL: "/home/daubog44/.local/bin/kubectl"
+      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
       MASTER_IP:
         sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
       PROXMOX_HOST:
         sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
     cmds:
-      - echo "Opening SSH Tunnel per applicare le ArgoCD Application con DOMAIN_NAME..."
-      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}}
+      - echo "🔭 Apertura SSH Tunnel per ArgoCD API..."
+      - pkill -f "ssh -L 6443:" || true
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -N -f root@{{.PROXMOX_HOST}}
       - echo "Aggiorno l'IP del server nel kubeconfig..."
       - sed -i "s/https:\/\/.*:6443/https:\/\/127.0.0.1:6443/g" {{.K3S_KUBECONFIG}}
-      - echo "Applicazione ArgoCD Applications (con sostituzione DOMAIN_NAME)..."
+      - echo "⏳ Attendo che K3s API sia pronta via tunnel..."
+      - "until KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get --raw /healthz >/dev/null 2>&1; do sleep 2; echo '... waiting for API ...'; done"
+      - echo "Applicazione ArgoCD Applications..."
       - "find k8s/core/argocd -name \"*.yaml\" -type f -not -name \"reposerver-patch.yaml\" | xargs -I {} sh -c \"export DOMAIN_NAME={{.DOMAIN_NAME}}; envsubst '\\$DOMAIN_NAME' < {} | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -\""
-      - echo "Patching ArgoCD Repo Server for idempotency..."
+      - echo "Patching ArgoCD Repo Server..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} patch deployment argocd-repo-server -n argocd --patch-file k8s/core/argocd/reposerver-patch.yaml
-      - echo "Patch configmap ArgoCD per disabilitare TLS interno (Traefik lo gestisce)..."
+      - echo "Patching ArgoCD Params..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} patch configmap argocd-cmd-params-cm -n argocd --type merge -p '{"data":{"server.insecure":"true"}}' || true
-      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
-      - echo "✅ ArgoCD Applications create. ArgoCD sincronizzerà il cluster in autonomia."
+      - pkill -f "ssh -L 6443:" || true
+      - echo "✅ ArgoCD Applications create."
 
   generate-secrets:
     desc: "🔐 Estrae valori dal .env locale, idrata i template e cripta i SealedSecrets in locale (Non tocca il cluster)."
     deps: [check-env]
     vars:
+      KUBECTL: "/home/daubog44/.local/bin/kubectl"
+      K3S_KUBECONFIG: "/home/daubog44/.kube/haac-k3s.yaml"
       MASTER_IP:
         sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_ip 2>/dev/null | head -n 1 || echo '127.0.0.1'"
       PROXMOX_HOST:
         sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
     cmds:
-      - echo "Opening SSH Tunnel to K3s Master for kubeseal cert fetch..."
-      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
-      - echo "🔐 Generazione dei Sealed Secrets per il setup GitOps..."
+      - echo "🔭 Apertura SSH Tunnel per Kubeseal cert fetch..."
+      - pkill -f "ssh -L 6443:" || true
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -N -f root@{{.PROXMOX_HOST}}
+      - echo "Aggiorno l'IP del server nel kubeconfig..."
+      - sed -i "s/https:\/\/.*:6443/https:\/\/127.0.0.1:6443/g" {{.K3S_KUBECONFIG}}
+      - echo "⏳ Attendo che K3s API sia pronta via tunnel..."
+      - "until KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get --raw /healthz >/dev/null 2>&1; do sleep 2; echo '... waiting for API ...'; done"
+      - echo "🔐 Generazione dei Sealed Secrets..."
       - ./scripts/generate-sealed-secrets.sh
-      - echo "📦 Caricamento Ansible Inventory su Kubernetes come ConfigMap per Semaphore..."
-      - KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl create namespace mgmt --dry-run=client -o yaml | KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl apply -f -
-      - KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl create configmap ansible-inventory-cm -n mgmt --from-file=inventory.yml=./ansible/inventory.yml --dry-run=client -o yaml | KUBECONFIG=$HOME/.kube/haac-k3s.yaml kubectl apply -f -
-      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
-      - echo "✅ Fatto! Ricordati di fare commit e push dei file generati in k8s/charts/haac-stack/templates/secrets/"
+      - echo "📦 Caricamento Ansible Inventory su K8s..."
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} create namespace mgmt --dry-run=client -o yaml | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -
+      - KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} create configmap ansible-inventory-cm -n mgmt --from-file=inventory.yml=./ansible/inventory.yml --dry-run=client -o yaml | KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} apply -f -
+      - pkill -f "ssh -L 6443:" || true
+      - echo "✅ Secrets generati e CM caricata."
 
   push-changes:
     desc: "📤 Aggiorna i file su git. Se PUSH_ALL=true, include tutto. Default: solo secrets (amend)."
@@ -284,10 +294,15 @@ tasks:
         sh: "tofu -chdir={{.TOFU_DIR}} output -raw master_target_node 2>/dev/null | head -n 1 || echo 'pve'"
     cmds:
       - echo "🔭 Apertura SSH Tunnel per monitoraggio cluster..."
-      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
+      - pkill -f "ssh -L 6443:" || true
+      - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -N -f root@{{.PROXMOX_HOST}}
+      - echo "Aggiorno l'IP del server nel kubeconfig..."
+      - sed -i "s/https:\/\/.*:6443/https:\/\/127.0.0.1:6443/g" {{.K3S_KUBECONFIG}}
+      - echo "⏳ Attendo che l'API Server sia raggiungibile tramite tunnel..."
+      - "until KUBECONFIG={{.K3S_KUBECONFIG}} {{.KUBECTL}} get --raw /healthz >/dev/null 2>&1; do sleep 1; done"
       - echo "⏳ Attendo che lo stack sia pienamente operativo (ArgoCD sync + secrets + pod)..."
       - KUBECONFIG={{.K3S_KUBECONFIG}} KUBECTL={{.KUBECTL}} WAIT_TIMEOUT=3600 ./scripts/wait-for-stack.sh
-      - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
+      - pkill -f "ssh -L 6443:" || true
 
   verify-cluster:
     desc: "🛠️ Riesegue i ping al cluster master/worker e controlla il networking dei nodi K3s interni."
@@ -353,6 +368,39 @@ tasks:
       - 'ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} "pct exec $(tofu -chdir={{.TOFU_DIR}} output -raw master_vmid) -- systemctl start k3s"'
       - 'echo "✅ K3s ripristinato con successo! Controlla i pod con: kubectl get pods -A"'
 
+  shutdown-cluster:
+    desc: "⏹️ Spegne graziosamente i container LXC (K3s) su Proxmox con timeout e fallback."
+    dir: "{{.TOFU_DIR}}"
+    cmds:
+      - |
+        # Usiamo -json per evitare di catturare box di diagnostica/warning su stdout
+        JSON_OUTPUT=$(tofu output -json 2>/dev/null || echo "{}")
+        MASTER_VMID=$(echo "$JSON_OUTPUT" | jq -r '.master_vmid.value // empty')
+        WORKER_VMIDS=$(echo "$JSON_OUTPUT" | jq -r '.workers.value[].vmid // empty')
+
+        shutdown_vm() {
+          local vmid=$1
+          local name=$2
+          # Validazione: deve essere un numero intero
+          if [[ "$vmid" =~ ^[0-9]+$ ]]; then
+            echo "⏳ Tentativo di shutdown grazioso per $name (VMID $vmid)..."
+            # 1. Fermo i servizi K3s internamente (velocizza lo shutdown e pulisce i mount)
+            ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} "pct exec $vmid -- systemctl stop k3s k3s-agent" || true
+            # 2. Comando shutdown con timeout di 3 minuti
+            if ! ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} "pct shutdown $vmid --timeout 180"; then
+              echo "⚠️ Shutdown grazioso fallito o timeout per $name. Eseguo stop forzato..."
+              ssh -o StrictHostKeyChecking=no root@{{.MASTER_TARGET_NODE}} "pct stop $vmid" || true
+            fi
+          else
+            echo "⏭️ Salto $name: VMID '$vmid' non valido o non trovato."
+          fi
+        }
+
+        shutdown_vm "$MASTER_VMID" "Master"
+        for vmid in $WORKER_VMIDS; do
+          shutdown_vm "$vmid" "Worker"
+        done
+
   down:
     desc: Distrugge l'infrastruttura (LXC e tutto il suo contenuto).
     dir: "{{.TOFU_DIR}}"
@@ -378,5 +426,6 @@ tasks:
       TF_VAR_storage_gid: "{{.STORAGE_GID}}"
 
     cmds:
+      - task: shutdown-cluster
       - tofu init
       - tofu destroy -auto-approve
