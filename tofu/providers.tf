@@ -2,7 +2,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.97.0" # Latest stable version for bpg/proxmox
+      version = "~> 0.98.0" # Latest stable version for bpg/proxmox
     }
     external = {
       source  = "hashicorp/external"
