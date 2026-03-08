@@ -23,7 +23,8 @@
         "patch"
       ],
       "automerge": true,
-      "automergeType": "pr"
+      "automergeType": "pr",
+      "ignoreTests": true
     },
     {
       "matchPackageNames": [

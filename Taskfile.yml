@@ -133,8 +133,6 @@ tasks:
       - task: wait-for-argocd-sync
       - task: sync-cloudflare
       - task: configure-apps
-      - echo "📦 Sincronizzazione inventory Ansible nel cluster per il CronJob di manutenzione..."
-      - KUBECONFIG=/home/daubog44/.kube/haac-k3s.yaml /home/daubog44/.local/bin/kubectl create configmap ansible-inventory-cm -n mgmt --from-file=inventory.yml=ansible/inventory.yml --dry-run=client -o yaml | KUBECONFIG=/home/daubog44/.kube/haac-k3s.yaml /home/daubog44/.local/bin/kubectl apply -f -
 
   verify-all:
     desc: "🔎 Pipeline di verifica totale: controlla salute del cluster Kubernetes e raggiungibilità dei servizi sul Web."
