@@ -286,7 +286,7 @@ tasks:
       - echo "🔭 Apertura SSH Tunnel per monitoraggio cluster..."
       - ssh -L 6443:{{.MASTER_IP}}:6443 -o StrictHostKeyChecking=no -N -f root@{{.PROXMOX_HOST}} || true
       - echo "⏳ Attendo che lo stack sia pienamente operativo (ArgoCD sync + secrets + pod)..."
-      - KUBECONFIG={{.K3S_KUBECONFIG}} KUBECTL={{.KUBECTL}} WAIT_TIMEOUT=1200 ./scripts/wait-for-stack.sh
+      - KUBECONFIG={{.K3S_KUBECONFIG}} KUBECTL={{.KUBECTL}} WAIT_TIMEOUT=3600 ./scripts/wait-for-stack.sh
       - pkill -f "ssh -L 6443:{{.MASTER_IP}}:6443" || true
 
   verify-cluster:

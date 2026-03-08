@@ -89,7 +89,13 @@ $KUBECTL create secret generic argocd-sso-secret -n argocd \
   --dry-run=client -o yaml | \
   $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-sso-sealed-secret.yaml"
 
-echo "5.6 Creazione SealedSecret per Grafana OIDC..."
+echo "5.6 Creazione SealedSecret per ArgoCD OIDC..."
+$KUBECTL create secret generic argocd-oidc-secret -n argocd \
+  --from-literal=client_secret="${ARGOCD_OIDC_SECRET}" \
+  --dry-run=client -o yaml | \
+  $KUBESEAL --format=yaml --cert="$PUB_CERT" > "$CHART_DIR/secrets/argocd-oidc-sealed-secret.yaml"
+
+echo "5.7 Creazione SealedSecret per Grafana OIDC..."
 $KUBECTL create secret generic grafana-oidc-secret -n monitoring \
   --from-literal=clientSecret="${GRAFANA_OIDC_SECRET}" \
   --dry-run=client -o yaml | \

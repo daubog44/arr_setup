@@ -108,7 +108,17 @@
         - "{{ host_nas_path }}/media/tv"
 
     - name: Ensure Host NAS directory is owned by bare-metal UID/GID
-      ansible.builtin.shell: "chown -R {{ storage_uid | default(13000) }}:{{ storage_gid | default(13000) }} {{ host_nas_path }} && chmod -R 777 {{ host_nas_path }}"
+      ansible.builtin.shell: "chown -R {{ storage_uid | default(13000) }}:{{ storage_uid | default(13000) }} {{ host_nas_path }} && chmod -R 777 {{ host_nas_path }}"
+
+    - name: Enable bridge netfilter on Proxmox Host (Required for K3s networking)
+      ansible.builtin.sysctl:
+        name: "{{ item }}"
+        value: '1'
+        state: present
+        reload: yes
+      loop:
+        - net.bridge.bridge-nf-call-iptables
+        - net.bridge.bridge-nf-call-ip6tables
 
 - name: Host Hardware Discovery & Driver Setup
   hosts: proxmox_host
@@ -637,6 +647,7 @@
             - servicelb
           write-kubeconfig-mode: "644"
           cluster-cidr: "{{ hostvars[inventory_hostname]['k3s_pod_cidr'] | default('10.42.0.0/16') }}"
+          flannel-backend: host-gw
           resolv-conf: /etc/rancher/k3s/resolv.conf
         owner: root
         group: root
@@ -650,6 +661,13 @@
           --resolv-conf /etc/rancher/k3s/resolv.conf
       args:
         creates: /usr/local/bin/k3s
+
+    - name: Fix K3s service definition for LXC compatibility (ignore modprobe failures)
+      ansible.builtin.replace:
+        path: /etc/systemd/system/k3s.service
+        regexp: 'ExecStartPre=/sbin/modprobe'
+        replace: 'ExecStartPre=-/sbin/modprobe'
+      notify: Reload systemd and restart K3s
 
     - name: Wait for node-token
       ansible.builtin.wait_for:
@@ -703,6 +721,13 @@
         curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${TOKEN} sh -
       args:
         creates: /usr/local/bin/k3s
+
+    - name: Fix K3s-agent service definition for LXC compatibility (ignore modprobe failures)
+      ansible.builtin.replace:
+        path: /etc/systemd/system/k3s-agent.service
+        regexp: 'ExecStartPre=/sbin/modprobe'
+        replace: 'ExecStartPre=-/sbin/modprobe'
+      notify: Reload systemd and restart k3s-agent
 
     - name: Wait for K3s containerd config.toml to be created (async after install)
       ansible.builtin.wait_for:
@@ -912,4 +937,17 @@
         name: unattended-upgrades
         enabled: true
         state: started
+
+  handlers:
+    - name: Reload systemd and restart K3s
+      ansible.builtin.systemd:
+        name: k3s
+        state: restarted
+        daemon_reload: yes
+
+    - name: Reload systemd and restart k3s-agent
+      ansible.builtin.systemd:
+        name: k3s-agent
+        state: restarted
+        daemon_reload: yes
 

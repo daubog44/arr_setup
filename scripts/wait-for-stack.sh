@@ -7,7 +7,7 @@ set -euo pipefail
 
 K3S_KUBECONFIG="${KUBECONFIG:-$HOME/.kube/haac-k3s.yaml}"
 KUBECTL="${KUBECTL:-kubectl}"
-TIMEOUT="${WAIT_TIMEOUT:-600}"   # secondi totali di attesa (default: 10 minuti)
+TIMEOUT="${WAIT_TIMEOUT:-1800}"   # secondi totali di attesa (default: 30 minuti)
 INTERVAL=10
 
 elapsed=0
