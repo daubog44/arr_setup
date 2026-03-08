@@ -16,7 +16,7 @@ spec:
     repoURL: https://kubernetes-sigs.github.io/descheduler/
     chart: descheduler
     # renovate: registryUrl=https://kubernetes-sigs.github.io/descheduler/ chart=descheduler
-    targetRevision: "0.32.2"
+    targetRevision: "0.35.0"
     helm:
       values: |
         kind: CronJob
