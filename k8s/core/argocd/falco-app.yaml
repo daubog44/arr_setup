@@ -18,9 +18,7 @@ spec:
         # However, eBPF requires kernel headers. Falco's modern ebpf probe builder handles this well.
         driver:
           enabled: true
-          kind: modern_ebpf
-        falco:
-          enabled: true
+          kind: ebpf
         # Explicitly grant privileges for eBPF on LXC
         containerSecurityContext:
           privileged: true
