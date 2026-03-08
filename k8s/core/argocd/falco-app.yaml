@@ -17,7 +17,7 @@ spec:
         # Use eBPF driver which is safer and modern for newer kernels (Proxmox 8 / K3s)
         # However, eBPF requires kernel headers. Falco's modern ebpf probe builder handles this well.
         driver:
-          enabled: true
+          enabled: false
           kind: ebpf
         # Explicitly grant privileges for eBPF on LXC
         containerSecurityContext:
