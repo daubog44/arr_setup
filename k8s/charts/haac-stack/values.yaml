@@ -13,6 +13,11 @@ vpn:
 
 qui:
   username: "admin"
+  password: "MySecretPassword123!"
+  oidcSecret: "Ecf6SukrDvyDnH"
+
+headlamp:
+  oidcSecret: "JhHNDpzhTqaxttdBy15sz9wo1gMOt444O6"
 
 longhorn:
   defaultSettings:

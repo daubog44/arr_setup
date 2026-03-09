@@ -17,29 +17,29 @@ spec:
     spec:
       serviceAccountName: headlamp-admin
       containers:
-      - name: headlamp
-        image: ghcr.io/headlamp-k8s/headlamp:v0.40.1
-        ports:
-        - containerPort: 4466
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 4466
-          initialDelaySeconds: 15
-          periodSeconds: 30
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 4466
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        args:
-          - "-in-cluster"
-          - "-oidc-client-id=headlamp"
-          - "-oidc-client-secret=${HEADLAMP_OIDC_SECRET}"
-          - "-oidc-idp-issuer-url=https://auth.{{ .Values.global.domainName }}"
-          - "-oidc-scopes=openid,profile,groups,email"
+        - name: headlamp
+          image: ghcr.io/headlamp-k8s/headlamp:v0.40.1
+          ports:
+            - containerPort: 4466
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4466
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4466
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          args:
+            - "-in-cluster"
+            - "-oidc-client-id=headlamp"
+            - "-oidc-client-secret={{ .Values.headlamp.oidcSecret }}"
+            - "-oidc-idp-issuer-url=https://auth.{{ .Values.global.domainName }}"
+            - "-oidc-scopes=openid,profile,groups,email"
 ---
 apiVersion: v1
 kind: Service
@@ -48,7 +48,7 @@ metadata:
   namespace: mgmt
 spec:
   ports:
-  - port: 80
-    targetPort: 4466
+    - port: 80
+      targetPort: 4466
   selector:
     app.kubernetes.io/name: headlamp

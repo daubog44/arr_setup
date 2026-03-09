@@ -13,6 +13,11 @@ vpn:
 
 qui:
   username: "${QUI_USERNAME}"
+  password: "${QUI_PASSWORD}"
+  oidcSecret: "${QUI_OIDC_SECRET}"
+
+headlamp:
+  oidcSecret: "${HEADLAMP_OIDC_SECRET}"
 
 longhorn:
   defaultSettings:
