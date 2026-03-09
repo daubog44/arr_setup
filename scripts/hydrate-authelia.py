@@ -4,9 +4,10 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(CURRENT_DIR, "../k8s/charts/haac-stack/config-templates")
 
 # Load .env
+env_path = os.path.join(CURRENT_DIR, "../.env")
 env = {}
-if os.path.exists(".env"):
-    with open(".env") as f:
+if os.path.exists(env_path):
+    with open(env_path) as f:
         for line in f:
             if "=" in line and not line.startswith("#"):
                 k, v = line.strip().split("=", 1)
