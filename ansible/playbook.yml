@@ -842,7 +842,7 @@
     - name: Install ArgoCD
       ansible.builtin.command: >
         k3s kubectl apply -n argocd --server-side --force-conflicts
-        -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.2/manifests/install.yaml
+        -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.3/manifests/install.yaml
       register: install_argo
       changed_when: "'created' in install_argo.stdout or 'configured' in install_argo.stdout"
 
