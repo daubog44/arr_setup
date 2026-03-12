@@ -824,7 +824,7 @@
     # --- Sealed Secrets Controller ---
     - name: Install Sealed Secrets Controller
       ansible.builtin.command: >
-        k3s kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.36.0/controller.yaml
+        k3s kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.36.1/controller.yaml
       register: sealed_secrets_result
       changed_when: "'created' in sealed_secrets_result.stdout or 'configured' in sealed_secrets_result.stdout"
 
