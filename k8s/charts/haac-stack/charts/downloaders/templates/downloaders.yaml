@@ -230,6 +230,8 @@ kind: Service
 metadata:
   name: qbittorrent
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   selector:
     app: downloaders

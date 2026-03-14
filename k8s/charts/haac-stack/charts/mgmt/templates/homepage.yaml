@@ -67,6 +67,8 @@ kind: Service
 metadata:
   name: homepage
   namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   selector:
     app: homepage

@@ -20,6 +20,8 @@ kind: Deployment
 metadata:
   name: authelia
   namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1
   selector:
@@ -84,6 +86,8 @@ kind: Service
 metadata:
   name: authelia
   namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
