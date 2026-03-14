@@ -33,6 +33,11 @@ until $KUBECTL --kubeconfig="$K3S_KUBECONFIG" get application haac-stack -n argo
     -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "N/A")
   HEALTH_STATUS=$($KUBECTL --kubeconfig="$K3S_KUBECONFIG" get application haac-stack -n argocd \
     -o jsonpath='{.status.health.status}' 2>/dev/null || echo "N/A")
+  
+  if [ "$HEALTH_STATUS" = "Degraded" ]; then
+    fail "haac-stack è in stato Degraded! Controlla ArgoCD per i dettagli sull'errore."
+  fi
+
   log "   ...haac-stack sync=${SYNC_STATUS} health=${HEALTH_STATUS} (${elapsed}s/${TIMEOUT}s)"
   sleep $INTERVAL; elapsed=$((elapsed + INTERVAL))
 done
