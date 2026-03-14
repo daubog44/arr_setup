@@ -38,6 +38,8 @@ kind: CronJob
 metadata:
   name: recyclarr
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   schedule: "0 4 * * 0"  # Every Sunday at 04:00
   concurrencyPolicy: Forbid
@@ -67,11 +69,38 @@ spec:
                 claimName: recyclarr-config
           restartPolicy: OnFailure
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: recyclarr-pvc-binder
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: binder
+          image: busybox:1.37.0
+          command: ["sh", "-c", "echo 'Binding PVC for Local-Path provisioner'"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: recyclarr-config
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: recyclarr-config
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   accessModes:
     - ReadWriteOnce
