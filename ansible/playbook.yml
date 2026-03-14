@@ -848,9 +848,14 @@
       register: ss_ready
       retries: 6
       delay: 10
-      until: ss_ready.rc == 0
-      changed_when: false
-      ignore_errors: true
+
+    - name: Wait for Sealed Secrets master key to be generated
+      ansible.builtin.shell: |
+        k3s kubectl get secrets -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key=active --no-headers | grep -q "sealed-secrets-key"
+      register: ss_key_ready
+      until: ss_key_ready.rc == 0
+      retries: 24
+      delay: 5
 
     # --- ArgoCD ---
     - name: Install ArgoCD

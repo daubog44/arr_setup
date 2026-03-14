@@ -370,3 +370,4 @@ tasks:
       - task: shutdown-cluster
       - tofu init
       - tofu destroy -auto-approve
+      - rm -f ../scripts/pub-sealed-secrets.pem
