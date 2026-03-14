@@ -483,11 +483,11 @@
         replace: 'main contrib non-free non-free-firmware'
       when: legacy_sources.stat.exists
 
-    - name: Ensure no stale apt locks
+    - name: Wait for apt locks to be released
       ansible.builtin.shell: |
-        rm -f /var/lib/apt/lists/lock
-        rm -f /var/cache/apt/archives/lock
-        rm -f /var/lib/dpkg/lock*
+        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          sleep 5
+        done
       become: true
       changed_when: false
 
