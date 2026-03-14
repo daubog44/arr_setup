@@ -54,7 +54,7 @@ global:
       tag: v0.40.1
     cloudflared:
       repository: cloudflare/cloudflared
-      tag: 2026.3.0
+      tag: 2026.2.0
   qui:
     username: "admin"
     password: "MySecretPassword123!"
@@ -73,6 +73,8 @@ global:
         [
           {"name":"daily-backup", "task":"backup", "cron":"0 2 * * *", "retain":7}
         ]
+
+
 
 gateway:
   name: haac-gateway
