@@ -1,0 +1,81 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flaresolverr
+  namespace: media
+spec:
+  selector:
+    matchLabels:
+      app: flaresolverr
+  template:
+    metadata:
+      labels:
+        app: flaresolverr
+    spec:
+      containers:
+        - name: flaresolverr
+          image: ghcr.io/flaresolverr/flaresolverr:v3.4.6
+          ports:
+            - containerPort: 8191
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flaresolverr
+  namespace: media
+spec:
+  selector:
+    app: flaresolverr
+  ports:
+    - port: 8191
+      targetPort: 8191
+      name: http
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: recyclarr
+  namespace: media
+spec:
+  schedule: "0 4 * * 0"  # Every Sunday at 04:00
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          initContainers:
+            - name: recyclarr-init
+              image: ghcr.io/recyclarr/recyclarr:8.4.0
+              command: ["/bin/sh", "-c"]
+              args: ["if [ ! -f /config/recyclarr.yml ]; then recyclarr config create; fi"]
+              # Recyclarr >= 6.0 uses 'config create' instead of 'init'
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+          containers:
+            - name: recyclarr
+              image: ghcr.io/recyclarr/recyclarr:8.4.0
+              args: ["sync"]
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+          volumes:
+            - name: config
+              persistentVolumeClaim:
+                claimName: recyclarr-config
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: recyclarr-config
+  namespace: media
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 500Mi

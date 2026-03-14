@@ -1,0 +1,12 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: headlamp-token-header
+  namespace: mgmt
+spec:
+  headers:
+    customRequestHeaders:
+      # This header is populated dynamically by the setup-auth.sh script 
+      # which extracts the SA token and patches this middleware.
+      # It is included here for GitOps visibility and consistency.
+      Authorization: "Bearer PLACEHOLDER_TOKEN"

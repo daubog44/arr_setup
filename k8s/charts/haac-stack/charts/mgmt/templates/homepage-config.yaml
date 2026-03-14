@@ -1,0 +1,96 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-config
+  namespace: mgmt
+data:
+  settings.yaml: |
+    title: "Nucleo Autogenerativo"
+    theme: dark
+    proxy: true
+    layout:
+      Media:
+        style: row
+        columns: 4
+      Management:
+        style: row
+        columns: 3
+  services.yaml: |
+    - Media:
+        - Jellyfin:
+            icon: jellyfin.png
+            href: "https://jellyfin.{{ .Values.global.domainName }}"
+            description: Media Server
+        - Sonarr:
+            icon: sonarr.png
+            href: "https://sonarr.{{ .Values.global.domainName }}"
+            description: TV Shows
+        - Radarr:
+            icon: radarr.png
+            href: "https://radarr.{{ .Values.global.domainName }}"
+            description: Movies
+        - Prowlarr:
+            icon: prowlarr.png
+            href: "https://prowlarr.{{ .Values.global.domainName }}"
+            description: Indexer Manager
+        - Autobrr:
+            icon: autobrr.png
+            href: "https://autobrr.{{ .Values.global.domainName }}"
+            description: RSS/IRC Downloader
+        - qBittorrent:
+            icon: qbittorrent.png
+            href: "https://qui.{{ .Values.global.domainName }}"
+            description: Torrent Client
+    - Management:
+        - ArgoCD:
+            icon: argocd.png
+            href: "https://argocd.{{ .Values.global.domainName }}"
+            description: GitOps CI/CD
+        - Longhorn:
+            icon: longhorn.png
+            href: "https://longhorn.{{ .Values.global.domainName }}"
+            description: Distributed Storage
+        - Headlamp:
+            icon: headlamp.png
+            href: "https://headlamp.{{ .Values.global.domainName }}"
+            description: K8s Dashboard
+        - Ntfy:
+            icon: ntfy.png
+            href: "https://ntfy.{{ .Values.global.domainName }}"
+            description: Push Notifications
+        - Authelia:
+            icon: authelia.png
+            href: "https://auth.{{ .Values.global.domainName }}"
+            description: Identity Provider
+        - Semaphore:
+            icon: ansible.png
+            href: "https://ansible.{{ .Values.global.domainName }}"
+            description: Ansible Dashboard
+        - Grafana:
+            icon: grafana.png
+            href: "https://grafana.{{ .Values.global.domainName }}"
+            description: Observability Metrics
+        - Falco:
+            icon: falco.png
+            href: "https://falco.{{ .Values.global.domainName }}"
+            description: Security Events
+        - Litmus:
+            icon: kubernetes.png
+            href: "https://litmus.{{ .Values.global.domainName }}"
+            description: Chaos Engineering
+  widgets.yaml: |
+    - greeting:
+        text: "Benvenuto nel Nucleo Autogenerativo"
+    - datetime:
+        format:
+          date: long
+          time: short
+  bookmarks.yaml: |
+    - Infrastructure:
+        - Proxmox:
+            - href: "https://192.168.0.211:8006"
+              icon: proxmox.png
+        - GitHub:
+            - href: "https://github.com"
+              icon: github.png

@@ -1,0 +1,60 @@
+# Intel GPU Device Plugin daemonset — needed to expose Intel iGPU to Kubernetes pods
+# This runs on every node, but GPU requests only schedule on the node that has the GPU
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: intel-gpu-plugin
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: intel-gpu-plugin
+  template:
+    metadata:
+      labels:
+        app: intel-gpu-plugin
+    spec:
+      nodeSelector:
+        gpu_intel: "true"
+      initContainers:
+        - name: init-driver
+          image: intel/intel-gpu-initcontainer:0.35.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /etc/kubernetes/node-feature-discovery/source.d
+              name: nfd-features
+      containers:
+        - name: intel-gpu-plugin
+          image: intel/intel-gpu-plugin:0.35.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - mountPath: /dev/dri
+              name: dri
+            - mountPath: /sys/bus/pci
+              name: pci
+            - mountPath: /var/lib/kubelet/device-plugins
+              name: device-plugins
+      volumes:
+        - name: dri
+          hostPath:
+            path: /dev/dri
+        - name: pci
+          hostPath:
+            path: /sys/bus/pci
+        - name: nfd-features
+          hostPath:
+            path: /etc/kubernetes/node-feature-discovery/source.d
+            type: DirectoryOrCreate
+        - name: device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: Directory

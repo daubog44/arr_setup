@@ -1,0 +1,26 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: force-https
+  namespace: mgmt
+spec:
+  headers:
+    customRequestHeaders:
+      X-Forwarded-Proto: "https"
+# Central Authelia Middleware in mgmt namespace.
+# Other namespaces refer to this via 'mgmt-authelia@kubernetescrd' (Traefik nomenclature).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: authelia
+  namespace: mgmt
+spec:
+  forwardAuth:
+    address: http://authelia.mgmt.svc.cluster.local:9091/api/authz/forward-auth?strategy=header
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Remote-User
+      - Remote-Groups
+      - Remote-Name
+      - Remote-Email

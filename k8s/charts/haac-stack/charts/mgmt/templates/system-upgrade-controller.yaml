@@ -1,0 +1,148 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: system-upgrade
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  namespace: mgmt
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system-upgrade
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: system-upgrade
+    namespace: mgmt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: system-upgrade-controller
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  selector:
+    matchLabels:
+      upgrade.cattle.io/controller: system-upgrade-controller
+  template:
+    metadata:
+      labels:
+        upgrade.cattle.io/controller: system-upgrade-controller
+    spec:
+      serviceAccountName: system-upgrade
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: system-upgrade-controller
+          image: rancher/system-upgrade-controller:v0.19.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SYSTEM_UPGRADE_CONTROLLER_DEBUG
+              value: "false"
+            - name: SYSTEM_UPGRADE_CONTROLLER_THREADS
+              value: "2"
+            - name: SYSTEM_UPGRADE_JOB_ACTIVE_DEADLINE_SECONDS
+              value: "900"
+            - name: SYSTEM_UPGRADE_JOB_BACK_OFF_LIMIT
+              value: "99"
+            - name: SYSTEM_UPGRADE_JOB_IMAGE_PULL_POLICY
+              value: "Always"
+            - name: SYSTEM_UPGRADE_JOB_KUBECTL_IMAGE
+              value: "rancher/kubectl:v1.30.0"
+            - name: SYSTEM_UPGRADE_JOB_PRIVILEGED
+              value: "true"
+            - name: SYSTEM_UPGRADE_JOB_TTL_SECONDS_AFTER_FINISH
+              value: "900"
+            - name: SYSTEM_UPGRADE_PLAN_POLLING_INTERVAL
+              value: "15m0s"
+            - name: SYSTEM_UPGRADE_CONTROLLER_NAME
+              value: "system-upgrade-controller"
+            - name: SYSTEM_UPGRADE_CONTROLLER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: etc-ssl
+              mountPath: /etc/ssl
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: etc-ssl
+          hostPath:
+            path: /etc/ssl
+            type: Directory
+        - name: tmp
+          emptyDir: {}
+---
+# K3s Server (Master) Upgrade Plan
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: server-plan
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    k3s-upgrade: server
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  serviceAccountName: system-upgrade
+  channel: https://update.k3s.io/v1-release/channels/stable
+  upgrade:
+    image: rancher/k3s-upgrade
+---
+# K3s Agent (Worker) Upgrade Plan
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: agent-plan
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    k3s-upgrade: agent
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: DoesNotExist
+  prepare:
+    args:
+      - prepare
+      - server-plan
+    image: rancher/k3s-upgrade
+  serviceAccountName: system-upgrade
+  channel: https://update.k3s.io/v1-release/channels/stable
+  upgrade:
+    image: rancher/k3s-upgrade
