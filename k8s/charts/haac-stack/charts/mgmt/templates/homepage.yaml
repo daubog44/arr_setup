@@ -81,6 +81,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: homepage-config
   namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   accessModes:
     - ReadWriteOnce

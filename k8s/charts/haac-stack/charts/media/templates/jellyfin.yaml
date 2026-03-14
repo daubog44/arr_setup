@@ -77,6 +77,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: jellyfin-config
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   accessModes:
     - ReadWriteOnce

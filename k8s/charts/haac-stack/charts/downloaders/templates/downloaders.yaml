@@ -215,6 +215,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: qui-config
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   accessModes:
     - ReadWriteOnce
@@ -249,6 +251,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: qbit-config
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   accessModes:
     - ReadWriteOnce

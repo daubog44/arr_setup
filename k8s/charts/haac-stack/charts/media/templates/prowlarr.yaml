@@ -66,6 +66,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: prowlarr-config
   namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   accessModes:
     - ReadWriteOnce
