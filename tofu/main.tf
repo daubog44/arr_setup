@@ -8,10 +8,12 @@ data "proxmox_virtual_environment_datastores" "available" {
   node_name = var.master_target_node
 }
 
+
 locals {
-  # Find the ID of the datastore meant for VM/CT rootfs (prefer local-zfs, fallback to local-lvm, else fallback to whatever is first)
+  # Find the ID of the datastore meant for VM/CT rootfs. 
+  # If the user provided a var, use it. Otherwise, prefer local-zfs, fallback to local-lvm, else fallback to whatever is first
   datastores_list         = [for ds in data.proxmox_virtual_environment_datastores.available.datastores : ds.id]
-  chosen_rootfs_datastore = contains(local.datastores_list, "local-zfs") ? "local-zfs" : (contains(local.datastores_list, "local-lvm") ? "local-lvm" : local.datastores_list[0])
+  chosen_rootfs_datastore = var.lxc_rootfs_datastore != "" ? var.lxc_rootfs_datastore : (contains(local.datastores_list, "local-zfs") ? "local-zfs" : (contains(local.datastores_list, "local-lvm") ? "local-lvm" : local.datastores_list[0]))
 }
 
 resource "proxmox_virtual_environment_download_file" "debian_container_template" {
@@ -23,135 +25,54 @@ resource "proxmox_virtual_environment_download_file" "debian_container_template"
   url = data.external.latest_debian13.result.url
 }
 
-resource "proxmox_virtual_environment_container" "k3s_master" {
-  description = "K3s Master Node (Control Plane + Traefik) (HaaC v2)"
-  node_name   = var.master_target_node
+module "k3s_master" {
+  source = "./modules/k3s-lxc-node"
 
-  initialization {
-    hostname = var.lxc_master_hostname
-    dns { servers = compact([var.lxc_gateway, "1.1.1.1"]) }
-    user_account {
-      password = var.lxc_password
-      keys     = [trimspace(file("${path.module}/../.ssh/haac_ed25519.pub"))]
-    }
-    ip_config {
-      ipv4 {
-        address = var.k3s_master_ip != "" ? var.k3s_master_ip : "dhcp"
-        gateway = (var.k3s_master_ip != "" && var.k3s_master_ip != "dhcp") ? (var.lxc_gateway != "" ? var.lxc_gateway : replace(var.k3s_master_ip, "/(.*\\.).*/", "$11")) : null
-      }
-    }
-  }
-
-  network_interface {
-    name   = "eth0"
-    bridge = "vmbr0"
-  }
-
-  disk {
-    datastore_id = local.chosen_rootfs_datastore
-    size         = 20
-  }
-
-  operating_system {
-    template_file_id = proxmox_virtual_environment_download_file.debian_container_template.id
-    type             = "debian"
-  }
-
-  unprivileged = true
-  features {
-    nesting = true
-    keyctl  = false
-    fuse    = false
-  }
-
-  memory { dedicated = 4096 }
-  cpu { cores = 2 }
-
-  mount_point {
-    path   = "/data"
-    volume = var.host_nas_path
-  }
-
-  start_on_boot = true
-
-
-  started = true
+  description      = "K3s Master Node (Control Plane + Traefik) (HaaC v3)"
+  target_node      = var.master_target_node
+  hostname         = var.lxc_master_hostname
+  vmid             = 100
+  cores            = 2
+  memory           = 4096
+  ip_address       = var.k3s_master_ip
+  gateway          = var.lxc_gateway != "" ? var.lxc_gateway : cidrhost(var.k3s_master_ip, 1)
+  lxc_password     = var.lxc_password
+  ssh_public_key   = trimspace(file("${path.module}/../.ssh/haac_ed25519.pub"))
+  template_file_id = proxmox_virtual_environment_download_file.debian_container_template.id
+  datastore_id     = local.chosen_rootfs_datastore
+  nas_path         = var.host_nas_path
+  dns_servers      = compact([var.lxc_gateway, "1.1.1.1"])
 }
 
-resource "proxmox_virtual_environment_container" "k3s_worker" {
+module "k3s_workers" {
+  source   = "./modules/k3s-lxc-node"
   for_each = var.worker_nodes
 
-  description = "K3s Worker Node - ${each.key} (HaaC v2)"
-  node_name   = each.value.target_node
+  description      = "K3s Worker Node - ${each.key} (HaaC v3)"
+  target_node      = each.value.target_node
+  hostname         = each.value.hostname
+  cores            = each.value.cores
+  memory           = each.value.memory
+  ip_address       = each.value.ip
+  gateway          = var.lxc_gateway != "" ? var.lxc_gateway : cidrhost(each.value.ip, 1)
+  lxc_password     = var.lxc_password
+  ssh_public_key   = trimspace(file("${path.module}/../.ssh/haac_ed25519.pub"))
+  template_file_id = proxmox_virtual_environment_download_file.debian_container_template.id
+  datastore_id     = local.chosen_rootfs_datastore
+  nas_path         = var.host_nas_path
+  dns_servers      = compact([var.lxc_gateway, "1.1.1.1"])
 
-  depends_on = [
-    proxmox_virtual_environment_container.k3s_master
-  ]
-
-
-  initialization {
-    hostname = each.value.hostname
-    dns { servers = compact([var.lxc_gateway, "1.1.1.1"]) }
-    user_account {
-      password = var.lxc_password
-      keys     = [trimspace(file("${path.module}/../.ssh/haac_ed25519.pub"))]
-    }
-    ip_config {
-      ipv4 {
-        address = each.value.ip != "" ? each.value.ip : "dhcp"
-        gateway = (each.value.ip != "" && each.value.ip != "dhcp") ? (var.lxc_gateway != "" ? var.lxc_gateway : replace(each.value.ip, "/(.*\\.).*/", "$11")) : null
-      }
-    }
-  }
-
-  network_interface {
-    name   = "eth0"
-    bridge = "vmbr0"
-  }
-
-  disk {
-    datastore_id = local.chosen_rootfs_datastore
-    size         = 20
-  }
-
-  operating_system {
-    template_file_id = proxmox_virtual_environment_download_file.debian_container_template.id
-    type             = "debian"
-  }
-
-  unprivileged = true
-  features {
-    nesting = true
-    keyctl  = false
-    fuse    = false
-  }
-
-  memory { dedicated = each.value.memory }
-  cpu { cores = each.value.cores }
-
-  mount_point {
-    path   = "/data"
-    volume = var.host_nas_path
-  }
-
-  start_on_boot = true
-
-  started = true
-
-  # Stagger creation to prevent Proxmox ZFS locking timeouts when cloning templates concurrently
-  provisioner "local-exec" {
-    command = "sleep 15"
-  }
+  depends_on = [module.k3s_master]
 }
 
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/inventory.tftpl", {
     proxmox_hosts      = distinct(concat([var.master_target_node], [for k, v in var.worker_nodes : v.target_node]))
     proxmox_host_user  = "root"
-    master_ip          = var.k3s_master_ip != "" && var.k3s_master_ip != "dhcp" ? element(split("/", var.k3s_master_ip), 0) : try(element(split("/", lookup(proxmox_virtual_environment_container.k3s_master.ipv4, "eth0", "")), 0), "")
-    master_vmid        = proxmox_virtual_environment_container.k3s_master.vm_id
+    master_ip          = var.k3s_master_ip != "" && var.k3s_master_ip != "dhcp" ? element(split("/", var.k3s_master_ip), 0) : try(element(split("/", lookup(module.k3s_master.ipv4, "eth0", "")), 0), "")
+    master_vmid        = module.k3s_master.vm_id
     master_target_node = var.master_target_node
-    workers            = proxmox_virtual_environment_container.k3s_worker
+    workers            = module.k3s_workers
     worker_configs     = var.worker_nodes
     nas_address        = var.nas_address
     host_nas_path      = var.host_nas_path

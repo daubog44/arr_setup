@@ -1,35 +1,163 @@
+media:
+  enabled: true
+downloaders:
+  enabled: true
+mgmt:
+  enabled: true
+
 global:
   domainName: "${DOMAIN_NAME}"
+  storage:
+    uid: "${STORAGE_UID}"
+    gid: "${STORAGE_GID}"
+  vpn:
+    serverCountries: "${PROTONVPN_SERVER_COUNTRIES}"
+    podSubnet: "${VPN_POD_SUBNET}"
+    svcSubnet: "${VPN_SVC_SUBNET}"
+    dnsIp: "${VPN_DNS_IP}"
+  images:
+    gluetun:
+      repository: qmcgaw/gluetun
+      tag: v3.41.1
+    curl:
+      repository: curlimages/curl
+      tag: 8.18.0
+    qbittorrent:
+      repository: lscr.io/linuxserver/qbittorrent
+      tag: 4.6.7
+    qui:
+      repository: ghcr.io/autobrr/qui
+      tag: v1.14.1
+    qbitExporter:
+      repository: caseyscarborough/qbittorrent-exporter
+      tag: latest
+    radarr:
+      repository: lscr.io/linuxserver/radarr
+      tag: 5.28.0
+    sonarr:
+      repository: lscr.io/linuxserver/sonarr
+      tag: 4.0.16
+    prowlarr:
+      repository: lscr.io/linuxserver/prowlarr
+      tag: 1.37.0
+    authelia:
+      repository: authelia/authelia
+      tag: 4.39.15
+    jellyfin:
+      repository: jellyfin/jellyfin
+      tag: 10.11.6
+    homepage:
+      repository: ghcr.io/gethomepage/homepage
+      tag: v1.10.1
+    headlamp:
+      repository: ghcr.io/headlamp-k8s/headlamp
+      tag: v0.40.1
+    cloudflared:
+      repository: cloudflare/cloudflared
+      tag: 2026.2.0
+  qui:
+    username: "${QUI_USERNAME}"
+    password: "${QUI_PASSWORD}"
+    oidcSecret: "${QUI_OIDC_SECRET}"
+  headlamp:
+    oidcSecret: "${HEADLAMP_OIDC_SECRET}"
+  longhorn:
+    defaultSettings:
+      backupTarget: "file://${HOST_NAS_PATH}/longhorn-backups"
+      backupTargetCredentialSecret: ""
+    persistence:
+      defaultClassReplicaCount: 2
+    recurringJobSelector:
+      enable: true
+      jobList: |
+        [
+          {"name":"daily-backup", "task":"backup", "cron":"0 2 * * *", "retain":7}
+        ]
 
-storage:
-  uid: "${STORAGE_UID}"
-  gid: "${STORAGE_GID}"
 
-vpn:
-  serverCountries: "${PROTONVPN_SERVER_COUNTRIES}"
-  podSubnet: "${VPN_POD_SUBNET}"
-  svcSubnet: "${VPN_SVC_SUBNET}"
-  dnsIp: "${VPN_DNS_IP}"
 
-qui:
-  username: "${QUI_USERNAME}"
-  password: "${QUI_PASSWORD}"
-  oidcSecret: "${QUI_OIDC_SECRET}"
+gateway:
+  name: haac-gateway
+  class: traefik
 
-headlamp:
-  oidcSecret: "${HEADLAMP_OIDC_SECRET}"
-
-longhorn:
-  defaultSettings:
-    # NAS is mounted natively into the Proxmox nodes (and thus LXC/K3s) at HOST_NAS_PATH
-    backupTarget: "file://${HOST_NAS_PATH}/longhorn-backups"
-    backupTargetCredentialSecret: ""
-    # Create a default recurring job that runs daily at 2:00 AM
-  persistence:
-    defaultClassReplicaCount: 2
-  recurringJobSelector:
-    enable: true
-    jobList: |
-      [
-        {"name":"daily-backup", "task":"backup", "cron":"0 2 * * *", "retain":7}
-      ]
+ingresses:
+  authelia:
+    subdomain: auth
+    service: authelia
+    port: 9091
+    namespace: mgmt
+    auth_enabled: false
+  homepage:
+    subdomain: home
+    service: homepage
+    port: 80
+    namespace: mgmt
+    auth_enabled: false
+  headlamp:
+    subdomain: headlamp
+    service: headlamp
+    port: 80
+    namespace: mgmt
+    auth_enabled: true
+    extra_middlewares: 
+      - headlamp-token-header
+  ntfy:
+    subdomain: ntfy
+    service: ntfy
+    port: 80
+    namespace: mgmt
+    auth_enabled: false
+  jellyfin:
+    subdomain: jellyfin
+    service: jellyfin
+    port: 80
+    namespace: media
+    auth_enabled: false
+  radarr:
+    subdomain: radarr
+    service: radarr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  sonarr:
+    subdomain: sonarr
+    service: sonarr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  prowlarr:
+    subdomain: prowlarr
+    service: prowlarr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  autobrr:
+    subdomain: autobrr
+    service: autobrr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  qbittorrent:
+    subdomain: qui
+    service: qbittorrent
+    port: 80
+    namespace: media
+    auth_enabled: true
+  argocd:
+    subdomain: argocd
+    service: argocd-server
+    port: 80
+    namespace: argocd
+    auth_enabled: false
+  grafana:
+    subdomain: grafana
+    service: grafana
+    port: 80
+    namespace: monitoring
+    auth_enabled: false
+  longhorn:
+    subdomain: longhorn
+    service: longhorn-frontend
+    port: 80
+    namespace: longhorn-system
+    auth_enabled: true

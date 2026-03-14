@@ -4,3 +4,14 @@ description: Home as a Code (HaaC) Umbrella Helm Chart
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
+
+dependencies:
+  - name: media
+    version: 1.0.0
+    repository: file://charts/media
+  - name: downloaders
+    version: 1.0.0
+    repository: file://charts/downloaders
+  - name: mgmt
+    version: 1.0.0
+    repository: file://charts/mgmt

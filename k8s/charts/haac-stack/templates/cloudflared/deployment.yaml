@@ -20,7 +20,7 @@ spec:
             value: "1"
       containers:
         - name: cloudflared
-          image: cloudflare/cloudflared:2026.3.0
+          image: {{ .Values.global.images.cloudflared.repository }}:{{ .Values.global.images.cloudflared.tag }}
           args:
             - tunnel
             - --no-autoupdate

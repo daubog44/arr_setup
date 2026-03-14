@@ -12,6 +12,12 @@ variable "lxc_password" {
   type        = string
 }
 
+variable "lxc_rootfs_datastore" {
+  description = "The target datastore in Proxmox to use for container root filesystems (e.g. local-zfs, local-lvm)"
+  type        = string
+  default     = ""
+}
+
 variable "lxc_master_hostname" {
   description = "Hostname for the K3s Master"
   type        = string
