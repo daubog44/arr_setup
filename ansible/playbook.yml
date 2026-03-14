@@ -491,6 +491,20 @@
       become: true
       changed_when: false
 
+    - name: Fix interrupted dpkg configuration
+      ansible.builtin.shell: dpkg --configure -a
+      become: true
+      changed_when: false
+      ignore_errors: true
+
+    - name: Fix broken apt package installations
+      ansible.builtin.shell: apt-get install --fix-broken -y
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      become: true
+      changed_when: false
+      ignore_errors: true
+
     - name: Upgrade all packages (Robust & Debuggable)
       ansible.builtin.apt:
         update_cache: true
