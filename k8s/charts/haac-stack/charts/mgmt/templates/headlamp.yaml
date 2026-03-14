@@ -48,6 +48,8 @@ kind: Service
 metadata:
   name: headlamp
   namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   ports:
     - port: 80
