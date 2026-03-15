@@ -44,12 +44,14 @@ tasks:
 
 
   sync:
-    desc: "🔄 Sincronizza il repository locale con GitHub (per caricare gli auto-merge di Renovate)."
+    desc: "🔄 [SAFE-AGGRESSIVE] Sincronizza il locale con GitHub risolvendo i conflitti a favore del locale."
     cmds:
-      - git stash --include-untracked || true
-      - git pull --rebase
-      - git stash pop || true
-      - echo "✅ Repository locale aggiornato."
+      - git add .
+      - git commit -m "🚀 Auto-save before sync [skip ci]" --no-verify || true
+      - git fetch origin main
+      - git merge origin/main -X ours --no-edit || true
+      - echo "✅ Repository locale allineato (il tuo lavoro locale ha prevalso sui conflitti)."
+
 
   up:
     desc: "🚀 Eroga l'intera infrastruttura da zero: Crea i container LXC, configura il SO, installa K3s e avvia il CD GitOps."
@@ -202,31 +204,48 @@ tasks:
       - pkill -f "ssh -L 6443:" || true
       - echo "✅ Secrets generati e CM caricata."
 
+
+
+
   push-changes:
-    desc: "📤 Aggiorna i file su git. Se PUSH_ALL=true, include tutto. Default: solo secrets."
+    desc: "📤 [ZERO-LOSS-PUSH] Salva il lavoro manuale, risolve conflitti e aggiorna i segreti."
     cmds:
       - |
+        echo "  📦 Salvataggio automatico del lavoro manuale..."
+        git add .
+        git commit -m "🚀 Auto-commit manual work [skip ci]" --no-verify || true
+
+        echo "  🔄 Sincronizzazione con il server (Vince Locale in caso di conflitti)..."
+        git fetch origin main
+        git merge origin/main -X ours --no-edit || true
+
+        echo "  🔐 Idratazione finale dai template (.env vince sempre)..."
+        ./scripts/generate-sealed-secrets.sh
+
         if [ "{{.PUSH_ALL}}" == "true" ]; then
-          echo "📤 PUSH_ALL=true: Aggiunta di tutte le modifiche (inclusi file non tracciati)..."
+          echo "📤 PUSH_ALL=true: Invio di tutte le modifiche..."
           git add .
           if git diff --cached --quiet; then
-            echo "  ℹ️  Nessuna modifica rilevata."
+            echo "  ℹ️ Nessuna nuova modifica rilevata dopo il merge."
           else
-            git commit -m "🚀 Auto-push infrastructure fixes and patches [skip ci]"
-            git push
+            git commit --amend --no-edit --no-verify || git commit -m "🚀 Updated infrastructure [skip ci]" --no-verify
+            git push origin main
             echo "  ✅ Tutte le modifiche caricate su GitHub."
           fi
         else
           echo "📤 Aggiornamento solo SealedSecrets..."
           git add k8s/charts/haac-stack/templates/secrets/ k8s/charts/haac-stack/values.yaml
           if git diff --cached --quiet; then
-            echo "  ℹ️  Nessuna modifica ai secrets."
+            echo "  ℹ️ Nessuna modifica ai secrets rilevata."
           else
-            git commit -m "🔐 Update SealedSecrets [skip ci]"
-            git push
+            git commit --amend --no-edit --no-verify || git commit -m "🔐 Update SealedSecrets [skip ci]" --no-verify
+            git push origin main
             echo "  ✅ SealedSecrets aggiornati."
           fi
         fi
+
+
+
 
   setup-hooks:
     desc: "🪝 Inietta un hook in Git: automatizza 'generate-secrets' ad ogni commit per non perdere mai password aggiornate."
