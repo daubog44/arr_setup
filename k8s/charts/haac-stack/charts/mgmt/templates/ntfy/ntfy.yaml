@@ -34,7 +34,7 @@ spec:
     spec:
       containers:
         - name: ntfy
-          image: binwiederhier/ntfy:v2.18.0
+          image: binwiederhier/ntfy:v2.19.0
           command:
             - ntfy
             - serve
