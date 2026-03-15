@@ -75,10 +75,10 @@ global:
         ]
 
 
-
 gateway:
   name: haac-gateway
   class: traefik
+
 
 ingresses:
   authelia:
