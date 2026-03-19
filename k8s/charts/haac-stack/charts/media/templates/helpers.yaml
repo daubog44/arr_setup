@@ -49,7 +49,7 @@ spec:
         spec:
           initContainers:
             - name: recyclarr-init
-              image: ghcr.io/recyclarr/recyclarr:8.4.0
+              image: ghcr.io/recyclarr/recyclarr:8.5.1
               command: ["/bin/sh", "-c"]
               args: ["if [ ! -f /config/recyclarr.yml ]; then recyclarr config create; fi"]
               # Recyclarr >= 6.0 uses 'config create' instead of 'init'
@@ -58,7 +58,7 @@ spec:
                   mountPath: /config
           containers:
             - name: recyclarr
-              image: ghcr.io/recyclarr/recyclarr:8.4.0
+              image: ghcr.io/recyclarr/recyclarr:8.5.1
               args: ["sync"]
               volumeMounts:
                 - name: config
