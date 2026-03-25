@@ -23,6 +23,11 @@ resource "proxmox_virtual_environment_download_file" "debian_container_template"
 
   # The fetched dynamic Proxmox release URL for Debian 13
   url = data.external.latest_debian13.result.url
+
+  # Keep bootstrap rerunnable even when the template already exists in Proxmox
+  # but is not yet tracked in the local state.
+  overwrite            = true
+  overwrite_unmanaged  = true
 }
 
 module "k3s_master" {
