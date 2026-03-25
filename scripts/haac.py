@@ -1825,6 +1825,14 @@ def cmd_default_gateway(_: argparse.Namespace) -> None:
     print("")
 
 
+def cmd_env_value(args: argparse.Namespace) -> None:
+    env = merged_env()
+    value = env.get(args.name, args.default)
+    if value is None:
+        raise HaaCError(f"Environment value not found: {args.name}")
+    print(value)
+
+
 def cmd_tofu_output(args: argparse.Namespace) -> None:
     print(tofu_output_value(Path(args.dir), args.name, args.default))
 
@@ -1962,6 +1970,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     command = subparsers.add_parser("default-gateway")
     command.set_defaults(func=cmd_default_gateway)
+
+    command = subparsers.add_parser("env-value")
+    command.add_argument("--name", required=True)
+    command.add_argument("--default", default="")
+    command.set_defaults(func=cmd_env_value)
 
     command = subparsers.add_parser("tofu-output")
     command.add_argument("--dir", required=True)
