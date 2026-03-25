@@ -31,7 +31,7 @@ spec:
       priorityClassName: system-node-critical
       containers:
       - name: nvidia-device-plugin-ctr
-        image: {{ .Values.global.images.nvidiaDevicePlugin.repository }}:{{ .Values.global.images.nvidiaDevicePlugin.tag }}
+        image: "{{ .Values.global.images.nvidiaDevicePlugin.repository }}:{{ .Values.global.images.nvidiaDevicePlugin.tag }}"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

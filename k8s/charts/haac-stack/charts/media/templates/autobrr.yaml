@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: autobrr
-          image: {{ .Values.global.images.autobrr.repository }}:{{ .Values.global.images.autobrr.tag }}
+          image: "{{ .Values.global.images.autobrr.repository }}:{{ .Values.global.images.autobrr.tag }}"
           ports:
             - containerPort: 7474
               name: http

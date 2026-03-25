@@ -137,6 +137,19 @@ def resolved_binary(name: str) -> str:
     return tool_location(name) or name
 
 
+def ssh_common_options(*, connect_timeout: int = 5) -> list[str]:
+    return [
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={connect_timeout}",
+        "-o",
+        "ConnectionAttempts=1",
+    ]
+
+
 def host_platform() -> str:
     system_name = platform.system().lower()
     if system_name.startswith("msys") or system_name.startswith("cygwin"):
@@ -317,8 +330,7 @@ def wait_for_k8s_api(kubeconfig: Path, kubectl: str, timeout_seconds: int = 120,
 def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int = 6443, remote_port: int = 6443):
     command = [
         "ssh",
-        "-o",
-        "StrictHostKeyChecking=no",
+        *ssh_common_options(connect_timeout=10),
         "-o",
         "ExitOnForwardFailure=yes",
         "-N",
@@ -1911,8 +1923,7 @@ def resolve_default_gateway(env: dict[str, str]) -> str:
     completed = run(
         [
             "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
+            *ssh_common_options(connect_timeout=5),
             f"root@{host}",
             "ip route | awk '/default/ {print $3; exit}'",
         ],

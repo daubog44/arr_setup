@@ -37,14 +37,14 @@ spec:
         fsGroup: 1000
       initContainers:
         - name: init-permissions
-          image: {{ .Values.global.images.busybox.repository }}:{{ .Values.global.images.busybox.tag }}
+          image: "{{ .Values.global.images.busybox.repository }}:{{ .Values.global.images.busybox.tag }}"
           command: ["sh", "-c", "chown -R 1000:1000 /config"]
           volumeMounts:
             - name: data
               mountPath: /config
       containers:
         - name: authelia
-          image: {{ .Values.global.images.authelia.repository }}:{{ .Values.global.images.authelia.tag }}
+          image: "{{ .Values.global.images.authelia.repository }}:{{ .Values.global.images.authelia.tag }}"
           args: ["--config", "/config/config-files/configuration.yml"]
           securityContext:
             runAsUser: 1000

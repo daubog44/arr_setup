@@ -34,7 +34,7 @@ spec:
     spec:
       containers:
         - name: ntfy
-          image: {{ .Values.global.images.ntfy.repository }}:{{ .Values.global.images.ntfy.tag }}
+          image: "{{ .Values.global.images.ntfy.repository }}:{{ .Values.global.images.ntfy.tag }}"
           command:
             - ntfy
             - serve
