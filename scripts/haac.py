@@ -1802,11 +1802,9 @@ def cmd_install_wsl_tools(_: argparse.Namespace) -> None:
     install_wsl_tools()
 
 
-def cmd_default_gateway(_: argparse.Namespace) -> None:
-    env = merged_env()
+def resolve_default_gateway(env: dict[str, str]) -> str:
     if env.get("LXC_GATEWAY"):
-        print(env["LXC_GATEWAY"])
-        return
+        return env["LXC_GATEWAY"]
     host = env.get("MASTER_TARGET_NODE", "pve")
     completed = run(
         [
@@ -1820,9 +1818,48 @@ def cmd_default_gateway(_: argparse.Namespace) -> None:
         capture_output=True,
     )
     if completed.returncode == 0:
-        print(completed.stdout.strip())
-        return
-    print("")
+        return completed.stdout.strip()
+    return ""
+
+
+def tofu_cli_env() -> dict[str, str]:
+    env = merged_env()
+    mapped = os.environ.copy()
+    mapped.update(
+        {
+            "TF_VAR_lxc_password": env.get("LXC_PASSWORD", ""),
+            "TF_VAR_lxc_rootfs_datastore": env.get("LXC_ROOTFS_DATASTORE", ""),
+            "TF_VAR_lxc_master_hostname": env.get("LXC_MASTER_HOSTNAME", ""),
+            "TF_VAR_lxc_unprivileged": env.get("LXC_UNPRIVILEGED", ""),
+            "TF_VAR_lxc_nesting": env.get("LXC_NESTING", ""),
+            "TF_VAR_master_target_node": env.get("MASTER_TARGET_NODE", ""),
+            "TF_VAR_k3s_master_ip": env.get("K3S_MASTER_IP", ""),
+            "TF_VAR_lxc_gateway": resolve_default_gateway(env),
+            "TF_VAR_worker_nodes": env.get("WORKER_NODES_JSON", ""),
+            "TF_VAR_host_nas_path": env.get("HOST_NAS_PATH", ""),
+            "TF_VAR_cloudflare_tunnel_token": env.get("CLOUDFLARE_TUNNEL_TOKEN", ""),
+            "TF_VAR_domain_name": env.get("DOMAIN_NAME", ""),
+            "TF_VAR_protonvpn_openvpn_username": env.get("PROTONVPN_OPENVPN_USERNAME", ""),
+            "TF_VAR_protonvpn_openvpn_password": env.get("PROTONVPN_OPENVPN_PASSWORD", ""),
+            "TF_VAR_smb_user": env.get("SMB_USER", ""),
+            "TF_VAR_smb_password": env.get("SMB_PASSWORD", ""),
+            "TF_VAR_nas_address": env.get("NAS_ADDRESS", ""),
+            "TF_VAR_nas_share_name": env.get("NAS_SHARE_NAME", ""),
+            "TF_VAR_storage_uid": env.get("STORAGE_UID", ""),
+            "TF_VAR_storage_gid": env.get("STORAGE_GID", ""),
+            "TF_VAR_python_executable": env.get("PYTHON_CMD", "python"),
+        }
+    )
+    return mapped
+
+
+def run_tofu_command(tofu_dir: Path, arguments: list[str]) -> None:
+    tofu_binary = resolved_binary("tofu")
+    run([tofu_binary, f"-chdir={tofu_dir}", *arguments], env=tofu_cli_env())
+
+
+def cmd_default_gateway(_: argparse.Namespace) -> None:
+    print(resolve_default_gateway(merged_env()))
 
 
 def cmd_env_value(args: argparse.Namespace) -> None:
@@ -1936,6 +1973,10 @@ def cmd_task_run(args: argparse.Namespace) -> None:
     completed = subprocess.run([task_binary, *task_args], cwd=str(ROOT), check=False)
     if completed.returncode != 0:
         raise HaaCError(f"Task command failed with exit code {completed.returncode}")
+
+
+def cmd_run_tofu(args: argparse.Namespace) -> None:
+    run_tofu_command(Path(args.dir), list(args.tofu_args))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2091,6 +2132,11 @@ def build_parser() -> argparse.ArgumentParser:
     command = subparsers.add_parser("task-run")
     command.add_argument("task_args", nargs=argparse.REMAINDER)
     command.set_defaults(func=cmd_task_run)
+
+    command = subparsers.add_parser("run-tofu")
+    command.add_argument("--dir", required=True)
+    command.add_argument("tofu_args", nargs=argparse.REMAINDER)
+    command.set_defaults(func=cmd_run_tofu)
 
     return parser
 

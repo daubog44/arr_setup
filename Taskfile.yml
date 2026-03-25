@@ -127,8 +127,8 @@ tasks:
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
       - task: setup-hooks
-      - '"{{.TOFU_CMD}}" -chdir="{{.TOFU_DIR}}" init'
-      - '"{{.TOFU_CMD}}" -chdir="{{.TOFU_DIR}}" apply -auto-approve'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
       - task: configure-os
       - task: gitops-bootstrap
         vars:
@@ -139,8 +139,8 @@ tasks:
     desc: Run a safe OpenTofu plan with all environment-backed variables.
     deps: [check-env]
     cmds:
-      - '"{{.TOFU_CMD}}" -chdir="{{.TOFU_DIR}}" init'
-      - '"{{.TOFU_CMD}}" -chdir="{{.TOFU_DIR}}" plan'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" plan'
 
   configure-os:
     desc: Run only the Ansible playbook to configure Proxmox and the K3s nodes.
@@ -253,6 +253,6 @@ tasks:
     deps: [check-env]
     cmds:
       - task: shutdown-cluster
-      - '"{{.TOFU_CMD}}" -chdir="{{.TOFU_DIR}}" init'
-      - '"{{.TOFU_CMD}}" -chdir="{{.TOFU_DIR}}" destroy -auto-approve'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" destroy -auto-approve'
       - '{{.PYTHON_CMD}} "scripts/haac.py" remove-file --path "scripts/pub-sealed-secrets.pem"'
