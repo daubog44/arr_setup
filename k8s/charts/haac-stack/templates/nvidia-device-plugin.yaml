@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+{{- range .Values.global.scheduling.gpu.nvidiaNodeFeatureLabels }}
+              - matchExpressions:
+                  - key: {{ . }}
+                    operator: In
+                    values: ["true"]
+{{- end }}
+      priorityClassName: system-node-critical
+      containers:
+      - name: nvidia-device-plugin-ctr
+        image: {{ .Values.global.images.nvidiaDevicePlugin.repository }}:{{ .Values.global.images.nvidiaDevicePlugin.tag }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/device-plugins

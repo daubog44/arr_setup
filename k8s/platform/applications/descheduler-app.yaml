@@ -1,0 +1,66 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: descheduler
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.ntfy: ""
+    notifications.argoproj.io/subscribe.on-degraded.ntfy: ""
+    renovate/helm-chart: "descheduler"
+spec:
+  project: platform
+  source:
+    repoURL: https://kubernetes-sigs.github.io/descheduler/
+    chart: descheduler
+    # renovate: registryUrl=https://kubernetes-sigs.github.io/descheduler/ chart=descheduler
+    targetRevision: "0.35.1"
+    helm:
+      values: |
+        kind: CronJob
+        deschedulerPolicy:
+          strategies:
+            RemoveDuplicates:
+              enabled: true
+            RemovePodsViolatingNodeTaints:
+              enabled: true
+            RemovePodsViolatingNodeAffinity:
+              enabled: true
+              params:
+                nodeAffinityType:
+                - requiredDuringSchedulingIgnoredDuringExecution
+            RemovePodsViolatingInterPodAntiAffinity:
+              enabled: true
+            LowNodeUtilization:
+              enabled: true
+              params:
+                nodeResourceUtilizationThresholds:
+                  thresholds:
+                    cpu: 20
+                    memory: 20
+                    pods: 20
+                  targetThresholds:
+                    cpu: 50
+                    memory: 50
+                    pods: 50
+        cronJobApiVersion: "batch/v1"
+        schedule: "*/15 * * * *"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

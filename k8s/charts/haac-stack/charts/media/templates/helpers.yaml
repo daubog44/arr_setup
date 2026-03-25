@@ -1,0 +1,110 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flaresolverr
+  namespace: media
+spec:
+  selector:
+    matchLabels:
+      app: flaresolverr
+  template:
+    metadata:
+      labels:
+        app: flaresolverr
+    spec:
+      containers:
+        - name: flaresolverr
+          image: {{ .Values.global.images.flaresolverr.repository }}:{{ .Values.global.images.flaresolverr.tag }}
+          ports:
+            - containerPort: 8191
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flaresolverr
+  namespace: media
+spec:
+  selector:
+    app: flaresolverr
+  ports:
+    - port: 8191
+      targetPort: 8191
+      name: http
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: recyclarr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  schedule: "0 4 * * 0"  # Every Sunday at 04:00
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          initContainers:
+            - name: recyclarr-init
+              image: {{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}
+              command: ["/bin/sh", "-c"]
+              args: ["if [ ! -f /config/recyclarr.yml ]; then recyclarr config create; fi"]
+              # Recyclarr >= 6.0 uses 'config create' instead of 'init'
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+          containers:
+            - name: recyclarr
+              image: {{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}
+              args: ["sync"]
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+          volumes:
+            - name: config
+              persistentVolumeClaim:
+                claimName: recyclarr-config
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: recyclarr-pvc-binder
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: binder
+          image: {{ .Values.global.images.busybox.repository }}:{{ .Values.global.images.busybox.tag }}
+          command: ["sh", "-c", "echo 'Binding PVC for Local-Path provisioner'"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: recyclarr-config
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: recyclarr-config
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 500Mi

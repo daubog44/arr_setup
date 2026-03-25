@@ -1,0 +1,208 @@
+media:
+  enabled: true
+downloaders:
+  enabled: true
+mgmt:
+  enabled: true
+
+global:
+  domainName: "nucleoautogenerativo.it"
+  gitops:
+    repoUrl: "https://github.com/daubog44/arr_setup.git"
+    repoRevision: "main"
+  storage:
+    uid: "13000"
+    gid: "13000"
+  vpn:
+    serverCountries: "Netherlands"
+    podSubnet: "10.42.0.0/16,192.168.0.0/24,100.64.0.0/10"
+    svcSubnet: "10.43.0.0/16"
+    dnsIp: "10.43.0.10"
+  scheduling:
+    gpu:
+      nvidiaNodeFeatureLabels:
+        - feature.node.kubernetes.io/pci-0300_10de.present
+        - feature.node.kubernetes.io/pci-0302_10de.present
+        - feature.node.kubernetes.io/pci-0380_10de.present
+        - feature.node.kubernetes.io/pci-1200_10de.present
+      intelNodeFeatureLabels:
+        - feature.node.kubernetes.io/pci-0300_8086.present
+        - feature.node.kubernetes.io/pci-0302_8086.present
+        - feature.node.kubernetes.io/pci-0380_8086.present
+        - feature.node.kubernetes.io/pci-1200_8086.present
+  images:
+    gluetun:
+      repository: qmcgaw/gluetun
+      tag: v3.41.1
+    curl:
+      repository: curlimages/curl
+      tag: 8.18.0
+    qbittorrent:
+      repository: lscr.io/linuxserver/qbittorrent
+      tag: 4.6.7
+    qui:
+      repository: ghcr.io/autobrr/qui
+      tag: v1.14.1
+    qbitExporter:
+      repository: caseyscarborough/qbittorrent-exporter
+      tag: "1.3.0"
+    radarr:
+      repository: lscr.io/linuxserver/radarr
+      tag: 5.28.0
+    sonarr:
+      repository: lscr.io/linuxserver/sonarr
+      tag: 4.0.16
+    prowlarr:
+      repository: lscr.io/linuxserver/prowlarr
+      tag: 1.37.0
+    authelia:
+      repository: authelia/authelia
+      tag: 4.39.15
+    jellyfin:
+      repository: jellyfin/jellyfin
+      tag: 10.11.6
+    homepage:
+      repository: ghcr.io/gethomepage/homepage
+      tag: v1.10.1
+    headlamp:
+      repository: ghcr.io/headlamp-k8s/headlamp
+      tag: v0.40.1
+    cloudflared:
+      repository: cloudflare/cloudflared
+      tag: 2026.2.0
+    autobrr:
+      repository: ghcr.io/autobrr/autobrr
+      tag: v1.75.1
+    ntfy:
+      repository: binwiederhier/ntfy
+      tag: v2.19.2
+    busybox:
+      repository: busybox
+      tag: 1.37.0
+    alpine:
+      repository: alpine
+      tag: 3.23
+    kubectl:
+      repository: rancher/kubectl
+      tag: v1.35.2
+    flaresolverr:
+      repository: ghcr.io/flaresolverr/flaresolverr
+      tag: v3.4.6
+    recyclarr:
+      repository: ghcr.io/recyclarr/recyclarr
+      tag: 8.5.1
+    intelGpuInit:
+      repository: intel/intel-gpu-initcontainer
+      tag: 0.35.0
+    intelGpuPlugin:
+      repository: intel/intel-gpu-plugin
+      tag: 0.35.0
+    nvidiaDevicePlugin:
+      repository: nvcr.io/nvidia/k8s-device-plugin
+      tag: v0.19.0
+    systemUpgradeController:
+      repository: rancher/system-upgrade-controller
+      tag: v0.19.0
+    k3sUpgrade:
+      repository: rancher/k3s-upgrade
+      tag: v1.31.6-k3s1
+  longhorn:
+    defaultSettings:
+      backupTarget: "file:///mnt/pve/zima/longhorn-backups"
+      backupTargetCredentialSecret: ""
+    persistence:
+      defaultClassReplicaCount: 2
+    recurringJobSelector:
+      enable: true
+      jobList: |
+        [
+          {"name":"daily-backup", "task":"backup", "cron":"0 2 * * *", "retain":7}
+        ]
+
+
+
+gateway:
+  name: haac-gateway
+  class: traefik
+
+ingresses:
+  authelia:
+    subdomain: auth
+    service: authelia
+    port: 9091
+    namespace: mgmt
+    auth_enabled: false
+  homepage:
+    subdomain: home
+    service: homepage
+    port: 80
+    namespace: mgmt
+    auth_enabled: false
+  headlamp:
+    subdomain: headlamp
+    service: headlamp
+    port: 80
+    namespace: mgmt
+    auth_enabled: true
+    extra_middlewares: 
+      - headlamp-token-header
+  ntfy:
+    subdomain: ntfy
+    service: ntfy
+    port: 80
+    namespace: mgmt
+    auth_enabled: false
+  jellyfin:
+    subdomain: jellyfin
+    service: jellyfin
+    port: 80
+    namespace: media
+    auth_enabled: false
+  radarr:
+    subdomain: radarr
+    service: radarr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  sonarr:
+    subdomain: sonarr
+    service: sonarr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  prowlarr:
+    subdomain: prowlarr
+    service: prowlarr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  autobrr:
+    subdomain: autobrr
+    service: autobrr
+    port: 80
+    namespace: media
+    auth_enabled: false
+  qbittorrent:
+    subdomain: qui
+    service: qbittorrent
+    port: 80
+    namespace: media
+    auth_enabled: true
+  argocd:
+    subdomain: argocd
+    service: argocd-server
+    port: 80
+    namespace: argocd
+    auth_enabled: false
+  grafana:
+    subdomain: grafana
+    service: grafana
+    port: 80
+    namespace: monitoring
+    auth_enabled: false
+  longhorn:
+    subdomain: longhorn
+    service: longhorn-frontend
+    port: 80
+    namespace: longhorn-system
+    auth_enabled: true

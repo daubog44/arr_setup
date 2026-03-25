@@ -1,0 +1,6 @@
+apiVersion: v2
+name: media
+description: Media stack including Jellyfin and Arr applications
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

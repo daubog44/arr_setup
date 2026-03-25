@@ -1,0 +1,201 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    renovate/helm-chart: "kube-prometheus-stack"
+spec:
+  project: platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    # renovate: registryUrl=https://prometheus-community.github.io/helm-charts chart=kube-prometheus-stack
+    targetRevision: "82.14.0"
+    helm:
+      values: |
+        # Disable default rules that are too noisy for homelabs or not applicable
+        defaultRules:
+          create: true
+          rules:
+            kubeApiserverAvailability: false
+            kubeApiserverSlos: false
+            kubernetesSystem: false
+            
+        alertmanager:
+          enabled: true
+          config:
+            global:
+              resolve_timeout: 5m
+            route:
+              group_by: ['namespace', 'alertname']
+              group_wait: 30s
+              group_interval: 5m
+              repeat_interval: 12h
+              receiver: 'ntfy'
+              routes:
+              - matchers:
+                - alertname = "Watchdog"
+                receiver: 'null'
+            receivers:
+            - name: 'null'
+            - name: 'ntfy'
+              webhook_configs:
+                - url: 'https://ntfy.${DOMAIN_NAME}/haac-alerts'
+                  send_resolved: true
+
+        grafana:
+          enabled: true
+          adminPassword: "${QUI_PASSWORD}" # Use the global admin password
+          grafana.ini:
+            server:
+              root_url: "https://grafana.${DOMAIN_NAME}"
+            auth.generic_oauth:
+              enabled: true
+              name: Authelia
+              icon: signin
+              client_id: grafana
+              client_secret: "$__env{GRAFANA_OIDC_SECRET}"
+              scopes: openid profile email groups
+              empty_scopes: false
+              auth_url: https://auth.${DOMAIN_NAME}/api/oidc/authorization
+              token_url: https://auth.${DOMAIN_NAME}/api/oidc/token
+              api_url: https://auth.${DOMAIN_NAME}/api/oidc/userinfo
+              # Map groups to Grafana roles. Assuming Authelia users are in 'admins' group.
+              role_attribute_path: contains(groups[*], 'admins') && 'Admin' || 'Viewer'
+          envFromSecret: "grafana-oidc-secret"
+          ingress:
+            enabled: false # We will manage ingress manually if needed or via Traefik IngressRoute later
+          
+          # Provision Dashboard from Grafana.com
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+              - name: 'default'
+                orgId: 1
+                folder: ''
+                type: file
+                disableDeletion: false
+                editable: false
+                options:
+                  path: /var/lib/grafana/dashboards/default
+          dashboards:
+            default:
+              trivy-operator:
+                # https://grafana.com/grafana/dashboards/17813-trivy-operator-dashboard/
+                gnetId: 17813
+                revision: 1
+                datasource: Prometheus
+              qbittorrent:
+                # A standard qBittorrent dashboard matching the exporter we will set up
+                gnetId: 17897
+                revision: 1
+                datasource: Prometheus
+            
+
+        prometheus:
+          additionalServiceMonitors:
+            - name: qbittorrent
+              namespace: media
+              selector:
+                matchLabels:
+                  app: downloaders
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+          prometheusSpec:
+            securityContext:
+              runAsNonRoot: false
+              runAsUser: 0
+              runAsGroup: 0
+              fsGroup: 0
+            configMaps: []
+            # Override the default config-out mount path which causes issues in LXC
+            prometheusConfigReloaderSpec:
+              extraArgs:
+                - --config-envsubst-file=/prometheus/config_out/prometheus.env.yaml
+              volumeMounts:
+                - name: config-out
+                  mountPath: /prometheus/config_out
+            containers:
+              - name: prometheus
+                args:
+                  - --config.file=/prometheus/config_out/prometheus.env.yaml
+                  - --storage.tsdb.path=/prometheus
+                  - --web.console.templates=/etc/prometheus/consoles
+                  - --web.console.libraries=/etc/prometheus/console_libraries
+                  - --web.enable-lifecycle
+                securityContext:
+                  privileged: true
+                  allowPrivilegeEscalation: true
+                  readOnlyRootFilesystem: false
+                volumeMounts:
+                  - name: config-out
+                    mountPath: /prometheus/config_out
+                    readOnly: true
+                  - name: etc-prometheus
+                    mountPath: /etc/prometheus
+            volumes:
+              - name: etc-prometheus
+                emptyDir: {}
+            # Ensure the operator doesn't try to mount config-out to /etc/prometheus
+            prometheusSpec:
+              volumeMounts:
+              - name: config-out
+                mountPath: /prometheus/config_out
+                readOnly: true
+            ruleSelectorNilUsesHelmValues: false
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false
+            retention: 15d
+            resources:
+              requests:
+                memory: 512Mi
+              limits:
+                memory: 1500Mi
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: local-path
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 10Gi
+
+        # K3s specific configurations
+        kubeControllerManager:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeProxy:
+          enabled: false
+
+        additionalPrometheusRulesMap:
+          node-problem-detector-rules:
+            groups:
+              - name: node-problem-detector
+                rules:
+                  - alert: NodeProblemDetected
+                    expr: problem_gauge > 0
+                    for: 1m
+                    labels:
+                      severity: critical
+                    annotations:
+                      summary: "Node problem detected on {{ $labels.node }}"
+                      description: "Node {{ $labels.node }} reported a Kernel/System event: {{ $labels.reason }}."
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

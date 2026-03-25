@@ -1,0 +1,94 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homepage
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    matchLabels:
+      app: homepage
+  template:
+    metadata:
+      labels:
+        app: homepage
+    spec:
+      containers:
+        - name: homepage
+          image: {{ .Values.global.images.homepage.repository }}:{{ .Values.global.images.homepage.tag }}
+          ports:
+            - containerPort: 3000
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: "home.{{ .Values.global.domainName }}"
+          volumeMounts:
+            - name: config-files
+              mountPath: /app/config/settings.yaml
+              subPath: settings.yaml
+            - name: config-files
+              mountPath: /app/config/services.yaml
+              subPath: services.yaml
+            - name: config-files
+              mountPath: /app/config/widgets.yaml
+              subPath: widgets.yaml
+            - name: config-files
+              mountPath: /app/config/bookmarks.yaml
+              subPath: bookmarks.yaml
+            - name: config-storage
+              mountPath: /app/config/logs
+      volumes:
+        - name: config-files
+          configMap:
+            name: homepage-config
+        - name: config-storage
+          persistentVolumeClaim:
+            claimName: homepage-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homepage
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    app: homepage
+  ports:
+    - port: 80
+      targetPort: 3000
+      name: http
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: homepage-config
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: downloaders-bootstrap
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: downloaders-bootstrap
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: downloaders-bootstrap
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+subjects:
+  - kind: ServiceAccount
+    name: downloaders-bootstrap
+    namespace: media
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: downloaders-bootstrap
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: downloaders-bootstrap
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-options: Replace=true
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: downloaders-bootstrap
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: {{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}
+          env:
+            - name: QUI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: downloaders-auth
+                  key: QUI_USERNAME
+            - name: QUI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: downloaders-auth
+                  key: QUI_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+
+              api_call() {
+                curl -fsS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                  -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                  "$@"
+              }
+
+              wait_http() {
+                url="$1"
+                for _ in $(seq 1 60); do
+                  if curl -fsS "$url" >/dev/null 2>&1; then
+                    return 0
+                  fi
+                  sleep 5
+                done
+                echo "Timed out waiting for $url" >&2
+                return 1
+              }
+
+              wait_http "http://qbittorrent.media.svc.cluster.local:8080"
+              wait_http "http://qbittorrent.media.svc.cluster.local"
+
+              POD_JSON=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods?labelSelector=app%3Ddownloaders")
+              POD_NAME=$(printf '%s' "$POD_JSON" | grep -o '"name":"[^"]*"' | head -n 1 | cut -d '"' -f 4)
+              if [ -z "$POD_NAME" ]; then
+                echo "Unable to find the downloaders pod for bootstrap." >&2
+                exit 1
+              fi
+
+              QBIT_LOGIN_CODE=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' \
+                --data "username=${QUI_USERNAME}&password=${QUI_PASSWORD}" \
+                http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login || true)
+              if [ "$QBIT_LOGIN_CODE" != "200" ] || ! grep -q 'Ok.' /tmp/qbit-login.txt; then
+                POD_LOGS=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods/${POD_NAME}/log?container=qbittorrent")
+                TEMP_PASSWORD=$(printf '%s\n' "$POD_LOGS" | sed -n 's/.*A temporary password is provided for this session: //p' | tail -n 1 | tr -d '\r')
+                if [ -n "$TEMP_PASSWORD" ]; then
+                  curl -fsS -c /tmp/qbit-cookies.txt \
+                    --data "username=admin&password=${TEMP_PASSWORD}" \
+                    http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login >/dev/null
+                  curl -fsS -b /tmp/qbit-cookies.txt \
+                    --data "new_password=${QUI_PASSWORD}" \
+                    http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/changePassword >/dev/null
+                fi
+              fi
+
+              QUI_LOGIN_CODE=$(curl -sS -o /tmp/qui-login.json -w '%{http_code}' -c /tmp/qui-cookies.txt \
+                -H 'Content-Type: application/json' \
+                --data "{\"username\":\"${QUI_USERNAME}\",\"password\":\"${QUI_PASSWORD}\"}" \
+                http://qbittorrent.media.svc.cluster.local/api/auth/login || true)
+              if [ "$QUI_LOGIN_CODE" -ge 400 ]; then
+                curl -fsS -H 'Content-Type: application/json' \
+                  --data "{\"username\":\"${QUI_USERNAME}\",\"password\":\"${QUI_PASSWORD}\"}" \
+                  http://qbittorrent.media.svc.cluster.local/api/auth/setup >/dev/null || true
+                curl -fsS -c /tmp/qui-cookies.txt \
+                  -H 'Content-Type: application/json' \
+                  --data "{\"username\":\"${QUI_USERNAME}\",\"password\":\"${QUI_PASSWORD}\"}" \
+                  http://qbittorrent.media.svc.cluster.local/api/auth/login >/dev/null
+              fi
+
+              CLIENTS=$(curl -fsS -b /tmp/qui-cookies.txt http://qbittorrent.media.svc.cluster.local/api/download_clients)
+              if printf '%s' "$CLIENTS" | grep -q '"name":"qBittorrent"'; then
+                exit 0
+              fi
+
+              curl -fsS -b /tmp/qui-cookies.txt \
+                -H 'Content-Type: application/json' \
+                --data "{\"name\":\"qBittorrent\",\"type\":\"qbittorrent\",\"enabled\":true,\"host\":\"localhost\",\"port\":8080,\"tls\":false,\"tls_skip_verify\":true,\"username\":\"admin\",\"password\":\"${QUI_PASSWORD}\",\"settings\":{\"basic_auth\":false}}" \
+                http://qbittorrent.media.svc.cluster.local/api/download_clients >/dev/null

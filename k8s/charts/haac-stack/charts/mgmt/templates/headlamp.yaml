@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/name: headlamp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: headlamp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: headlamp
+    spec:
+      serviceAccountName: headlamp-admin
+      containers:
+        - name: headlamp
+          image: {{ .Values.global.images.headlamp.repository }}:{{ .Values.global.images.headlamp.tag }}
+          env:
+            - name: HEADLAMP_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: headlamp-oidc-secret
+                  key: HEADLAMP_OIDC_SECRET
+          ports:
+            - containerPort: 4466
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4466
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4466
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          args:
+            - "-in-cluster"
+            - "-oidc-client-id=headlamp"
+            - "-oidc-client-secret=$(HEADLAMP_OIDC_CLIENT_SECRET)"
+            - "-oidc-idp-issuer-url=https://auth.{{ .Values.global.domainName }}"
+            - "-oidc-scopes=openid,profile,groups,email"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  ports:
+    - port: 80
+      targetPort: 4466
+  selector:
+    app.kubernetes.io/name: headlamp
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp-admin
+  namespace: mgmt
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: headlamp-admin-token
+  namespace: mgmt
+  annotations:
+    kubernetes.io/service-account.name: headlamp-admin
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: headlamp-admin
+    namespace: mgmt

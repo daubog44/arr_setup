@@ -1,0 +1,81 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autobrr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    matchLabels:
+      app: autobrr
+  template:
+    metadata:
+      labels:
+        app: autobrr
+    spec:
+      containers:
+        - name: autobrr
+          image: {{ .Values.global.images.autobrr.repository }}:{{ .Values.global.images.autobrr.tag }}
+          ports:
+            - containerPort: 7474
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 7474
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7474
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            - name: PUID
+              value: "{{ .Values.global.storage.uid }}"
+            - name: PGID
+              value: "{{ .Values.global.storage.gid }}"
+            - name: AUTOBRR__HOST
+              value: "0.0.0.0"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: autobrr-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autobrr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    app: autobrr
+  ports:
+    - port: 80
+      targetPort: 7474
+      name: http
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autobrr-config
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
