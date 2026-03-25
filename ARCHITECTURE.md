@@ -127,13 +127,15 @@ The portable control plane for the workstation is `scripts/haac.py`.
 
 It is responsible for:
 
-- bootstrap of `.tools/bin`
+- bootstrap of `.tools/<os>-<arch>/bin`
 - Windows/WSL coordination
 - kubeconfig handling and SSH tunnels
 - secret generation
 - ArgoCD bootstrap
 - Cloudflare tunnel and DNS reconciliation
 - local fallback deploy and verification
+
+`.env` is also the single source of truth for Terraform inputs. The wrapper translates env values into `TF_VAR_*` centrally before calling OpenTofu, instead of duplicating that mapping in `Taskfile.yml`.
 
 If global Task is missing, use:
 

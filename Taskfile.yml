@@ -7,81 +7,20 @@ vars:
   TOFU_DIR: tofu
   LXC_PASSWORD_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'
-  LXC_ROOTFS_DATASTORE_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_ROOTFS_DATASTORE'
-  LXC_MASTER_HOSTNAME_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_MASTER_HOSTNAME'
-  LXC_UNPRIVILEGED_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_UNPRIVILEGED'
-  LXC_NESTING_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_NESTING'
-  MASTER_TARGET_NODE_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name MASTER_TARGET_NODE'
-  K3S_MASTER_IP_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name K3S_MASTER_IP'
-  WORKER_NODES_JSON_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name WORKER_NODES_JSON'
-  HOST_NAS_PATH_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name HOST_NAS_PATH'
-  CLOUDFLARE_TUNNEL_TOKEN_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name CLOUDFLARE_TUNNEL_TOKEN'
   DOMAIN_NAME_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name DOMAIN_NAME'
-  PROTONVPN_OPENVPN_USERNAME_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name PROTONVPN_OPENVPN_USERNAME'
-  PROTONVPN_OPENVPN_PASSWORD_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name PROTONVPN_OPENVPN_PASSWORD'
-  SMB_USER_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name SMB_USER'
-  SMB_PASSWORD_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name SMB_PASSWORD'
-  NAS_ADDRESS_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_ADDRESS'
-  NAS_SHARE_NAME_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_SHARE_NAME'
-  STORAGE_UID_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name STORAGE_UID'
-  STORAGE_GID_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name STORAGE_GID'
   NAS_PATH_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_PATH'
-  TOFU_CMD:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name tofu'
   KUBECTL:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name kubectl'
   HELM:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name helm'
   K3S_KUBECONFIG:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" kubeconfig-path'
-  DEFAULT_GATEWAY:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" default-gateway'
   MASTER_IP:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_ip --default 127.0.0.1'
   PROXMOX_HOST:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_target_node --default pve'
-
-env:
-  TF_VAR_lxc_password: "{{.LXC_PASSWORD_VALUE}}"
-  TF_VAR_lxc_rootfs_datastore: "{{.LXC_ROOTFS_DATASTORE_VALUE}}"
-  TF_VAR_lxc_master_hostname: "{{.LXC_MASTER_HOSTNAME_VALUE}}"
-  TF_VAR_lxc_unprivileged: "{{.LXC_UNPRIVILEGED_VALUE}}"
-  TF_VAR_lxc_nesting: "{{.LXC_NESTING_VALUE}}"
-  TF_VAR_master_target_node: "{{.MASTER_TARGET_NODE_VALUE}}"
-  TF_VAR_k3s_master_ip: "{{.K3S_MASTER_IP_VALUE}}"
-  TF_VAR_lxc_gateway: "{{.DEFAULT_GATEWAY}}"
-  TF_VAR_worker_nodes: "{{.WORKER_NODES_JSON_VALUE}}"
-  TF_VAR_host_nas_path: "{{.HOST_NAS_PATH_VALUE}}"
-  TF_VAR_cloudflare_tunnel_token: "{{.CLOUDFLARE_TUNNEL_TOKEN_VALUE}}"
-  TF_VAR_domain_name: "{{.DOMAIN_NAME_VALUE}}"
-  TF_VAR_protonvpn_openvpn_username: "{{.PROTONVPN_OPENVPN_USERNAME_VALUE}}"
-  TF_VAR_protonvpn_openvpn_password: "{{.PROTONVPN_OPENVPN_PASSWORD_VALUE}}"
-  TF_VAR_smb_user: "{{.SMB_USER_VALUE}}"
-  TF_VAR_smb_password: "{{.SMB_PASSWORD_VALUE}}"
-  TF_VAR_nas_address: "{{.NAS_ADDRESS_VALUE}}"
-  TF_VAR_nas_share_name: "{{.NAS_SHARE_NAME_VALUE}}"
-  TF_VAR_storage_uid: "{{.STORAGE_UID_VALUE}}"
-  TF_VAR_storage_gid: "{{.STORAGE_GID_VALUE}}"
-  TF_VAR_python_executable: "{{.PYTHON_CMD}}"
 
 tasks:
   default:
@@ -99,7 +38,7 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
 
   install-tools:
-    desc: Bootstrap the local `.tools/bin` toolchain on any OS, and install the required WSL control-node packages on Windows.
+    desc: Bootstrap the local platform-aware `.tools/<os>-<arch>/bin` toolchain and, on Windows, the WSL control-node packages.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" install-tools'
 

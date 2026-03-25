@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
 K8S_DIR = ROOT / "k8s"
 TOOLS_DIR = ROOT / ".tools"
-TOOLS_BIN_DIR = TOOLS_DIR / "bin"
-TOOLS_METADATA_PATH = TOOLS_DIR / "versions.json"
+LEGACY_TOOLS_BIN_DIR = TOOLS_DIR / "bin"
+LEGACY_TOOLS_METADATA_PATH = TOOLS_DIR / "versions.json"
 SSH_DIR = ROOT / ".ssh"
 SSH_PRIVATE_KEY_PATH = SSH_DIR / "haac_ed25519"
 SSH_PUBLIC_KEY_PATH = SSH_DIR / "haac_ed25519.pub"
@@ -91,17 +91,42 @@ def is_windows() -> bool:
 
 
 def binary_name(name: str) -> str:
-    return f"{name}.exe" if is_windows() else name
+    return binary_name_for_platform(name, host_platform())
 
 
-def local_binary_path(name: str) -> Path:
-    return TOOLS_BIN_DIR / binary_name(name)
+def binary_name_for_platform(name: str, platform_name: str) -> str:
+    return f"{name}.exe" if platform_name == "windows" else name
+
+
+def platform_tools_dir(platform_name: str, arch: str) -> Path:
+    return TOOLS_DIR / f"{platform_name}-{arch}"
+
+
+def platform_tools_bin_dir(platform_name: str, arch: str) -> Path:
+    return platform_tools_dir(platform_name, arch) / "bin"
+
+
+def platform_tools_metadata_path(platform_name: str, arch: str) -> Path:
+    return platform_tools_dir(platform_name, arch) / "versions.json"
+
+
+def local_binary_path(name: str, platform_name: str | None = None, arch: str | None = None) -> Path:
+    platform_name = platform_name or host_platform()
+    arch = arch or host_arch()
+    return platform_tools_bin_dir(platform_name, arch) / binary_name_for_platform(name, platform_name)
+
+
+def legacy_local_binary_path(name: str) -> Path:
+    return LEGACY_TOOLS_BIN_DIR / binary_name(name)
 
 
 def tool_location(name: str) -> str | None:
     local_path = local_binary_path(name)
     if local_path.exists():
         return str(local_path)
+    legacy_path = legacy_local_binary_path(name)
+    if legacy_path.exists():
+        return str(legacy_path)
     found = shutil.which(name)
     if found:
         return found
@@ -353,21 +378,37 @@ def tool_version(env: dict[str, str], env_key: str, default: str) -> str:
     return env.get(env_key, default).strip() or default
 
 
-def read_tool_metadata() -> dict[str, str]:
-    if not TOOLS_METADATA_PATH.exists():
-        return {}
-    try:
-        content = json.loads(TOOLS_METADATA_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(content, dict):
-        return {}
-    return {str(key): str(value) for key, value in content.items()}
+def read_tool_metadata(platform_name: str | None = None, arch: str | None = None) -> dict[str, str]:
+    platform_name = platform_name or host_platform()
+    arch = arch or host_arch()
+    metadata_path = platform_tools_metadata_path(platform_name, arch)
+    if metadata_path.exists():
+        try:
+            content = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(content, dict):
+            return {}
+        return {str(key): str(value) for key, value in content.items()}
+
+    if platform_name == host_platform() and arch == host_arch() and LEGACY_TOOLS_METADATA_PATH.exists():
+        try:
+            content = json.loads(LEGACY_TOOLS_METADATA_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(content, dict):
+            return {}
+        return {str(key): str(value) for key, value in content.items()}
+
+    return {}
 
 
-def write_tool_metadata(metadata: dict[str, str]) -> None:
-    TOOLS_DIR.mkdir(parents=True, exist_ok=True)
-    TOOLS_METADATA_PATH.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def write_tool_metadata(metadata: dict[str, str], platform_name: str | None = None, arch: str | None = None) -> None:
+    platform_name = platform_name or host_platform()
+    arch = arch or host_arch()
+    metadata_path = platform_tools_metadata_path(platform_name, arch)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def requested_tool_version(name: str, env: dict[str, str]) -> str:
@@ -381,17 +422,21 @@ def requested_tool_version(name: str, env: dict[str, str]) -> str:
     return version_map[name]
 
 
-def install_direct_binary(url: str, destination: Path) -> str:
-    TOOLS_BIN_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_executable(destination: Path, platform_name: str) -> None:
+    if platform_name != "windows":
+        destination.chmod(0o755)
+
+
+def install_direct_binary(url: str, destination: Path, platform_name: str) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as response:
         destination.write_bytes(response.read())
-    if not is_windows():
-        destination.chmod(0o755)
+    ensure_executable(destination, platform_name)
     return str(destination)
 
 
-def install_zip_binary(url: str, inner_path: str, destination: Path) -> str:
-    TOOLS_BIN_DIR.mkdir(parents=True, exist_ok=True)
+def install_zip_binary(url: str, inner_path: str, destination: Path, platform_name: str) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as temp_file:
         temp_path = Path(temp_file.name)
         with urllib.request.urlopen(url) as response:
@@ -404,13 +449,12 @@ def install_zip_binary(url: str, inner_path: str, destination: Path) -> str:
     finally:
         temp_path.unlink(missing_ok=True)
 
-    if not is_windows():
-        destination.chmod(0o755)
+    ensure_executable(destination, platform_name)
     return str(destination)
 
 
-def install_targz_binary(url: str, inner_path: str, destination: Path) -> str:
-    TOOLS_BIN_DIR.mkdir(parents=True, exist_ok=True)
+def install_targz_binary(url: str, inner_path: str, destination: Path, platform_name: str) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as temp_file:
         temp_path = Path(temp_file.name)
         with urllib.request.urlopen(url) as response:
@@ -425,17 +469,16 @@ def install_targz_binary(url: str, inner_path: str, destination: Path) -> str:
     finally:
         temp_path.unlink(missing_ok=True)
 
-    if not is_windows():
-        destination.chmod(0o755)
+    ensure_executable(destination, platform_name)
     return str(destination)
 
 
-def ensure_local_cli_tool(name: str) -> str:
+def ensure_local_cli_tool(name: str, platform_name: str | None = None, arch: str | None = None) -> str:
     env = merged_env()
-    platform_name = host_platform()
-    arch = host_arch()
-    destination = local_binary_path(name)
-    metadata = read_tool_metadata()
+    platform_name = platform_name or host_platform()
+    arch = arch or host_arch()
+    destination = local_binary_path(name, platform_name, arch)
+    metadata = read_tool_metadata(platform_name, arch)
     requested_version = requested_tool_version(name, env)
     if destination.exists() and metadata.get(name) == requested_version:
         return str(destination)
@@ -445,52 +488,60 @@ def ensure_local_cli_tool(name: str) -> str:
         extension = "zip" if platform_name == "windows" else "tar.gz"
         url = f"https://github.com/opentofu/opentofu/releases/download/v{version}/tofu_{version}_{platform_name}_{arch}.{extension}"
         if platform_name == "windows":
-            installed = install_zip_binary(url, "tofu.exe", destination)
+            installed = install_zip_binary(url, "tofu.exe", destination, platform_name)
         else:
-            installed = install_targz_binary(url, "tofu", destination)
+            installed = install_targz_binary(url, "tofu", destination, platform_name)
         metadata[name] = version
-        write_tool_metadata(metadata)
+        write_tool_metadata(metadata, platform_name, arch)
         return installed
 
     if name == "helm":
         version = requested_version
         if platform_name == "windows":
             url = f"https://get.helm.sh/helm-v{version}-windows-{arch}.zip"
-            installed = install_zip_binary(url, f"windows-{arch}/helm.exe", destination)
+            installed = install_zip_binary(url, f"windows-{arch}/helm.exe", destination, platform_name)
         else:
             url = f"https://get.helm.sh/helm-v{version}-{platform_name}-{arch}.tar.gz"
-            installed = install_targz_binary(url, f"{platform_name}-{arch}/helm", destination)
+            installed = install_targz_binary(url, f"{platform_name}-{arch}/helm", destination, platform_name)
         metadata[name] = version
-        write_tool_metadata(metadata)
+        write_tool_metadata(metadata, platform_name, arch)
         return installed
 
     if name == "kubectl":
         version = requested_version
-        url = f"https://dl.k8s.io/release/v{version}/bin/{platform_name}/{arch}/{binary_name('kubectl')}"
-        installed = install_direct_binary(url, destination)
+        url = (
+            f"https://dl.k8s.io/release/v{version}/bin/{platform_name}/{arch}/"
+            f"{binary_name_for_platform('kubectl', platform_name)}"
+        )
+        installed = install_direct_binary(url, destination, platform_name)
         metadata[name] = version
-        write_tool_metadata(metadata)
+        write_tool_metadata(metadata, platform_name, arch)
         return installed
 
     if name == "kubeseal":
         version = requested_version
         archive_name = f"kubeseal-{version}-{platform_name}-{arch}.tar.gz"
         url = f"https://github.com/bitnami-labs/sealed-secrets/releases/download/v{version}/{archive_name}"
-        installed = install_targz_binary(url, binary_name("kubeseal"), destination)
+        installed = install_targz_binary(
+            url,
+            binary_name_for_platform("kubeseal", platform_name),
+            destination,
+            platform_name,
+        )
         metadata[name] = version
-        write_tool_metadata(metadata)
+        write_tool_metadata(metadata, platform_name, arch)
         return installed
 
     if name == "task":
         version = requested_version
         if platform_name == "windows":
             url = f"https://github.com/go-task/task/releases/download/v{version}/task_windows_{arch}.zip"
-            installed = install_zip_binary(url, "task.exe", destination)
+            installed = install_zip_binary(url, "task.exe", destination, platform_name)
         else:
             url = f"https://github.com/go-task/task/releases/download/v{version}/task_{platform_name}_{arch}.tar.gz"
-            installed = install_targz_binary(url, "task", destination)
+            installed = install_targz_binary(url, "task", destination, platform_name)
         metadata[name] = version
-        write_tool_metadata(metadata)
+        write_tool_metadata(metadata, platform_name, arch)
         return installed
 
     raise HaaCError(f"Unsupported local tool bootstrap: {name}")
@@ -1691,6 +1742,14 @@ def doctor() -> None:
             failures.append(f"wsl-distro:{distro}")
         else:
             print(f"[ok] wsl distro: {distro}")
+            linux_arch = wsl_arch(env)
+            for binary in ("tofu", "helm", "kubectl", "kubeseal", "task"):
+                linux_tool = local_binary_path(binary, "linux", linux_arch)
+                if linux_tool.exists():
+                    print(f"[ok] portable linux tool ({binary}): {linux_tool}")
+                else:
+                    print(f"[missing] portable linux tool ({binary})")
+                    failures.append(f"portable-linux:{binary}")
             for label, command in (
                 ("ansible-playbook", "command -v ansible-playbook"),
                 ("git", "command -v git"),
@@ -1712,6 +1771,43 @@ def doctor() -> None:
         raise HaaCError(f"Missing required tooling: {', '.join(failures)}")
 
 
+def cleanup_legacy_tools_layout() -> None:
+    if LEGACY_TOOLS_BIN_DIR.exists():
+        shutil.rmtree(LEGACY_TOOLS_BIN_DIR)
+    LEGACY_TOOLS_METADATA_PATH.unlink(missing_ok=True)
+
+
+def wsl_distro_exists(env: dict[str, str]) -> bool:
+    if shutil.which("wsl") is None:
+        return False
+    distro = wsl_distro(env)
+    distro_check = run(["wsl", "-l", "-q"], check=False, capture_output=True)
+    available_distros = {
+        line.strip().replace("\x00", "")
+        for line in (distro_check.stdout or "").splitlines()
+        if line.strip()
+    }
+    return distro in available_distros
+
+
+def wsl_arch(env: dict[str, str]) -> str:
+    completed = run(
+        wsl_command("bash", "-lc", "uname -m", distro=wsl_distro(env)),
+        check=False,
+        capture_output=True,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return host_arch()
+    machine = completed.stdout.strip().lower()
+    arch_map = {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+    }
+    return arch_map.get(machine, host_arch())
+
+
 def install_wsl_tools() -> None:
     if not is_windows():
         raise HaaCError("install-wsl-tools is supported only on Windows.")
@@ -1720,13 +1816,7 @@ def install_wsl_tools() -> None:
 
     env = merged_env()
     distro = wsl_distro(env)
-    distro_check = run(["wsl", "-l", "-q"], check=False, capture_output=True)
-    available_distros = {
-        line.strip().replace("\x00", "")
-        for line in (distro_check.stdout or "").splitlines()
-        if line.strip()
-    }
-    if distro not in available_distros:
+    if not wsl_distro_exists(env):
         raise HaaCError(f"WSL distro '{distro}' was not found. Install it first, then rerun this command.")
 
     print(f"Installing WSL packages in {distro}...")
@@ -1742,9 +1832,21 @@ def install_wsl_tools() -> None:
 
 
 def install_tools() -> None:
-    for binary in ("tofu", "helm", "kubectl", "kubeseal", "task"):
-        installed = ensure_local_cli_tool(binary)
-        print(f"Installed portable {binary} at {installed}")
+    env = merged_env()
+    targets = [(host_platform(), host_arch())]
+    if is_windows():
+        targets.append(("linux", wsl_arch(env)))
+
+    seen_targets: set[tuple[str, str]] = set()
+    for platform_name, arch in targets:
+        if (platform_name, arch) in seen_targets:
+            continue
+        seen_targets.add((platform_name, arch))
+        for binary in ("tofu", "helm", "kubectl", "kubeseal", "task"):
+            installed = ensure_local_cli_tool(binary, platform_name, arch)
+            print(f"Installed portable {binary} for {platform_name}-{arch} at {installed}")
+
+    cleanup_legacy_tools_layout()
 
     missing_global = [binary for binary in ("python", "git", "ssh") if tool_location(binary) is None]
     if missing_global:
@@ -1822,34 +1924,38 @@ def resolve_default_gateway(env: dict[str, str]) -> str:
     return ""
 
 
+def tofu_tf_vars(env: dict[str, str]) -> dict[str, str]:
+    direct_env_map = {
+        "lxc_password": "LXC_PASSWORD",
+        "lxc_rootfs_datastore": "LXC_ROOTFS_DATASTORE",
+        "lxc_master_hostname": "LXC_MASTER_HOSTNAME",
+        "lxc_unprivileged": "LXC_UNPRIVILEGED",
+        "lxc_nesting": "LXC_NESTING",
+        "master_target_node": "MASTER_TARGET_NODE",
+        "k3s_master_ip": "K3S_MASTER_IP",
+        "worker_nodes": "WORKER_NODES_JSON",
+        "host_nas_path": "HOST_NAS_PATH",
+        "cloudflare_tunnel_token": "CLOUDFLARE_TUNNEL_TOKEN",
+        "domain_name": "DOMAIN_NAME",
+        "protonvpn_openvpn_username": "PROTONVPN_OPENVPN_USERNAME",
+        "protonvpn_openvpn_password": "PROTONVPN_OPENVPN_PASSWORD",
+        "smb_user": "SMB_USER",
+        "smb_password": "SMB_PASSWORD",
+        "nas_address": "NAS_ADDRESS",
+        "nas_share_name": "NAS_SHARE_NAME",
+        "storage_uid": "STORAGE_UID",
+        "storage_gid": "STORAGE_GID",
+    }
+    mapped = {f"TF_VAR_{tf_var}": env.get(env_key, "") for tf_var, env_key in direct_env_map.items()}
+    mapped["TF_VAR_lxc_gateway"] = resolve_default_gateway(env)
+    mapped["TF_VAR_python_executable"] = env.get("PYTHON_CMD", "python")
+    return mapped
+
+
 def tofu_cli_env() -> dict[str, str]:
     env = merged_env()
     mapped = os.environ.copy()
-    mapped.update(
-        {
-            "TF_VAR_lxc_password": env.get("LXC_PASSWORD", ""),
-            "TF_VAR_lxc_rootfs_datastore": env.get("LXC_ROOTFS_DATASTORE", ""),
-            "TF_VAR_lxc_master_hostname": env.get("LXC_MASTER_HOSTNAME", ""),
-            "TF_VAR_lxc_unprivileged": env.get("LXC_UNPRIVILEGED", ""),
-            "TF_VAR_lxc_nesting": env.get("LXC_NESTING", ""),
-            "TF_VAR_master_target_node": env.get("MASTER_TARGET_NODE", ""),
-            "TF_VAR_k3s_master_ip": env.get("K3S_MASTER_IP", ""),
-            "TF_VAR_lxc_gateway": resolve_default_gateway(env),
-            "TF_VAR_worker_nodes": env.get("WORKER_NODES_JSON", ""),
-            "TF_VAR_host_nas_path": env.get("HOST_NAS_PATH", ""),
-            "TF_VAR_cloudflare_tunnel_token": env.get("CLOUDFLARE_TUNNEL_TOKEN", ""),
-            "TF_VAR_domain_name": env.get("DOMAIN_NAME", ""),
-            "TF_VAR_protonvpn_openvpn_username": env.get("PROTONVPN_OPENVPN_USERNAME", ""),
-            "TF_VAR_protonvpn_openvpn_password": env.get("PROTONVPN_OPENVPN_PASSWORD", ""),
-            "TF_VAR_smb_user": env.get("SMB_USER", ""),
-            "TF_VAR_smb_password": env.get("SMB_PASSWORD", ""),
-            "TF_VAR_nas_address": env.get("NAS_ADDRESS", ""),
-            "TF_VAR_nas_share_name": env.get("NAS_SHARE_NAME", ""),
-            "TF_VAR_storage_uid": env.get("STORAGE_UID", ""),
-            "TF_VAR_storage_gid": env.get("STORAGE_GID", ""),
-            "TF_VAR_python_executable": env.get("PYTHON_CMD", "python"),
-        }
-    )
+    mapped.update(tofu_tf_vars(env))
     return mapped
 
 
@@ -1970,7 +2076,9 @@ def cmd_task_run(args: argparse.Namespace) -> None:
     if not task_args:
         raise HaaCError("Please pass the task arguments after `--`, for example: task-run -- up")
     task_binary = ensure_local_cli_tool("task")
-    completed = subprocess.run([task_binary, *task_args], cwd=str(ROOT), check=False)
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join([str(local_binary_path("task").parent), env.get("PATH", "")])
+    completed = subprocess.run([task_binary, *task_args], cwd=str(ROOT), env=env, check=False)
     if completed.returncode != 0:
         raise HaaCError(f"Task command failed with exit code {completed.returncode}")
 

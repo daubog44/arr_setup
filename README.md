@@ -58,7 +58,13 @@ Replacing that stack with raw YAML plus overlays would reduce readability and DR
 
 ## Windows and Linux
 
-Portable CLI tools are bootstrapped into `.tools/bin`:
+Portable CLI tools are bootstrapped into platform-specific directories under `.tools/`:
+
+- `.tools/windows-amd64/bin/` on Windows
+- `.tools/linux-amd64/bin/` on Linux/WSL
+- `.tools/darwin-arm64/bin/` or `.tools/darwin-amd64/bin/` on macOS
+
+The portable set is:
 
 - `tofu`
 - `helm`
@@ -100,7 +106,7 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 
 ## Main Commands
 
-- `install-tools`: bootstrap `.tools/bin` and, on Windows, the WSL control-node packages
+- `install-tools`: bootstrap `.tools/<os>-<arch>/bin` and, on Windows, the WSL control-node packages plus the Linux portable toolchain used from WSL
 - `doctor`: verify local prerequisites
 - `up`: full provisioning and GitOps bootstrap
 - `plan`: OpenTofu plan only
@@ -123,7 +129,7 @@ So yes, the cluster can use the NAS, but today it does so through the Proxmox ho
 
 ## Notes
 
-- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, and workstation settings.
+- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by `scripts/haac.py`.
 - `HAAC_KUBECTL_VERSION` controls the local workstation binary. `HAAC_CLUSTER_KUBECTL_IMAGE_TAG` controls the in-cluster helper image. They can differ because image publishing cadence does not always match the official client release cadence.
 - LXC should remain `unprivileged` by default; K3s, GPU, TUN, and eBPF exceptions are centrally gated with env flags.
 - `task up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.
