@@ -84,7 +84,7 @@ global:
       tag: 3.23
     kubectl:
       repository: rancher/kubectl
-      tag: v1.35.2
+      tag: "v1.35.2"
     flaresolverr:
       repository: ghcr.io/flaresolverr/flaresolverr
       tag: v3.4.6
