@@ -30,6 +30,10 @@ global:
         - feature.node.kubernetes.io/pci-0302_8086.present
         - feature.node.kubernetes.io/pci-0380_8086.present
         - feature.node.kubernetes.io/pci-1200_8086.present
+  k3s:
+    version: "v1.34.5+k3s1"
+    autoUpgrade:
+      enabled: false
   images:
     gluetun:
       repository: qmcgaw/gluetun
@@ -105,7 +109,6 @@ global:
       tag: v0.19.0
     k3sUpgrade:
       repository: rancher/k3s-upgrade
-      tag: v1.31.6-k3s1
   longhorn:
     defaultSettings:
       backupTarget: "file:///mnt/pve/zima/longhorn-backups"

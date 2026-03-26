@@ -722,6 +722,8 @@
 
     - name: Download and install K3s Server
       ansible.builtin.shell: |
+        INSTALL_K3S_VERSION="{{ lookup('env', 'HAAC_K3S_VERSION') | default('', true) }}"
+        if [ -n "$INSTALL_K3S_VERSION" ]; then export INSTALL_K3S_VERSION; fi
         curl -sfL https://get.k3s.io | sh -s - server \
           --disable servicelb \
           --write-kubeconfig-mode 644 \
@@ -792,7 +794,9 @@
       ansible.builtin.shell: |
         MASTER_IP="{{ groups['k3s_master'][0] }}"
         TOKEN="{{ hostvars[groups['k3s_master'][0]]['k3s_token'] | default('') }}"
+        INSTALL_K3S_VERSION="{{ lookup('env', 'HAAC_K3S_VERSION') | default('', true) }}"
         if [ -z "$TOKEN" ]; then echo "TOKEN NOT FOUND" && exit 1; fi
+        if [ -n "$INSTALL_K3S_VERSION" ]; then export INSTALL_K3S_VERSION; fi
         curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${TOKEN} sh -
       args:
         creates: /usr/local/bin/k3s

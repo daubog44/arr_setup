@@ -1,3 +1,4 @@
+{{- if .Values.global.k3s.autoUpgrade.enabled }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -120,7 +121,7 @@ spec:
   channel: https://update.k3s.io/v1-release/channels/stable
   upgrade:
     image: >-
-      {{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}
+      {{ .Values.global.images.k3sUpgrade.repository }}:{{ replace "+" "-" .Values.global.k3s.version }}
 ---
 # K3s Agent (Worker) Upgrade Plan
 apiVersion: upgrade.cattle.io/v1
@@ -149,4 +150,5 @@ spec:
   channel: https://update.k3s.io/v1-release/channels/stable
   upgrade:
     image: >-
-      {{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}
+      {{ .Values.global.images.k3sUpgrade.repository }}:{{ replace "+" "-" .Values.global.k3s.version }}
+{{- end }}
