@@ -5,5 +5,11 @@
   "[yaml]": {
     "editor.tabSize": 2,
     "editor.insertSpaces": true
-  }
+  },
+  "yaml.customTags": [
+    "{{- scalar",
+    "{{ scalar",
+    "}} scalar"
+  ]
+}
 }
