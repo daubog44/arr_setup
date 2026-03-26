@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - crds/system-upgrade-controller-crd.yaml
   - namespaces.yaml
   - projects/platform-project.yaml
   - projects/workloads-project.yaml
