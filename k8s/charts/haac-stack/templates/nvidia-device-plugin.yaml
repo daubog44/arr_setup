@@ -32,7 +32,7 @@ spec:
       containers:
       - name: nvidia-device-plugin-ctr
         image: >-
-          {{ .Values.global.images.nvidiaDevicePlugin.repository }}:{{ .Values.global.images.nvidiaDevicePlugin.tag }}
+          {{ printf "%s:%s" .Values.global.images.nvidiaDevicePlugin.repository .Values.global.images.nvidiaDevicePlugin.tag }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

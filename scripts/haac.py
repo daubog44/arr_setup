@@ -362,7 +362,6 @@ def ensure_wsl_ssh_keypair(env: dict[str, str]) -> str:
 
     home_dir = wsl_home_dir(env)
     private_key_wsl = f"{home_dir}/.ssh/haac_ed25519"
-    public_key_wsl = f"{private_key_wsl}.pub"
     private_key = SSH_PRIVATE_KEY_PATH.read_text(encoding="utf-8")
     public_key = SSH_PUBLIC_KEY_PATH.read_text(encoding="utf-8")
     command = (

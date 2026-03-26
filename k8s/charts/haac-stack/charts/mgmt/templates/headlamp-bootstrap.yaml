@@ -54,7 +54,7 @@ spec:
       containers:
         - name: bootstrap
           image: >-
-            {{ .Values.global.images.kubectl.repository }}:{{ .Values.global.images.kubectl.tag }}
+            {{ printf "%s:%s" .Values.global.images.kubectl.repository .Values.global.images.kubectl.tag }}
           command:
             - /bin/sh
             - -c

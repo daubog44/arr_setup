@@ -4,6 +4,8 @@ dotenv: [".env"]
 
 vars:
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
+  PUSH_ALL:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name PUSH_ALL --default true'
   TOFU_DIR: tofu
   LXC_PASSWORD_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'

@@ -54,7 +54,7 @@ spec:
       containers:
         - name: bootstrap
           image: >-
-            {{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}
+            {{ printf "%s:%s" .Values.global.images.curl.repository .Values.global.images.curl.tag }}
           env:
             - name: QUI_USERNAME
               valueFrom:

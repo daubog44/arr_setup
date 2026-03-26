@@ -26,7 +26,7 @@ spec:
       containers:
         - name: bootstrapper
           image: >-
-            {{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}
+            {{ printf "%s:%s" .Values.global.images.curl.repository .Values.global.images.curl.tag }}
           env:
             - name: SEMAPHORE_URL
               value: "http://semaphore.mgmt.svc.cluster.local:3000"

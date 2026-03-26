@@ -19,7 +19,7 @@ spec:
       containers:
         - name: gluetun
           image: >-
-            {{ .Values.global.images.gluetun.repository }}:{{ .Values.global.images.gluetun.tag }}
+            {{ printf "%s:%s" .Values.global.images.gluetun.repository .Values.global.images.gluetun.tag }}
           env:
             - name: VPN_SERVICE_PROVIDER
               value: protonvpn
@@ -76,7 +76,7 @@ spec:
 
         - name: port-sync
           image: >-
-            {{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}
+            {{ printf "%s:%s" .Values.global.images.curl.repository .Values.global.images.curl.tag }}
           env:
             - name: QBIT_USER
               valueFrom:
@@ -116,7 +116,7 @@ spec:
 
         - name: qbittorrent
           image: >-
-            {{ .Values.global.images.qbittorrent.repository }}:{{ .Values.global.images.qbittorrent.tag }}
+            {{ printf "%s:%s" .Values.global.images.qbittorrent.repository .Values.global.images.qbittorrent.tag }}
           env:
             - name: PUID
               value: "{{ .Values.global.storage.uid }}"
@@ -154,7 +154,7 @@ spec:
               mountPath: /data
         - name: qui
           image: >-
-            {{ .Values.global.images.qui.repository }}:{{ .Values.global.images.qui.tag }}
+            {{ printf "%s:%s" .Values.global.images.qui.repository .Values.global.images.qui.tag }}
           env:
             - name: QUI__OIDC_ENABLED
               value: "true"
@@ -187,7 +187,7 @@ spec:
               mountPath: /app/config
         - name: exporter
           image: >-
-            {{ .Values.global.images.qbitExporter.repository }}:{{ .Values.global.images.qbitExporter.tag }}
+            {{ printf "%s:%s" .Values.global.images.qbitExporter.repository .Values.global.images.qbitExporter.tag }}
           ports:
             - containerPort: 8000
               name: metrics
