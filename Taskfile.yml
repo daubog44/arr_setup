@@ -89,7 +89,7 @@ tasks:
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/playbook.yml --extra-args "{{.DEBUG_LEVEL}}"'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/playbook.yml --extra-args={{default "" .DEBUG_LEVEL}}'
 
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.

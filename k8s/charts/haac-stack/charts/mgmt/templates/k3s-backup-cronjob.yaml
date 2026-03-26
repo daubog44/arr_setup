@@ -17,7 +17,8 @@ spec:
           hostNetwork: true # To avoid networking issues while copying
           containers:
             - name: backup
-              image: "{{ .Values.global.images.alpine.repository }}:{{ .Values.global.images.alpine.tag }}"
+              image: >-
+                {{ .Values.global.images.alpine.repository }}:{{ .Values.global.images.alpine.tag }}
               command:
                 - /bin/sh
                 - -c

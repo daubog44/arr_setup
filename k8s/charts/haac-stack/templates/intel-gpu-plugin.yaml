@@ -20,15 +20,16 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-{{- range .Values.global.scheduling.gpu.intelNodeFeatureLabels }}
+# {{- range .Values.global.scheduling.gpu.intelNodeFeatureLabels }}
               - matchExpressions:
-                  - key: {{ . }}
+                  - key: "{{ . }}"
                     operator: In
                     values: ["true"]
-{{- end }}
+# {{- end }}
       initContainers:
         - name: init-driver
-          image: "{{ .Values.global.images.intelGpuInit.repository }}:{{ .Values.global.images.intelGpuInit.tag }}"
+          image: >-
+            {{ .Values.global.images.intelGpuInit.repository }}:{{ .Values.global.images.intelGpuInit.tag }}
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -37,7 +38,8 @@ spec:
               name: nfd-features
       containers:
         - name: intel-gpu-plugin
-          image: "{{ .Values.global.images.intelGpuPlugin.repository }}:{{ .Values.global.images.intelGpuPlugin.tag }}"
+          image: >-
+            {{ .Values.global.images.intelGpuPlugin.repository }}:{{ .Values.global.images.intelGpuPlugin.tag }}
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

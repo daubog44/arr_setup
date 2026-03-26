@@ -6,6 +6,23 @@
       ansible.builtin.wait_for_connection:
         timeout: 60
 
+    - name: Ensure root SSH directory exists on Proxmox
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Authorize the repo SSH key on Proxmox root for ProxyJump access
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') }}"
+        create: true
+        owner: root
+        group: root
+        mode: '0600'
+
     - name: Disable Proxmox Enterprise repository (requires paid subscription)
       ansible.builtin.replace:
         path: /etc/apt/sources.list.d/pve-enterprise.list
@@ -446,6 +463,18 @@
       when: lxc_conf.changed
       delegate_to: "{{ proxmox_host }}"
 
+    - name: Ensure repo SSH public key is installed and persists in guest root account
+      ansible.builtin.shell: |
+        pubkey="$(printf '%s' '{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') | trim | b64encode }}' | base64 -d)"
+        pct exec {{ lxc_vmid }} -- sh -lc "install -d -m 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys || printf '%s\n' \"\$pubkey\" >> /root/.ssh/authorized_keys"
+        pct exec {{ lxc_vmid }} -- sh -lc "grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys"
+      register: guest_ssh_key_ready
+      until: guest_ssh_key_ready.rc == 0
+      retries: 10
+      delay: 3
+      changed_when: false
+      delegate_to: "{{ proxmox_host }}"
+
 
 - name: Automate OS Baseline and Dependencies (All K3s Nodes)
   hosts: k3s_master, k3s_workers
@@ -454,7 +483,7 @@
   tasks:
     - name: Wait for system to become reachable
       ansible.builtin.wait_for_connection:
-        timeout: 120
+        timeout: 180
         sleep: 5
 
     - name: Gather facts for the first time
@@ -849,10 +878,12 @@
 
     - name: Wait for Sealed Secrets controller to be ready
       ansible.builtin.command: >
-        k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=60s
+        k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=120s
       register: ss_ready
+      until: ss_ready.rc == 0
       retries: 6
       delay: 10
+      changed_when: false
 
     - name: Wait for Sealed Secrets master key to be generated
       ansible.builtin.shell: |

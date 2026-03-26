@@ -2,13 +2,13 @@ all:
   vars:
     nas_address: ${nas_address}
     host_nas_path: ${host_nas_path}
-    nas_share_name: "{{ lookup('env', 'NAS_SHARE_NAME') | default('${nas_share_name}') }}"
-    storage_uid: "{{ lookup('env', 'STORAGE_UID') | default('13000') }}"
-    storage_gid: "{{ lookup('env', 'STORAGE_GID') | default('13000') }}"
-    lxc_k3s_compat_mode: "{{ lookup('env', 'LXC_K3S_COMPAT_MODE') | default('true') }}"
-    lxc_enable_gpu_passthrough: "{{ lookup('env', 'LXC_ENABLE_GPU_PASSTHROUGH') | default('true') }}"
-    lxc_enable_tun: "{{ lookup('env', 'LXC_ENABLE_TUN') | default('true') }}"
-    lxc_enable_ebpf_mounts: "{{ lookup('env', 'LXC_ENABLE_EBPF_MOUNTS') | default('true') }}"
+    nas_share_name: "{{ lookup('env', 'NAS_SHARE_NAME') | default('${nas_share_name}', true) }}"
+    storage_uid: "{{ lookup('env', 'STORAGE_UID') | default('13000', true) }}"
+    storage_gid: "{{ lookup('env', 'STORAGE_GID') | default('13000', true) }}"
+    lxc_k3s_compat_mode: "{{ lookup('env', 'LXC_K3S_COMPAT_MODE') | default('true', true) }}"
+    lxc_enable_gpu_passthrough: "{{ lookup('env', 'LXC_ENABLE_GPU_PASSTHROUGH') | default('true', true) }}"
+    lxc_enable_tun: "{{ lookup('env', 'LXC_ENABLE_TUN') | default('true', true) }}"
+    lxc_enable_ebpf_mounts: "{{ lookup('env', 'LXC_ENABLE_EBPF_MOUNTS') | default('true', true) }}"
   children:
 
     proxmox_host:
@@ -23,8 +23,13 @@ all:
       hosts:
         ${master_ip}:
           ansible_user: root
-          ansible_ssh_private_key_file: ../.ssh/haac_ed25519
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=${proxmox_host_user}@${master_target_node}'
+          ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o IdentityFile={{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}
+            -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }} -W %h:%p ${proxmox_host_user}@${master_target_node}"
           lxc_vmid: "${master_vmid}"
           proxmox_host: "${master_target_node}"
     k3s_workers:
@@ -32,8 +37,13 @@ all:
 %{ for name, worker in workers ~}
         ${try(element(split("/", lookup(worker.ipv4, "eth0", "")), 0), "")}:
           ansible_user: root
-          ansible_ssh_private_key_file: ../.ssh/haac_ed25519
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o ProxyJump=${proxmox_host_user}@${worker_configs[name].target_node}'
+          ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o IdentityFile={{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}
+            -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }} -W %h:%p ${proxmox_host_user}@${worker_configs[name].target_node}"
           lxc_vmid: "${worker.vm_id}"
           worker_name: "${name}"
           proxmox_host: "${worker_configs[name].target_node}"

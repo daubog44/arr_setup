@@ -22,16 +22,17 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-{{- range .Values.global.scheduling.gpu.nvidiaNodeFeatureLabels }}
+# {{- range .Values.global.scheduling.gpu.nvidiaNodeFeatureLabels }}
               - matchExpressions:
-                  - key: {{ . }}
+                  - key: "{{ . }}"
                     operator: In
                     values: ["true"]
-{{- end }}
+# {{- end }}
       priorityClassName: system-node-critical
       containers:
       - name: nvidia-device-plugin-ctr
-        image: "{{ .Values.global.images.nvidiaDevicePlugin.repository }}:{{ .Values.global.images.nvidiaDevicePlugin.tag }}"
+        image: >-
+          {{ .Values.global.images.nvidiaDevicePlugin.repository }}:{{ .Values.global.images.nvidiaDevicePlugin.tag }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

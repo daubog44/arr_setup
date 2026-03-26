@@ -57,7 +57,8 @@ spec:
           effect: NoSchedule
       containers:
         - name: system-upgrade-controller
-          image: "{{ .Values.global.images.systemUpgradeController.repository }}:{{ .Values.global.images.systemUpgradeController.tag }}"
+          image: >-
+            {{ .Values.global.images.systemUpgradeController.repository }}:{{ .Values.global.images.systemUpgradeController.tag }}
           imagePullPolicy: IfNotPresent
           env:
             - name: SYSTEM_UPGRADE_CONTROLLER_DEBUG
@@ -118,7 +119,8 @@ spec:
   serviceAccountName: system-upgrade
   channel: https://update.k3s.io/v1-release/channels/stable
   upgrade:
-    image: "{{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}"
+    image: >-
+      {{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}
 ---
 # K3s Agent (Worker) Upgrade Plan
 apiVersion: upgrade.cattle.io/v1
@@ -141,8 +143,10 @@ spec:
     args:
       - prepare
       - server-plan
-    image: "{{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}"
+    image: >-
+      {{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}
   serviceAccountName: system-upgrade
   channel: https://update.k3s.io/v1-release/channels/stable
   upgrade:
-    image: "{{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}"
+    image: >-
+      {{ .Values.global.images.k3sUpgrade.repository }}:{{ .Values.global.images.k3sUpgrade.tag }}

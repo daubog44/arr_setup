@@ -53,7 +53,8 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: bootstrap
-          image: "{{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}"
+          image: >-
+            {{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}
           env:
             - name: QUI_USERNAME
               valueFrom:

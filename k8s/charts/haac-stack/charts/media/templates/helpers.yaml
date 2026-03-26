@@ -15,7 +15,8 @@ spec:
     spec:
       containers:
         - name: flaresolverr
-          image: "{{ .Values.global.images.flaresolverr.repository }}:{{ .Values.global.images.flaresolverr.tag }}"
+          image: >-
+            {{ .Values.global.images.flaresolverr.repository }}:{{ .Values.global.images.flaresolverr.tag }}
           ports:
             - containerPort: 8191
               name: http
@@ -49,7 +50,8 @@ spec:
         spec:
           initContainers:
             - name: recyclarr-init
-              image: "{{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}"
+              image: >-
+                {{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}
               command: ["/bin/sh", "-c"]
               args: ["if [ ! -f /config/recyclarr.yml ]; then recyclarr config create; fi"]
               # Recyclarr >= 6.0 uses 'config create' instead of 'init'
@@ -58,7 +60,8 @@ spec:
                   mountPath: /config
           containers:
             - name: recyclarr
-              image: "{{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}"
+              image: >-
+                {{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}
               args: ["sync"]
               volumeMounts:
                 - name: config
@@ -84,7 +87,8 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: binder
-          image: "{{ .Values.global.images.busybox.repository }}:{{ .Values.global.images.busybox.tag }}"
+          image: >-
+            {{ .Values.global.images.busybox.repository }}:{{ .Values.global.images.busybox.tag }}
           command: ["sh", "-c", "echo 'Binding PVC for Local-Path provisioner'"]
           volumeMounts:
             - name: config

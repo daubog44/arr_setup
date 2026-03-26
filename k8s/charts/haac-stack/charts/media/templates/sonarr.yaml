@@ -17,7 +17,8 @@ spec:
     spec:
       containers:
         - name: sonarr
-          image: "{{ .Values.global.images.sonarr.repository }}:{{ .Values.global.images.sonarr.tag }}"
+          image: >-
+            {{ .Values.global.images.sonarr.repository }}:{{ .Values.global.images.sonarr.tag }}
           ports:
             - containerPort: 8989
               name: http

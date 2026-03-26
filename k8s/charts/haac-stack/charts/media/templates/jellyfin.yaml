@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: jellyfin
-          image: "{{ .Values.global.images.jellyfin.repository }}:{{ .Values.global.images.jellyfin.tag }}"
+          image: >-
+            {{ .Values.global.images.jellyfin.repository }}:{{ .Values.global.images.jellyfin.tag }}
           ports:
             - containerPort: 8096
               name: http

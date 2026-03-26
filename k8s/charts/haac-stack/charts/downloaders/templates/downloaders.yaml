@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: gluetun
-          image: "{{ .Values.global.images.gluetun.repository }}:{{ .Values.global.images.gluetun.tag }}"
+          image: >-
+            {{ .Values.global.images.gluetun.repository }}:{{ .Values.global.images.gluetun.tag }}
           env:
             - name: VPN_SERVICE_PROVIDER
               value: protonvpn
@@ -74,7 +75,8 @@ spec:
             failureThreshold: 5
 
         - name: port-sync
-          image: "{{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}"
+          image: >-
+            {{ .Values.global.images.curl.repository }}:{{ .Values.global.images.curl.tag }}
           env:
             - name: QBIT_USER
               valueFrom:
@@ -113,7 +115,8 @@ spec:
               readOnly: true
 
         - name: qbittorrent
-          image: "{{ .Values.global.images.qbittorrent.repository }}:{{ .Values.global.images.qbittorrent.tag }}"
+          image: >-
+            {{ .Values.global.images.qbittorrent.repository }}:{{ .Values.global.images.qbittorrent.tag }}
           env:
             - name: PUID
               value: "{{ .Values.global.storage.uid }}"
@@ -150,7 +153,8 @@ spec:
             - name: media
               mountPath: /data
         - name: qui
-          image: "{{ .Values.global.images.qui.repository }}:{{ .Values.global.images.qui.tag }}"
+          image: >-
+            {{ .Values.global.images.qui.repository }}:{{ .Values.global.images.qui.tag }}
           env:
             - name: QUI__OIDC_ENABLED
               value: "true"
@@ -182,7 +186,8 @@ spec:
             - name: qui-config
               mountPath: /app/config
         - name: exporter
-          image: "{{ .Values.global.images.qbitExporter.repository }}:{{ .Values.global.images.qbitExporter.tag }}"
+          image: >-
+            {{ .Values.global.images.qbitExporter.repository }}:{{ .Values.global.images.qbitExporter.tag }}
           ports:
             - containerPort: 8000
               name: metrics

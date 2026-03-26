@@ -1,48 +1,51 @@
-{{- range $name, $conf := .Values.ingresses }}
+# {{- range $name, $conf := .Values.ingresses }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ $name }}
-  namespace: {{ $conf.namespace | default $.Release.Namespace }}
+  name: "{{ $name }}"
+  namespace: "{{ $conf.namespace | default $.Release.Namespace }}"
   annotations:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   parentRefs:
-    - name: {{ $.Values.gateway.name }}
-      namespace: {{ $.Release.Namespace }}
+    - name: "{{ $.Values.gateway.name }}"
+      namespace: "{{ $.Release.Namespace }}"
   hostnames:
-    - {{ include "haac-stack.ingress.url" (dict "subdomain" $conf.subdomain "Values" $.Values) }}
+    - >-
+      {{ include "haac-stack.ingress.url" (dict "subdomain" $conf.subdomain "Values" $.Values) }}
   rules:
     - matches:
         - path:
             type: PathPrefix
             value: /
       backendRefs:
-        - name: {{ $conf.service }}
+        - name: "{{ $conf.service }}"
           port: {{ $conf.port }}
-{{- if or $conf.auth_enabled $conf.extra_middlewares }}
+# {{- if or $conf.auth_enabled $conf.extra_middlewares }}
       filters:
         - type: ExtensionRef
           extensionRef:
             group: traefik.io
             kind: Middleware
-            name: {{ if eq ($conf.namespace | default $.Release.Namespace) "mgmt" }}force-https{{ else }}mgmt-force-https@kubernetescrd{{ end }}
-{{- if $conf.auth_enabled }}
+            name: >-
+              {{ if eq ($conf.namespace | default $.Release.Namespace) "mgmt" }}force-https{{ else }}mgmt-force-https@kubernetescrd{{ end }}
+# {{- if $conf.auth_enabled }}
         - type: ExtensionRef
           extensionRef:
             group: traefik.io
             kind: Middleware
-            name: {{ if eq ($conf.namespace | default $.Release.Namespace) "mgmt" }}authelia{{ else }}mgmt-authelia@kubernetescrd{{ end }}
-{{- end }}
-{{- if $conf.extra_middlewares }}
-{{- range $conf.extra_middlewares }}
+            name: >-
+              {{ if eq ($conf.namespace | default $.Release.Namespace) "mgmt" }}authelia{{ else }}mgmt-authelia@kubernetescrd{{ end }}
+# {{- end }}
+# {{- if $conf.extra_middlewares }}
+# {{- range $conf.extra_middlewares }}
         - type: ExtensionRef
           extensionRef:
             group: traefik.io
             kind: Middleware
-            name: {{ . }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
+            name: "{{ . }}"
+# {{- end }}
+# {{- end }}
+# {{- end }}
+# {{- end }}

@@ -150,6 +150,90 @@ def ssh_common_options(*, connect_timeout: int = 5) -> list[str]:
     ]
 
 
+def proxmox_ssh_base_command(host: str, *, connect_timeout: int = 5) -> list[str]:
+    command = [
+        "ssh",
+        *ssh_common_options(connect_timeout=connect_timeout),
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "IdentitiesOnly=yes",
+    ]
+    if SSH_PRIVATE_KEY_PATH.exists():
+        command.extend(["-i", str(SSH_PRIVATE_KEY_PATH)])
+    command.append(f"root@{host}")
+    return command
+
+
+def proxmox_ssh_command(host: str, remote_command: str, *, connect_timeout: int = 5) -> list[str]:
+    if is_windows():
+        env = merged_env()
+        ssh_key_wsl = ensure_wsl_ssh_keypair(env)
+        ssh_command = [
+            "ssh",
+            *ssh_common_options(connect_timeout=connect_timeout),
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-i",
+            ssh_key_wsl,
+            f"root@{host}",
+            remote_command,
+        ]
+        return wsl_command(
+            "bash",
+            "-lc",
+            "exec " + " ".join(shlex.quote(part) for part in ssh_command),
+            distro=wsl_distro(env),
+        )
+    return [*proxmox_ssh_base_command(host, connect_timeout=connect_timeout), remote_command]
+
+
+def proxmox_tunnel_command(
+    host: str,
+    *,
+    master_ip: str,
+    local_port: int = 6443,
+    remote_port: int = 6443,
+    connect_timeout: int = 10,
+) -> list[str]:
+    if is_windows():
+        env = merged_env()
+        ssh_key_wsl = ensure_wsl_ssh_keypair(env)
+        ssh_command = [
+            "ssh",
+            *ssh_common_options(connect_timeout=connect_timeout),
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-i",
+            ssh_key_wsl,
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-N",
+            "-L",
+            f"{local_port}:{master_ip}:{remote_port}",
+            f"root@{host}",
+        ]
+        return wsl_command(
+            "bash",
+            "-lc",
+            "exec " + " ".join(shlex.quote(part) for part in ssh_command),
+            distro=wsl_distro(env),
+        )
+    return [
+        *proxmox_ssh_base_command(host, connect_timeout=connect_timeout)[:-1],
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-N",
+        "-L",
+        f"{local_port}:{master_ip}:{remote_port}",
+        proxmox_ssh_base_command(host, connect_timeout=connect_timeout)[-1],
+    ]
+
+
 def host_platform() -> str:
     system_name = platform.system().lower()
     if system_name.startswith("msys") or system_name.startswith("cygwin"):
@@ -268,6 +352,33 @@ def to_posix_wsl_path(path: Path, env: dict[str, str]) -> str:
     return run_stdout(wsl_command("wslpath", "-a", native_path, distro=wsl_distro(env)))
 
 
+def wsl_home_dir(env: dict[str, str]) -> str:
+    return run_stdout(wsl_command("bash", "-lc", "printf %s \"$HOME\"", distro=wsl_distro(env)))
+
+
+def ensure_wsl_ssh_keypair(env: dict[str, str]) -> str:
+    if not SSH_PRIVATE_KEY_PATH.exists() or not SSH_PUBLIC_KEY_PATH.exists():
+        raise HaaCError(f"Repo SSH keypair not found: {SSH_PRIVATE_KEY_PATH}")
+
+    home_dir = wsl_home_dir(env)
+    private_key_wsl = f"{home_dir}/.ssh/haac_ed25519"
+    public_key_wsl = f"{private_key_wsl}.pub"
+    private_key = SSH_PRIVATE_KEY_PATH.read_text(encoding="utf-8")
+    public_key = SSH_PUBLIC_KEY_PATH.read_text(encoding="utf-8")
+    command = (
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+        "cat > ~/.ssh/haac_ed25519 <<'EOF_PRIVATE'\n"
+        f"{private_key}"
+        "\nEOF_PRIVATE\n"
+        "cat > ~/.ssh/haac_ed25519.pub <<'EOF_PUBLIC'\n"
+        f"{public_key}"
+        "\nEOF_PUBLIC\n"
+        "chmod 600 ~/.ssh/haac_ed25519 && chmod 644 ~/.ssh/haac_ed25519.pub"
+    )
+    run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
+    return private_key_wsl
+
+
 def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env: dict[str, str]) -> None:
     if shutil.which("wsl") is None:
         raise HaaCError(
@@ -279,6 +390,7 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
     playbook_wsl = to_posix_wsl_path(playbook, env)
     kubeconfig_wsl = to_posix_wsl_path(local_kubeconfig_path(), env)
     kube_dir_wsl = str(PurePosixPath(kubeconfig_wsl).parent)
+    ssh_key_wsl = ensure_wsl_ssh_keypair(env)
 
     env_exports = {
         key: env[key]
@@ -286,12 +398,20 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
             "PROXMOX_HOST_PASSWORD",
             "LXC_PASSWORD",
             "NAS_PATH",
+            "NAS_SHARE_NAME",
             "SMB_USER",
             "SMB_PASSWORD",
+            "STORAGE_UID",
+            "STORAGE_GID",
+            "LXC_K3S_COMPAT_MODE",
+            "LXC_ENABLE_GPU_PASSTHROUGH",
+            "LXC_ENABLE_TUN",
+            "LXC_ENABLE_EBPF_MOUNTS",
         )
         if key in env and env[key]
     }
     env_exports["HAAC_KUBECONFIG_PATH"] = kubeconfig_wsl
+    env_exports["HAAC_SSH_PRIVATE_KEY_PATH"] = ssh_key_wsl
 
     exports = " ".join(f"{key}={shlex.quote(value)}" for key, value in env_exports.items())
     args = " ".join(shlex.quote(arg) for arg in extra_args)
@@ -328,16 +448,13 @@ def wait_for_k8s_api(kubeconfig: Path, kubectl: str, timeout_seconds: int = 120,
 
 @contextmanager
 def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int = 6443, remote_port: int = 6443):
-    command = [
-        "ssh",
-        *ssh_common_options(connect_timeout=10),
-        "-o",
-        "ExitOnForwardFailure=yes",
-        "-N",
-        "-L",
-        f"{local_port}:{master_ip}:{remote_port}",
-        f"root@{proxmox_host}",
-    ]
+    command = proxmox_tunnel_command(
+        proxmox_host,
+        master_ip=master_ip,
+        local_port=local_port,
+        remote_port=remote_port,
+        connect_timeout=10,
+    )
     process = subprocess.Popen(
         command,
         cwd=str(ROOT),
@@ -1609,48 +1726,31 @@ def shutdown_cluster(master_target_node: str, tofu_dir: Path) -> None:
 
     for vmid, label in vmids:
         status = run(
-            ["ssh", "-o", "StrictHostKeyChecking=no", f"root@{master_target_node}", f"pct status {vmid}"],
+            proxmox_ssh_command(master_target_node, f"pct status {vmid}"),
             check=False,
             capture_output=True,
         )
         if "status: running" not in (status.stdout or ""):
             continue
         run(
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                f"root@{master_target_node}",
+            proxmox_ssh_command(
+                master_target_node,
                 f"pct exec {vmid} -- bash -lc 'systemctl stop k3s 2>/dev/null || true; systemctl stop k3s-agent 2>/dev/null || true'",
-            ],
+            ),
             check=False,
         )
         graceful = run(
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                f"root@{master_target_node}",
-                f"pct shutdown {vmid} --timeout 180",
-            ],
+            proxmox_ssh_command(master_target_node, f"pct shutdown {vmid} --timeout 180"),
             check=False,
         )
         if graceful.returncode != 0:
-            run(["ssh", "-o", "StrictHostKeyChecking=no", f"root@{master_target_node}", f"pct stop {vmid}"], check=False)
+            run(proxmox_ssh_command(master_target_node, f"pct stop {vmid}"), check=False)
         print(f"Shutdown requested for {label} ({vmid})")
 
 
 def restore_k3s(master_target_node: str, tofu_dir: Path, backup_file: str, nas_mount_path: str) -> None:
     master_vmid = run_stdout([resolved_binary("tofu"), f"-chdir={tofu_dir}", "output", "-raw", "master_vmid"])
-    run(
-        [
-            "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
-            f"root@{master_target_node}",
-            f"pct exec {master_vmid} -- systemctl stop k3s",
-        ]
-    )
+    run(proxmox_ssh_command(master_target_node, f"pct exec {master_vmid} -- systemctl stop k3s"))
 
     restore_script = f"""
 set -e
@@ -1659,16 +1759,8 @@ pct exec "$LXC_ID" -- mv /var/lib/rancher/k3s/server/db/state.db /var/lib/ranche
 cp {shlex.quote(nas_mount_path)}/{shlex.quote(backup_file)} /var/lib/lxc/$LXC_ID/rootfs/var/lib/rancher/k3s/server/db/state.db
 pct exec "$LXC_ID" -- chown root:root /var/lib/rancher/k3s/server/db/state.db
 """
-    run(["ssh", "-o", "StrictHostKeyChecking=no", f"root@{master_target_node}", "bash", "-lc", restore_script])
-    run(
-        [
-            "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
-            f"root@{master_target_node}",
-            f"pct exec {master_vmid} -- systemctl start k3s",
-        ]
-    )
+    run(proxmox_ssh_command(master_target_node, f"bash -lc {shlex.quote(restore_script)}"))
+    run(proxmox_ssh_command(master_target_node, f"pct exec {master_vmid} -- systemctl start k3s"))
 
 
 def remove_file(path: Path) -> None:
@@ -1767,6 +1859,7 @@ def doctor() -> None:
                 ("git", "command -v git"),
                 ("python3", "command -v python3"),
                 ("ssh", "command -v ssh"),
+                ("sshpass", "command -v sshpass"),
             ):
                 completed = run(
                     wsl_command("bash", "-lc", command, distro=distro),
@@ -1836,7 +1929,7 @@ def install_wsl_tools() -> None:
         wsl_command(
             "bash",
             "-lc",
-            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible git python3 openssh-client",
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible git python3 openssh-client sshpass",
             distro=distro,
             user="root",
         )
@@ -1882,6 +1975,13 @@ def cmd_check_env(_: argparse.Namespace) -> None:
             "LXC_MASTER_HOSTNAME",
             "DOMAIN_NAME",
             "NAS_ADDRESS",
+            "HOST_NAS_PATH",
+            "NAS_PATH",
+            "NAS_SHARE_NAME",
+            "SMB_USER",
+            "SMB_PASSWORD",
+            "STORAGE_UID",
+            "STORAGE_GID",
             "GITOPS_REPO_URL",
             "GITOPS_REPO_REVISION",
         ],
@@ -1921,17 +2021,20 @@ def resolve_default_gateway(env: dict[str, str]) -> str:
         return env["LXC_GATEWAY"]
     host = env.get("MASTER_TARGET_NODE", "pve")
     completed = run(
-        [
-            "ssh",
-            *ssh_common_options(connect_timeout=5),
-            f"root@{host}",
-            "ip route | awk '/default/ {print $3; exit}'",
-        ],
+        proxmox_ssh_command(host, "ip route | awk '/default/ {print $3; exit}'", connect_timeout=5),
         check=False,
         capture_output=True,
     )
     if completed.returncode == 0:
-        return completed.stdout.strip()
+        output = completed.stdout.strip()
+        if output:
+            via_match = re.search(r"\bvia\s+((?:\d{1,3}\.){3}\d{1,3})\b", output)
+            if via_match:
+                return via_match.group(1)
+            ip_match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", output)
+            if ip_match:
+                return ip_match.group(0)
+            return output
     return ""
 
 
@@ -2013,6 +2116,7 @@ def cmd_run_ansible(args: argparse.Namespace) -> None:
         return
 
     env["HAAC_KUBECONFIG_PATH"] = str(local_kubeconfig_path())
+    env["HAAC_SSH_PRIVATE_KEY_PATH"] = str(SSH_PRIVATE_KEY_PATH)
     ensure_parent(local_kubeconfig_path())
     run(["ansible-playbook", *extra_args, "-i", str(inventory), str(playbook)], env=env)
 
