@@ -48,7 +48,7 @@ spec:
           config:
             # Route Falco alerts directly to Ntfy
             ntfy:
-              url: "https://ntfy.nucleoautogenerativo.it/haac-alerts"
+              url: "https://ntfy.${DOMAIN_NAME}/haac-alerts"
               checkcert: false
 
   destination:

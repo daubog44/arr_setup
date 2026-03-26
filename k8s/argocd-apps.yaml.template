@@ -1,16 +1,15 @@
+---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: haac-platform
+  name: haac-root
   namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
   source:
-    repoURL: https://github.com/daubog44/arr_setup.git
-    targetRevision: main
-    path: k8s/platform
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REPO_REVISION}
+    path: k8s/bootstrap/root
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
@@ -18,5 +17,3 @@ spec:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - ServerSideApply=true

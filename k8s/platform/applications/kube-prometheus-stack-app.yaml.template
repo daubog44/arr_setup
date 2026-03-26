@@ -41,7 +41,7 @@ spec:
             - name: 'null'
             - name: 'ntfy'
               webhook_configs:
-                - url: 'https://ntfy.nucleoautogenerativo.it/haac-alerts'
+                - url: 'https://ntfy.${DOMAIN_NAME}/haac-alerts'
                   send_resolved: true
 
         grafana:
@@ -52,7 +52,7 @@ spec:
             passwordKey: admin-password
           grafana.ini:
             server:
-              root_url: "https://grafana.nucleoautogenerativo.it"
+              root_url: "https://grafana.${DOMAIN_NAME}"
             auth.generic_oauth:
               enabled: true
               name: Authelia
@@ -61,9 +61,9 @@ spec:
               client_secret: "$__env{GRAFANA_OIDC_SECRET}"
               scopes: openid profile email groups
               empty_scopes: false
-              auth_url: https://auth.nucleoautogenerativo.it/api/oidc/authorization
-              token_url: https://auth.nucleoautogenerativo.it/api/oidc/token
-              api_url: https://auth.nucleoautogenerativo.it/api/oidc/userinfo
+              auth_url: https://auth.${DOMAIN_NAME}/api/oidc/authorization
+              token_url: https://auth.${DOMAIN_NAME}/api/oidc/token
+              api_url: https://auth.${DOMAIN_NAME}/api/oidc/userinfo
               # Map groups to Grafana roles. Assuming Authelia users are in 'admins' group.
               role_attribute_path: contains(groups[*], 'admins') && 'Admin' || 'Viewer'
           envFromSecret: "grafana-oidc-secret"

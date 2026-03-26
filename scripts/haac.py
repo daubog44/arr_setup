@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tarfile
@@ -36,6 +37,16 @@ PUB_CERT_PATH = SCRIPTS_DIR / "pub-sealed-secrets.pem"
 SECRETS_DIR = K8S_DIR / "charts" / "haac-stack" / "templates" / "secrets"
 VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "values.yaml.template"
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
+GITOPS_RENDERED_OUTPUTS = (
+    K8S_DIR / "argocd-apps.yaml",
+    K8S_DIR / "bootstrap" / "root" / "applications" / "platform-root.yaml",
+    K8S_DIR / "bootstrap" / "root" / "applications" / "workloads-root.yaml",
+    K8S_DIR / "workloads" / "applications" / "haac-stack.yaml",
+    K8S_DIR / "platform" / "argocd" / "argocd-cm.yaml",
+    K8S_DIR / "platform" / "applications" / "falco-app.yaml",
+    K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
+    K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
+)
 HOOKS_DIR = ROOT / ".git" / "hooks"
 KUBESEAL_VERSION = "0.36.1"
 DEFAULT_WSL_DISTRO = "Debian"
@@ -269,6 +280,62 @@ def command_label(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
 
+def should_run_tool_in_wsl(command: list[str]) -> bool:
+    if not is_windows() or not command or shutil.which("wsl") is None:
+        return False
+    return Path(command[0]).stem.lower() in {"kubectl", "kubeseal", "helm"}
+
+
+def maybe_resolve_local_path(token: str, cwd: Path) -> Path | None:
+    if not token or token == "-" or token.startswith("http://") or token.startswith("https://"):
+        return None
+    if re.match(r"^[A-Za-z]:[\\/]", token):
+        candidate = Path(token)
+        return candidate if candidate.exists() else None
+    candidate = Path(token)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    resolved = (cwd / candidate).resolve()
+    return resolved if resolved.exists() else None
+
+
+def convert_wsl_tool_arg(token: str, cwd: Path, env: dict[str, str]) -> str:
+    for prefix in ("--kubeconfig=", "--cert="):
+        if token.startswith(prefix):
+            resolved = maybe_resolve_local_path(token[len(prefix) :], cwd)
+            if resolved is not None:
+                return prefix + to_posix_wsl_path(resolved, env)
+            return token
+
+    if token.startswith("--from-file="):
+        head, _, tail = token.rpartition("=")
+        resolved = maybe_resolve_local_path(tail, cwd)
+        if resolved is not None:
+            return f"{head}={to_posix_wsl_path(resolved, env)}"
+        return token
+
+    resolved = maybe_resolve_local_path(token, cwd)
+    if resolved is not None:
+        return to_posix_wsl_path(resolved, env)
+    return token
+
+
+def wrap_wsl_tool_command(command: list[str], cwd: Path, env: dict[str, str] | None) -> list[str]:
+    if not should_run_tool_in_wsl(command):
+        return command
+
+    working_env = env or merged_env()
+    tool_name = Path(command[0]).stem.lower()
+    linux_binary = ensure_local_cli_tool(tool_name, "linux", wsl_arch(working_env))
+    linux_binary_wsl = to_posix_wsl_path(linux_binary, working_env)
+    cwd_wsl = to_posix_wsl_path(cwd, working_env)
+    converted_args = [convert_wsl_tool_arg(arg, cwd, working_env) for arg in command[1:]]
+    shell_command = "cd " + shlex.quote(cwd_wsl) + " && exec " + " ".join(
+        shlex.quote(part) for part in [linux_binary_wsl, *converted_args]
+    )
+    return wsl_command("bash", "-lc", shell_command, distro=wsl_distro(working_env))
+
+
 def run(
     command: list[str],
     *,
@@ -278,6 +345,7 @@ def run(
     capture_output: bool = False,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    command = wrap_wsl_tool_command(command, cwd, env)
     completed = subprocess.run(
         command,
         cwd=str(cwd),
@@ -422,12 +490,18 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
     run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
 
 
+def allocate_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def rewrite_kubeconfig_server(kubeconfig: Path, server: str = "https://127.0.0.1:6443") -> None:
     if not kubeconfig.exists():
         raise HaaCError(f"Kubeconfig not found: {kubeconfig}")
 
     content = kubeconfig.read_text(encoding="utf-8")
-    updated = re.sub(r"(^\s*server:\s*)https://.*?:6443(\s*$)", rf"\1{server}\2", content, flags=re.MULTILINE)
+    updated = re.sub(r"(^\s*server:\s*)https://[^\s]+(\s*$)", rf"\1{server}\2", content, flags=re.MULTILINE)
     kubeconfig.write_text(updated, encoding="utf-8")
 
 
@@ -446,11 +520,12 @@ def wait_for_k8s_api(kubeconfig: Path, kubectl: str, timeout_seconds: int = 120,
 
 
 @contextmanager
-def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int = 6443, remote_port: int = 6443):
+def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None, remote_port: int = 6443):
+    resolved_local_port = local_port or allocate_local_port()
     command = proxmox_tunnel_command(
         proxmox_host,
         master_ip=master_ip,
-        local_port=local_port,
+        local_port=resolved_local_port,
         remote_port=remote_port,
         connect_timeout=10,
     )
@@ -467,7 +542,7 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int = 6443, remote
         if process.poll() is not None:
             stderr = process.stderr.read().strip() if process.stderr else ""
             raise HaaCError(f"SSH tunnel failed to start: {stderr or command_label(command)}")
-        yield
+        yield resolved_local_port
     finally:
         if process.poll() is None:
             if is_windows():
@@ -483,8 +558,8 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int = 6443, remote
 @contextmanager
 def cluster_session(proxmox_host: str, master_ip: str, kubeconfig: Path, kubectl: str):
     ensure_parent(kubeconfig)
-    with ssh_tunnel(proxmox_host, master_ip):
-        rewrite_kubeconfig_server(kubeconfig)
+    with ssh_tunnel(proxmox_host, master_ip) as local_port:
+        rewrite_kubeconfig_server(kubeconfig, f"https://127.0.0.1:{local_port}")
         wait_for_k8s_api(kubeconfig, kubectl)
         yield
 
@@ -500,6 +575,19 @@ def render_env_placeholders(content: str, env: dict[str, str]) -> str:
 def render_values_file(env: dict[str, str]) -> None:
     content = VALUES_TEMPLATE.read_text(encoding="utf-8")
     VALUES_OUTPUT.write_text(render_env_placeholders(content, env), encoding="utf-8")
+
+
+def gitops_template_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.name}.template")
+
+
+def render_gitops_manifests(env: dict[str, str]) -> None:
+    for output_path in GITOPS_RENDERED_OUTPUTS:
+        template_path = gitops_template_path(output_path)
+        if not template_path.exists():
+            raise HaaCError(f"Missing GitOps manifest template: {template_path}")
+        content = render_env_placeholders(template_path.read_text(encoding="utf-8"), env)
+        output_path.write_text(content, encoding="utf-8")
 
 
 def tool_version(env: dict[str, str], env_key: str, default: str) -> str:
@@ -874,6 +962,16 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
+            "grafana-admin-secret",
+            "monitoring",
+            SECRETS_DIR / "grafana-admin-sealed-secret.yaml",
+            {
+                "admin-user": "admin",
+                "admin-password": env["QUI_PASSWORD"],
+            },
+            None,
+        ),
+        (
             "argocd-sso-secret",
             "argocd",
             SECRETS_DIR / "argocd-sso-sealed-secret.yaml",
@@ -925,6 +1023,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
         output_path.write_text(seal_yaml(kubeseal, cert, secret_yaml), encoding="utf-8")
 
     render_values_file(env)
+    render_gitops_manifests(env)
 
 
 def apply_rendered_file(file_path: Path, kubeconfig: Path, kubectl: str, env: dict[str, str]) -> None:
@@ -1000,7 +1099,7 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
     if push_all:
         run(["git", "add", "."])
     else:
-        run(["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT)])
+        run(["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]])
 
     staged = run(["git", "diff", "--cached", "--quiet"], check=False)
     if staged.returncode == 0:
@@ -1049,7 +1148,10 @@ def pre_commit_hook() -> None:
         if health.returncode == 0:
             generate_secrets_core(kubeconfig, kubectl, fetch_cert=True)
             if is_git_repo():
-                run(["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT)], check=False)
+                run(
+                    ["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]],
+                    check=False,
+                )
             return
 
     print("K3s is not reachable from the pre-commit hook. Skipping secret regeneration.")
@@ -1057,6 +1159,7 @@ def pre_commit_hook() -> None:
 
 def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
+    render_gitops_manifests(env)
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"], input_text=root_app)

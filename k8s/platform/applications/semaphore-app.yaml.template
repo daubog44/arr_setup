@@ -55,11 +55,11 @@ spec:
           oidcProviders:
             authelia:
               display_name: "Login con Authelia"
-              provider_url: "https://auth.nucleoautogenerativo.it"
+              provider_url: "https://auth.${DOMAIN_NAME}"
               client_id: "semaphore"
               existingSecret: semaphore-db-secret
               existingSecretKey: OIDC_SECRET
-              redirect_url: "https://ansible.nucleoautogenerativo.it/api/auth/oidc/redirect"
+              redirect_url: "https://ansible.${DOMAIN_NAME}/api/auth/oidc/redirect"
               scopes:
                 - openid
                 - profile
@@ -83,7 +83,7 @@ spec:
                 - web
                 - websecure
               routes:
-                - match: Host(`ansible.nucleoautogenerativo.it`)
+                - match: Host(`ansible.${DOMAIN_NAME}`)
                   kind: Rule
                   services:
                     - name: semaphore

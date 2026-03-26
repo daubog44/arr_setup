@@ -7,8 +7,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${GITOPS_REPO_URL}
-    targetRevision: ${GITOPS_REPO_REVISION}
+    repoURL: https://github.com/daubog44/arr_setup.git
+    targetRevision: main
     path: k8s/bootstrap/root
   destination:
     server: https://kubernetes.default.svc

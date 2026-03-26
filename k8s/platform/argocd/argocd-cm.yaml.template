@@ -7,11 +7,11 @@ metadata:
     app.kubernetes.io/name: argocd-cm
     app.kubernetes.io/part-of: argocd
 data:
-  url: https://argocd.nucleoautogenerativo.it
+  url: https://argocd.${DOMAIN_NAME}
   # Enable OIDC
   oidc.config: |
     name: Authelia
-    issuer: https://auth.nucleoautogenerativo.it
+    issuer: https://auth.${DOMAIN_NAME}
     clientID: argocd
     clientSecret: $argocd-sso-secret:clientSecret
     requestedScopes: ["openid", "profile", "email", "groups"]
