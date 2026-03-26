@@ -3,4 +3,5 @@ kind: Kustomization
 resources:
   - argocd
   - applications
+  - traefik/traefik-gateway-rbac.yaml
   - traefik/traefik-config.yaml
