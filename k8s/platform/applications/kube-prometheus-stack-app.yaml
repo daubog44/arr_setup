@@ -11,7 +11,7 @@ spec:
     repoURL: https://prometheus-community.github.io/helm-charts
     chart: kube-prometheus-stack
     # renovate: registryUrl=https://prometheus-community.github.io/helm-charts chart=kube-prometheus-stack
-    targetRevision: "83.2.0"
+    targetRevision: "83.3.0"
     helm:
       values: |
         # Disable default rules that are too noisy for homelabs or not applicable
