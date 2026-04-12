@@ -1,0 +1,10 @@
+lxc.idmap: u 0 100000 13000
+lxc.idmap: u 13000 13000 1
+lxc.idmap: u 13001 113000 52535
+lxc.idmap: g 0 100000 44
+lxc.idmap: g 44 44 1
+lxc.idmap: g 45 100044 948
+lxc.idmap: g 993 993 1
+lxc.idmap: g 994 100992 12006
+lxc.idmap: g 13000 13000 1
+lxc.idmap: g 13001 112998 52535

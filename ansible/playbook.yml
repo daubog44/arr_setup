@@ -863,29 +863,27 @@
         longhorn_webhook_delegate: "{{ groups['k3s_master'][0] }}"
       run_once: true
 
-    - name: Apply custom node labels to the node
-      ansible.builtin.command: "k3s kubectl label node {{ ansible_facts['hostname'] }} {{ item.key }}={{ item.value }} --overwrite"
-      vars:
-        sanitized_node_labels: "{{ ((node_labels | default({})) | dict2items | rejectattr('key', 'in', ['gpu', 'gpu_model', 'gpu_nvidia', 'gpu_intel', 'gpu_nvidia_model', 'gpu_intel_model', 'gpu_type', 'haac.io/gpu-nvidia', 'haac.io/gpu-intel', 'haac.io/gpu-nvidia-model', 'haac.io/gpu-intel-model', 'haac.io/gpu-type']) | list | items2dict) }}"
-      loop: "{{ sanitized_node_labels | dict2items }}"
-      when: (sanitized_node_labels | length > 0)
-      delegate_to: "{{ groups['k3s_master'][0] }}"
-      ignore_errors: true
-
-    - name: Remove legacy GPU labels from the node
-      ansible.builtin.command: >
-        k3s kubectl label node {{ ansible_facts['hostname'] }}
-        gpu- gpu_nvidia- gpu_intel- gpu_nvidia_model- gpu_intel_model- gpu_type-
-        haac.io/gpu-nvidia- haac.io/gpu-intel- haac.io/gpu-nvidia-model- haac.io/gpu-intel-model- haac.io/gpu-type-
-      when: (hostvars[proxmox_host]['has_nvidia'] | default(false)) or (hostvars[proxmox_host]['has_intel'] | default(false)) or ((node_labels | default({})) | length > 0)
-      delegate_to: "{{ groups['k3s_master'][0] }}"
-      ignore_errors: true
-
 - name: K3s Cluster Networking Readiness Gate
   hosts: k3s_master:k3s_workers
   gather_facts: false
 
   tasks:
+    - name: Restart K3s agents once after relaxing degraded Longhorn admission webhooks
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s-agent
+      when:
+        - "'k3s_workers' in group_names"
+        - hostvars[groups['k3s_master'][0]].longhorn_admission_webhooks_relaxed | default(false)
+
+    - name: Restart K3s server once after relaxing degraded Longhorn admission webhooks
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s
+      when:
+        - "'k3s_master' in group_names"
+        - hostvars[groups['k3s_master'][0]].longhorn_admission_webhooks_relaxed | default(false)
+
     - name: Wait for local flannel subnet state on K3s servers before GitOps bootstrap
       ansible.builtin.include_tasks: tasks/wait_for_flannel_subnet_env.yml
       vars:
@@ -953,6 +951,11 @@
 
     - name: Wait for cluster-side flannel and essential kube-system workloads before GitOps bootstrap
       ansible.builtin.include_tasks: tasks/wait_for_kube_system_core.yml
+
+    - name: Re-check master local flannel subnet state immediately before cluster bootstrap installs
+      ansible.builtin.include_tasks: tasks/wait_for_flannel_subnet_env.yml
+      vars:
+        flannel_k3s_service_name: k3s
 
     - name: Ensure argocd namespace exists for bootstrap
       ansible.builtin.command: k3s kubectl create namespace argocd --dry-run=client -o yaml
@@ -1094,6 +1097,7 @@
     - name: Install ArgoCD
       ansible.builtin.command: >
         k3s kubectl apply -n argocd --server-side --force-conflicts
+        --validate=false
         -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.2/manifests/install.yaml
       register: install_argo
       changed_when: "'created' in install_argo.stdout or 'configured' in install_argo.stdout"
@@ -1106,6 +1110,14 @@
       delay: 15
       until: argo_ready.rc == 0
       changed_when: false
+
+- name: Deferred Kubernetes Node Label Reconciliation
+  hosts: k3s_master:k3s_workers
+  gather_facts: false
+
+  tasks:
+    - name: Apply deferred node label reconciliation after bootstrap core is stable
+      ansible.builtin.include_tasks: tasks/apply_node_labels.yml
 
 - name: Automated Security Updates (Unattended Upgrades)
   hosts: k3s_master:k3s_workers

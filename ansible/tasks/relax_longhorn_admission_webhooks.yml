@@ -1,0 +1,83 @@
+- name: Check whether Longhorn admission webhook service exists
+  ansible.builtin.command: k3s kubectl get service longhorn-admission-webhook -n longhorn-system -o name
+  register: longhorn_admission_service
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+
+- name: Read Longhorn admission webhook endpoints
+  ansible.builtin.shell: |
+    set -euo pipefail
+    k3s kubectl get endpoints longhorn-admission-webhook -n longhorn-system \
+      -o jsonpath='{range .subsets[*].addresses[*]}{.ip}{"\n"}{end}'
+  args:
+    executable: /bin/bash
+  register: longhorn_admission_endpoints
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+  when: longhorn_admission_service.rc == 0
+
+- name: Read Longhorn validating webhook failurePolicy
+  ansible.builtin.command: >
+    k3s kubectl get validatingwebhookconfiguration longhorn-webhook-validator
+    -o jsonpath={.webhooks[0].failurePolicy}
+  register: longhorn_validating_failure_policy
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+  when: longhorn_admission_service.rc == 0
+
+- name: Read Longhorn mutating webhook failurePolicy
+  ansible.builtin.command: >
+    k3s kubectl get mutatingwebhookconfiguration longhorn-webhook-mutator
+    -o jsonpath={.webhooks[0].failurePolicy}
+  register: longhorn_mutating_failure_policy
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+  when: longhorn_admission_service.rc == 0
+
+- name: Relax degraded Longhorn validating webhook to Ignore during bootstrap recovery
+  ansible.builtin.shell: |
+    set -euo pipefail
+    k3s kubectl patch validatingwebhookconfiguration longhorn-webhook-validator \
+      --type=json \
+      -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'
+  args:
+    executable: /bin/bash
+  register: longhorn_validating_webhook_relaxed
+  changed_when: longhorn_validating_webhook_relaxed.rc == 0
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+  when:
+    - longhorn_admission_service.rc == 0
+    - (longhorn_admission_endpoints.stdout | default('') | trim) == ''
+    - (longhorn_validating_failure_policy.stdout | default('') | trim) == 'Fail'
+
+- name: Relax degraded Longhorn mutating webhook to Ignore during bootstrap recovery
+  ansible.builtin.shell: |
+    set -euo pipefail
+    k3s kubectl patch mutatingwebhookconfiguration longhorn-webhook-mutator \
+      --type=json \
+      -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'
+  args:
+    executable: /bin/bash
+  register: longhorn_mutating_webhook_relaxed
+  changed_when: longhorn_mutating_webhook_relaxed.rc == 0
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+  when:
+    - longhorn_admission_service.rc == 0
+    - (longhorn_admission_endpoints.stdout | default('') | trim) == ''
+    - (longhorn_mutating_failure_policy.stdout | default('') | trim) == 'Fail'
+
+- name: Record whether bootstrap relaxed Longhorn admission webhooks
+  ansible.builtin.set_fact:
+    longhorn_admission_webhooks_relaxed: >-
+      {{
+        (longhorn_validating_webhook_relaxed is defined and (longhorn_validating_webhook_relaxed.changed | default(false)))
+        or
+        (longhorn_mutating_webhook_relaxed is defined and (longhorn_mutating_webhook_relaxed.changed | default(false)))
+      }}
+  delegate_to: "{{ longhorn_webhook_delegate }}"
+  delegate_facts: true
+  when: longhorn_admission_service.rc == 0
