@@ -46,6 +46,7 @@ If a required file is missing, treat that as setup debt and fix it first.
 - autodiscovery scope includes the whole HaaC stack, not only the loop bootstrap
 - if you discover a real HaaC gap, propose a concrete minimal solution in the OpenSpec change, not only the problem
 - if the missing capability lives in loop assets, you may create or refine local skills, prompt rules, role prompts, subagent policy, hook/bootstrap glue, or runner logic as the first-class fix
+- if no active change exists but completed changes still need archive closeout or scaffold-only change dirs remain under `openspec/changes/`, treat that as OpenSpec hygiene debt instead of a clean idle state
 - if no active OpenSpec change remains, stop unless the same round already found one concrete new gap; if so, write exactly one new change and stop the round
 - if nothing evidence-backed remains to implement or discover, CodexPotter itself must stop the rollout; do not keep rounds alive artificially
 - if no active change exists at round start, discovery is a one-shot decision: either open exactly one evidence-backed change or end the rollout in that same round
@@ -59,6 +60,7 @@ The loop SHALL improve itself when it finds a real gap in:
 - validation
 - review or security review
 - OpenSpec scaffolding
+- OpenSpec archive closeout or change-surface hygiene
 - local skills
 - runner bootstrap or isolated Codex home setup
 - missing repo-local agent capability that should live in prompt, skill, agent role, hook, MCP wiring, or subagent policy

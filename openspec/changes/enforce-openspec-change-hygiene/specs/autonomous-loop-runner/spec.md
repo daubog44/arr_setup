@@ -8,7 +8,7 @@ The repository MUST provide a supported autonomous loop runner that uses the off
 - **THEN** the runner MUST surface that completed-change closeout debt in the session context instead of presenting the repo as cleanly idle
 
 #### Scenario: No active change but scaffold-only debt exists
-- **WHEN** the operator runs a supported loop entrypoint and the repo contains change directories whose tracked contents are only `.openspec.yaml`
+- **WHEN** the operator runs a supported loop entrypoint and the repo contains change directories whose on-disk contents are only `.openspec.yaml`
 - **THEN** the runner MUST surface that scaffold debt in the session context so the loop can classify it as OpenSpec hygiene work
 
 ### Requirement: Repo provides loop readiness checks

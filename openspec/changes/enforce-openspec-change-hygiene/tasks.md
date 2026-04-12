@@ -1,11 +1,11 @@
 ## 1. OpenSpec Hygiene Contract
 
-- [ ] 1.1 Finalize the proposal, design, and spec delta for `enforce-openspec-change-hygiene`
+- [x] 1.1 Finalize the proposal, design, and spec delta for `enforce-openspec-change-hygiene`
 
 ## 2. Loop Runner Detection
 
-- [ ] 2.1 Update `scripts/haac_loop.py` and `docs/haac-loop-prompt.md` so loop sessions surface completed-change closeout debt and scaffold-only change debt
-- [ ] 2.2 Add regression coverage for prompt and check output when no active changes exist but OpenSpec hygiene debt remains
+- [x] 2.1 Update `scripts/haac_loop.py` and `docs/haac-loop-prompt.md` so loop sessions surface completed-change closeout debt and scaffold-only change debt
+- [x] 2.2 Add regression coverage for prompt and check output when no active changes exist but OpenSpec hygiene debt remains
 
 ## 3. Cleanup And Validation
 

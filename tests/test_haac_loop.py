@@ -56,6 +56,8 @@ class HaaCLoopCliTests(unittest.TestCase):
             with (
                 patch.object(haac_loop, "WORKLOGS_DIR", worklogs_dir),
                 patch.object(haac_loop, "active_changes", return_value=[]),
+                patch.object(haac_loop, "completed_changes", return_value=[]),
+                patch.object(haac_loop, "scaffold_only_change_dirs", return_value=[]),
                 patch.object(haac_loop, "check_loop"),
                 patch.object(haac_loop, "seal_stale_tracker"),
                 patch.object(haac_loop, "codex_potter_command", return_value=["codex-potter", "exec"]),
@@ -112,6 +114,8 @@ class HaaCLoopCliTests(unittest.TestCase):
             with (
                 patch.object(haac_loop, "WORKLOGS_DIR", worklogs_dir),
                 patch.object(haac_loop, "active_changes", return_value=[ACTIVE_CHANGE]),
+                patch.object(haac_loop, "completed_changes", return_value=[]),
+                patch.object(haac_loop, "scaffold_only_change_dirs", return_value=[]),
                 patch.object(haac_loop, "check_loop"),
                 patch.object(haac_loop, "seal_stale_tracker"),
                 patch.object(haac_loop, "codex_potter_command", return_value=["codex-potter", "exec"]),
@@ -173,6 +177,8 @@ class HaaCLoopCliTests(unittest.TestCase):
             with (
                 patch.object(haac_loop, "WORKLOGS_DIR", worklogs_dir),
                 patch.object(haac_loop, "active_changes", return_value=[]),
+                patch.object(haac_loop, "completed_changes", return_value=[]),
+                patch.object(haac_loop, "scaffold_only_change_dirs", return_value=[]),
                 patch.object(haac_loop, "datetime") as mock_datetime,
             ):
                 mock_datetime.now.return_value = fake_now
@@ -184,6 +190,81 @@ class HaaCLoopCliTests(unittest.TestCase):
             self.assertNotEqual(worklog_path, existing_worklog)
             self.assertTrue(worklog_path.exists())
             self.assertIn("- mode: discover", worklog_path.read_text(encoding="utf-8"))
+
+    def test_prompt_surfaces_open_spec_hygiene_debt_when_no_active_changes_exist(self) -> None:
+        completed_change = {
+            "name": "task-up-idempotent-bootstrap",
+            "completedTasks": 9,
+            "totalTasks": 9,
+            "lastModified": "2026-04-12T08:16:23.508Z",
+            "status": "complete",
+        }
+        with tempfile.TemporaryDirectory(dir=haac_loop.ROOT) as temp_dir:
+            worklogs_dir = Path(temp_dir)
+            fake_now = datetime(2026, 4, 12, 16, 30)
+            with (
+                patch.object(haac_loop, "WORKLOGS_DIR", worklogs_dir),
+                patch.object(haac_loop, "active_changes", return_value=[]),
+                patch.object(haac_loop, "completed_changes", return_value=[completed_change]),
+                patch.object(
+                    haac_loop,
+                    "scaffold_only_change_dirs",
+                    return_value=["stabilize-k3s-cni-runtime"],
+                ),
+                patch.object(haac_loop, "datetime") as mock_datetime,
+            ):
+                mock_datetime.now.return_value = fake_now
+
+                exit_code, prompt_stdout, prompt_stderr = self.run_cli(
+                    "prompt",
+                    "--slug",
+                    "session",
+                    "--mode",
+                    "apply",
+                )
+
+            self.assertEqual(exit_code, 0, prompt_stderr)
+            self.assertIn("## OpenSpec Hygiene Debt", prompt_stdout)
+            self.assertIn("`task-up-idempotent-bootstrap`", prompt_stdout)
+            self.assertIn("`stabilize-k3s-cni-runtime`", prompt_stdout)
+            self.assertIn("- mode: `discover`", prompt_stdout)
+            self.assertIn("evidence-backed closeout work", prompt_stdout)
+
+    def test_check_reports_open_spec_hygiene_debt(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch.object(haac_loop, "REQUIRED_FILES", []),
+            patch.object(haac_loop, "REQUIRED_BINARIES", []),
+            patch.object(haac_loop, "run_command"),
+            patch.object(haac_loop, "active_changes", return_value=[]),
+            patch.object(
+                haac_loop,
+                "completed_changes",
+                return_value=[
+                    {
+                        "name": "reuse-loop-session-worklog",
+                        "completedTasks": 6,
+                        "totalTasks": 6,
+                        "lastModified": "2026-04-12T14:07:12.559Z",
+                        "status": "complete",
+                    }
+                ],
+            ),
+            patch.object(
+                haac_loop,
+                "scaffold_only_change_dirs",
+                return_value=["k3s-cni-runtime-idempotence"],
+            ),
+            redirect_stdout(stdout),
+        ):
+            haac_loop.check_loop(use_global_home=False)
+
+        output = stdout.getvalue()
+        self.assertIn("[warn] no active OpenSpec changes", output)
+        self.assertIn("completed OpenSpec changes still need archive closeout", output)
+        self.assertIn("reuse-loop-session-worklog", output)
+        self.assertIn("scaffold-only OpenSpec change directories detected", output)
+        self.assertIn("k3s-cni-runtime-idempotence", output)
 
 
 if __name__ == "__main__":

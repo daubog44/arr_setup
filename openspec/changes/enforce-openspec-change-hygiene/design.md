@@ -36,7 +36,7 @@ Today that means `openspec list --json` can say there are no active changes whil
 
 - [Prompt noise] More session context can bloat discovery prompts. -> Mitigation: only include hygiene sections when debt exists.
 - [Cleanup scope] Archiving several completed changes in one pass touches multiple specs. -> Mitigation: keep implementation narrow to already accepted completed changes and validate specs afterward.
-- [False positives] A partially created change could be intentional work-in-progress. -> Mitigation: classify only directories whose tracked content is limited to `.openspec.yaml` as scaffold-only debt.
+- [False positives] A partially created change could be intentional work-in-progress. -> Mitigation: classify only directories whose on-disk content is limited to `.openspec.yaml` as scaffold-only debt.
 
 ## Migration Plan
 

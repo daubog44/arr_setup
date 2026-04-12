@@ -62,6 +62,8 @@ class SessionState:
     effective_mode: str
     all_changes: list[dict[str, object]]
     selected_changes: list[dict[str, object]]
+    completed_changes: list[dict[str, object]]
+    scaffold_changes: list[str]
 
 
 def run_command(
@@ -114,9 +116,33 @@ def openspec_list() -> list[dict[str, object]]:
     return list(payload.get("changes", []))
 
 
+def sort_changes(changes: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(changes, key=lambda item: str(item.get("lastModified", "")), reverse=True)
+
+
 def active_changes() -> list[dict[str, object]]:
     changes = [change for change in openspec_list() if change.get("status") in {"in-progress", "ready"}]
-    return sorted(changes, key=lambda item: str(item.get("lastModified", "")), reverse=True)
+    return sort_changes(changes)
+
+
+def completed_changes() -> list[dict[str, object]]:
+    changes = [change for change in openspec_list() if change.get("status") == "complete"]
+    return sort_changes(changes)
+
+
+def scaffold_only_change_dirs() -> list[str]:
+    changes_dir = ROOT / "openspec" / "changes"
+    if not changes_dir.exists():
+        return []
+
+    scaffolded: list[str] = []
+    for path in changes_dir.iterdir():
+        if not path.is_dir() or path.name == "archive":
+            continue
+        files = sorted(child.relative_to(path).as_posix() for child in path.rglob("*") if child.is_file())
+        if files == [".openspec.yaml"]:
+            scaffolded.append(path.name)
+    return sorted(scaffolded)
 
 
 def select_changes_for_slug(slug: str, changes: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -153,6 +179,8 @@ def resolve_session_state(slug: str, mode: str) -> SessionState:
         effective_mode=effective_mode(mode, selected_changes),
         all_changes=all_changes,
         selected_changes=selected_changes,
+        completed_changes=completed_changes(),
+        scaffold_changes=scaffold_only_change_dirs(),
     )
 
 
@@ -335,6 +363,10 @@ def active_change_summary(changes: list[dict[str, object]]) -> str:
     return ", ".join(str(change["name"]) for change in changes) if changes else "none"
 
 
+def change_name_list(changes: list[dict[str, object]]) -> str:
+    return ", ".join(f"`{change['name']}`" for change in changes)
+
+
 def update_header_line(lines: list[str], prefix: str, value: str, insert_at: int) -> int:
     replacement = f"{prefix} {value}"
     for index, line in enumerate(lines):
@@ -397,7 +429,14 @@ def ensure_worklog(slug: str, mode: str, changes: list[dict[str, object]]) -> Pa
     return worklog
 
 
-def render_prompt(mode: str, slug: str, worklog: Path, changes: list[dict[str, object]]) -> str:
+def render_prompt(
+    mode: str,
+    slug: str,
+    worklog: Path,
+    changes: list[dict[str, object]],
+    completed: list[dict[str, object]],
+    scaffold_changes: list[str],
+) -> str:
     base = LOOP_PROMPT_PATH.read_text(encoding="utf-8").rstrip()
     if changes:
         primary = str(changes[0]["name"])
@@ -415,15 +454,36 @@ def render_prompt(mode: str, slug: str, worklog: Path, changes: list[dict[str, o
         f"- primary change: `{primary}`",
         *change_lines,
         "",
-        "## Session State",
-        "",
-        f"- mode: `{mode}`",
-        f"- slug: `{slugify(slug)}`",
-        f"- worklog: `{relpath(worklog)}`",
-        "",
-        "## Mode Contract",
-        "",
     ]
+
+    if completed or scaffold_changes:
+        mode_block.extend(
+            [
+                "## OpenSpec Hygiene Debt",
+                "",
+            ]
+        )
+        if completed:
+            mode_block.append(f"- completed changes awaiting archive closeout: {change_name_list(completed)}")
+        if scaffold_changes:
+            mode_block.append(
+                "- scaffold-only change directories: "
+                + ", ".join(f"`{name}`" for name in scaffold_changes)
+            )
+        mode_block.append("")
+
+    mode_block.extend(
+        [
+            "## Session State",
+            "",
+            f"- mode: `{mode}`",
+            f"- slug: `{slugify(slug)}`",
+            f"- worklog: `{relpath(worklog)}`",
+            "",
+            "## Mode Contract",
+            "",
+        ]
+    )
 
     if mode == "discover":
         mode_block.extend(
@@ -441,6 +501,11 @@ def render_prompt(mode: str, slug: str, worklog: Path, changes: list[dict[str, o
                 "- if the active change finishes or no active change remains, switch to narrow discovery using the discovery policy",
                 "- if the loop or repo is missing a required capability proven by evidence, open exactly one new change for that gap during this run",
             ]
+        )
+
+    if completed or scaffold_changes:
+        mode_block.append(
+            "- if OpenSpec hygiene debt is listed above, treat it as evidence-backed closeout work instead of a clean idle state"
         )
 
     mode_block.extend(
@@ -566,12 +631,26 @@ def check_loop(use_global_home: bool) -> None:
 
     run_command([sys.executable, str(ROOT / "scripts" / "haac.py"), "doctor"])
     changes = active_changes()
+    completed = completed_changes()
+    scaffold_changes = scaffold_only_change_dirs()
     print(f"[ok] openspec active changes discovered: {len(changes)}", flush=True)
     if changes:
         validate_active_changes(changes)
         print("[ok] active OpenSpec changes validated", flush=True)
     else:
         print("[warn] no active OpenSpec changes; loop will run in discovery mode", flush=True)
+    if completed:
+        print(
+            "[warn] completed OpenSpec changes still need archive closeout: "
+            + ", ".join(str(change["name"]) for change in completed),
+            flush=True,
+        )
+    if scaffold_changes:
+        print(
+            "[warn] scaffold-only OpenSpec change directories detected: "
+            + ", ".join(scaffold_changes),
+            flush=True,
+        )
 
     if use_global_home:
         if GLOBAL_CODEX_HOME.exists():
@@ -646,7 +725,14 @@ def run_loop(slug: str, rounds: int, mode: str, use_global_home: bool, with_pref
             "this run will use discovery for that scope.",
             flush=True,
         )
-    prompt = render_prompt(state.effective_mode, slug, worklog, state.selected_changes)
+    prompt = render_prompt(
+        state.effective_mode,
+        slug,
+        worklog,
+        state.selected_changes,
+        state.completed_changes,
+        state.scaffold_changes,
+    )
     command = codex_potter_command(rounds, use_global_home)
 
     if dry_run:
@@ -676,7 +762,16 @@ def cmd_worklog(args: argparse.Namespace) -> None:
 
 def cmd_prompt(args: argparse.Namespace) -> None:
     state, worklog = prepare_session(args.slug, args.mode)
-    print(render_prompt(state.effective_mode, args.slug, worklog, state.selected_changes))
+    print(
+        render_prompt(
+            state.effective_mode,
+            args.slug,
+            worklog,
+            state.selected_changes,
+            state.completed_changes,
+            state.scaffold_changes,
+        )
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> None:
