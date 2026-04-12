@@ -51,7 +51,7 @@
   delegate_to: "{{ longhorn_webhook_delegate }}"
   when:
     - longhorn_admission_service.rc == 0
-    - (longhorn_admission_endpoints.stdout | default('') | trim) == ''
+    - (longhorn_webhook_force_relax | default(false)) or ((longhorn_admission_endpoints.stdout | default('') | trim) == '')
     - (longhorn_validating_failure_policy.stdout | default('') | trim) == 'Fail'
 
 - name: Relax degraded Longhorn mutating webhook to Ignore during bootstrap recovery
@@ -67,7 +67,7 @@
   delegate_to: "{{ longhorn_webhook_delegate }}"
   when:
     - longhorn_admission_service.rc == 0
-    - (longhorn_admission_endpoints.stdout | default('') | trim) == ''
+    - (longhorn_webhook_force_relax | default(false)) or ((longhorn_admission_endpoints.stdout | default('') | trim) == '')
     - (longhorn_mutating_failure_policy.stdout | default('') | trim) == 'Fail'
 
 - name: Record whether bootstrap relaxed Longhorn admission webhooks

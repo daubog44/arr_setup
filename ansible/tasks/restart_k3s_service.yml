@@ -25,13 +25,41 @@
       failed_when: false
 
     - name: Capture {{ k3s_service_name }} status
-      ansible.builtin.command: systemctl status {{ k3s_service_name }} --no-pager
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            ["systemctl", "status", "{{ k3s_service_name }}", "--no-pager", "--full"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        sys.stdout.write(proc.stdout.decode("utf-8", "replace"))
+        PY
+      args:
+        executable: /bin/bash
       register: k3s_service_status
       changed_when: false
       failed_when: false
 
     - name: Capture {{ k3s_service_name }} journal
-      ansible.builtin.command: journalctl -u {{ k3s_service_name }} --no-pager -n 80
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            ["journalctl", "-u", "{{ k3s_service_name }}", "--no-pager", "-n", "80", "-o", "cat"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        sys.stdout.write(proc.stdout.decode("utf-8", "replace"))
+        PY
+      args:
+        executable: /bin/bash
       register: k3s_service_journal
       changed_when: false
       failed_when: false
