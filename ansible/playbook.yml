@@ -659,6 +659,8 @@
           sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
           tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
         DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+      args:
+        creates: /usr/bin/nvidia-ctk
       when: hostvars[proxmox_host]['has_nvidia'] | default(false)
 
     - name: Ensure /dev/kmsg is persistent via systemd-tmpfiles (LXC fix)
@@ -669,38 +671,19 @@
 
     - name: Apply systemd-tmpfiles for /dev/kmsg immediately
       ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/kmsg.conf
-      changed_when: true
+      changed_when: false
       ignore_errors: true
-
-    - name: Check if K3s is already installed (skip restart on fresh install)
-      ansible.builtin.stat:
-        path: /usr/local/bin/k3s
-      register: k3s_bin_check
-
-    - name: Configure nvidia runtime in K3s containerd (only if K3s already installed)
-      ansible.builtin.shell: |
-        nvidia-ctk runtime configure --runtime=containerd \
-          --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml \
-          --set-as-default
-      changed_when: true
-      when:
-        - hostvars[proxmox_host]['has_nvidia'] | default(false)
-        - k3s_bin_check.stat.exists
-        - "'k3s_workers' in group_names"
-
-    - name: Restart K3s to apply NVIDIA runtime changes
-      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
-      vars:
-        k3s_service_name: "{{ 'k3s-agent' if 'k3s_workers' in group_names else 'k3s' }}"
-      when:
-        - k3s_bin_check.stat.exists
-        - (hostvars[proxmox_host]['has_nvidia'] | default(false))
 
 - name: K3s Master Node Setup
   hosts: k3s_master
   gather_facts: true
   
   tasks:
+    - name: Check if K3s server is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_server_binary_before_write
+
     - name: Write K3s server config (LXC-compatible, KubeletInUserNamespace)
       ansible.builtin.copy:
         dest: /etc/rancher/k3s/config.yaml
@@ -719,6 +702,7 @@
         owner: root
         group: root
         mode: '0644'
+      register: k3s_server_config
 
     - name: Download and install K3s Server
       ansible.builtin.shell: |
@@ -736,7 +720,16 @@
         path: /etc/systemd/system/k3s.service
         regexp: 'ExecStartPre=/sbin/modprobe'
         replace: 'ExecStartPre=-/sbin/modprobe'
-      notify: Reload systemd and restart K3s
+      register: k3s_server_service_fix
+
+    - name: Restart K3s server when config or service drift requires it
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s
+        k3s_service_daemon_reload: "{{ k3s_server_service_fix.changed | default(false) }}"
+      when:
+        - (k3s_server_service_fix.changed | default(false))
+          or ((k3s_server_config.changed | default(false)) and (k3s_server_binary_before_write.stat.exists | default(false)))
 
     - name: Wait for node-token
       ansible.builtin.wait_for:
@@ -771,6 +764,11 @@
   gather_facts: true
 
   tasks:
+    - name: Check if K3s agent is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_agent_binary_before_write
+
     - name: Write K3s agent base config (LXC-compatible)
       ansible.builtin.copy:
         dest: /etc/rancher/k3s/config.yaml
@@ -782,13 +780,14 @@
         owner: root
         group: root
         mode: '0644'
+      register: k3s_worker_base_config
 
-    - name: Add nvidia runtime to K3s agent config (if GPU available)
+    - name: Remove legacy global NVIDIA default runtime from K3s agent config
       ansible.builtin.lineinfile:
         path: /etc/rancher/k3s/config.yaml
-        line: "default-runtime: nvidia"
-        state: present
-      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
+        regexp: '^default-runtime:\s*nvidia$'
+        state: absent
+      register: k3s_worker_default_runtime_removed
 
     - name: Download and install K3s Agent
       ansible.builtin.shell: |
@@ -806,7 +805,7 @@
         path: /etc/systemd/system/k3s-agent.service
         regexp: 'ExecStartPre=/sbin/modprobe'
         replace: 'ExecStartPre=-/sbin/modprobe'
-      notify: Reload systemd and restart k3s-agent
+      register: k3s_agent_service_fix
 
     - name: Wait for K3s containerd config.toml to be created (async after install)
       ansible.builtin.wait_for:
@@ -815,20 +814,35 @@
         timeout: 60
       when: hostvars[proxmox_host]['has_nvidia'] | default(false)
 
-    - name: Configure nvidia runtime in K3s containerd (after fresh agent install)
-      ansible.builtin.shell: |
-        nvidia-ctk runtime configure --runtime=containerd \
-          --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml \
-          --set-as-default
-      changed_when: true
+    - name: Check whether the NVIDIA runtime handler is already present in K3s containerd config
+      ansible.builtin.shell: grep -Fq 'BinaryName = "/usr/bin/nvidia-container-runtime"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+      args:
+        executable: /bin/bash
+      register: k3s_nvidia_runtime_present
+      changed_when: false
+      failed_when: false
       when: hostvars[proxmox_host]['has_nvidia'] | default(false)
 
-    - name: Restart K3s agent to apply nvidia runtime (after fresh install)
+    - name: Configure NVIDIA runtime handler in K3s containerd when missing
+      ansible.builtin.shell: |
+        nvidia-ctk runtime configure --runtime=containerd \
+          --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml
+      register: k3s_nvidia_runtime_configured
+      changed_when: k3s_nvidia_runtime_configured.rc == 0
+      when:
+        - hostvars[proxmox_host]['has_nvidia'] | default(false)
+        - k3s_nvidia_runtime_present.rc != 0
+
+    - name: Restart K3s agent when config or runtime drift requires it
       ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
       vars:
         k3s_service_name: k3s-agent
-      when: hostvars[proxmox_host]['has_nvidia'] | default(false)
-      ignore_errors: true
+        k3s_service_daemon_reload: "{{ k3s_agent_service_fix.changed | default(false) }}"
+      when:
+        - (k3s_agent_service_fix.changed | default(false))
+          or ((k3s_worker_base_config.changed | default(false)) and (k3s_agent_binary_before_write.stat.exists | default(false)))
+          or (k3s_worker_default_runtime_removed.changed | default(false))
+          or ((k3s_nvidia_runtime_configured is defined) and (k3s_nvidia_runtime_configured.changed | default(false)))
 
     - name: Apply custom node labels to the node
       ansible.builtin.command: "k3s kubectl label node {{ ansible_facts['hostname'] }} {{ item.key }}={{ item.value }} --overwrite"
@@ -848,12 +862,68 @@
       delegate_to: "{{ groups['k3s_master'][0] }}"
       ignore_errors: true
 
+- name: K3s Cluster Networking Readiness Gate
+  hosts: k3s_master:k3s_workers
+  gather_facts: false
+
+  tasks:
+    - name: Wait for local flannel subnet state on K3s servers before GitOps bootstrap
+      ansible.builtin.include_tasks: tasks/wait_for_flannel_subnet_env.yml
+      vars:
+        flannel_k3s_service_name: k3s
+      when: "'k3s_master' in group_names"
+
+    - name: Wait for local flannel subnet state on K3s agents before GitOps bootstrap
+      ansible.builtin.include_tasks: tasks/wait_for_flannel_subnet_env.yml
+      vars:
+        flannel_k3s_service_name: k3s-agent
+      when: "'k3s_workers' in group_names"
+
 
 - name: Post-Installation GitOps Setup (ArgoCD & Configs)
   hosts: k3s_master
   gather_facts: false
 
   tasks:
+    - name: Wait for all expected Kubernetes nodes to report Ready
+      block:
+        - name: Poll cluster node readiness before GitOps bootstrap
+          ansible.builtin.shell: |
+            set -euo pipefail
+            total="$(k3s kubectl get nodes --no-headers | wc -l | tr -d ' ')"
+            ready="$(k3s kubectl get nodes --no-headers | awk '$2 == "Ready" {count++} END {print count+0}')"
+            test "$total" -eq "{{ (groups['k3s_master'] | length) + (groups['k3s_workers'] | length) }}"
+            test "$ready" -eq "$total"
+          args:
+            executable: /bin/bash
+          register: k3s_nodes_ready
+          changed_when: false
+          until: k3s_nodes_ready.rc == 0
+          retries: 24
+          delay: 5
+      rescue:
+        - name: Capture cluster node status
+          ansible.builtin.command: k3s kubectl get nodes -o wide
+          register: k3s_nodes_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture kube-system pods before GitOps bootstrap
+          ansible.builtin.command: k3s kubectl get pods -n kube-system -o wide
+          register: k3s_kube_system_status
+          changed_when: false
+          failed_when: false
+
+        - name: Fail with explicit cluster readiness diagnostics
+          ansible.builtin.fail:
+            msg: |
+              Kubernetes node readiness did not converge before GitOps bootstrap.
+              kubectl get nodes -o wide:
+              {{ (k3s_nodes_status.stdout | default('') | trim) or 'no node output' }}
+
+              kubectl get pods -n kube-system -o wide:
+              {{ (k3s_kube_system_status.stdout | default('') | trim) or 'no kube-system output' }}
+
     - name: Wait for Kubernetes API to be completely ready
       ansible.builtin.command: k3s kubectl get nodes
       register: k8s_nodes
@@ -958,16 +1028,3 @@
         name: unattended-upgrades
         enabled: true
         state: started
-
-  handlers:
-    - name: Reload systemd and restart K3s
-      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
-      vars:
-        k3s_service_name: k3s
-        k3s_service_daemon_reload: true
-
-    - name: Reload systemd and restart k3s-agent
-      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
-      vars:
-        k3s_service_name: k3s-agent
-        k3s_service_daemon_reload: true

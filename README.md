@@ -129,7 +129,7 @@ The logical phase order is:
 
 1. preflight: `check-env`, `doctor`, `sync`
 2. infra provisioning: OpenTofu init and apply through the explicit `provision-infra` phase
-3. node configuration: Ansible
+3. node configuration: Ansible plus K3s service, flannel, and node-readiness gating before GitOps bootstrap
 4. secret and GitOps publication: regenerate rendered artifacts, push the GitOps source of truth, bootstrap ArgoCD
 5. staged ArgoCD readiness: platform root, ArgoCD self-management, workloads root, `haac-stack`
 6. Cloudflare publication: tunnel ingress plus DNS reconciliation
@@ -144,7 +144,7 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 
 `MASTER_TARGET_NODE` remains the Proxmox node name used inside OpenTofu and generated inventory. `PROXMOX_ACCESS_HOST` is the workstation-reachable IP or hostname used for the Proxmox API, SSH, and tunnel operations. If the node name itself already resolves locally, `PROXMOX_ACCESS_HOST` may be left unset and the bootstrap falls back to `MASTER_TARGET_NODE`.
 
-Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and validation of the effective Proxmox API/SSH access host before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
+Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and validation of the effective Proxmox API/SSH access host before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. `configure-os` also stops before GitOps bootstrap if K3s service recovery does not yield local flannel subnet state or a fully `Ready` node set. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
 
 ## Ralph Loop
 

@@ -1,0 +1,80 @@
+- name: Wait for /run/flannel/subnet.env on {{ inventory_hostname }}
+  block:
+    - name: Wait for flannel subnet.env file to exist
+      ansible.builtin.wait_for:
+        path: /run/flannel/subnet.env
+        state: present
+        timeout: "{{ flannel_subnet_env_timeout | default(180) }}"
+
+    - name: Verify flannel subnet.env contains a subnet assignment
+      ansible.builtin.shell: grep -q '^FLANNEL_SUBNET=' /run/flannel/subnet.env
+      args:
+        executable: /bin/bash
+      register: flannel_subnet_env_check
+      changed_when: false
+      until: flannel_subnet_env_check.rc == 0
+      retries: "{{ flannel_subnet_env_retries | default(12) }}"
+      delay: "{{ flannel_subnet_env_delay | default(5) }}"
+  rescue:
+    - name: Attempt one bounded {{ flannel_k3s_service_name }} restart to recover local flannel state
+      ansible.builtin.include_tasks: restart_k3s_service.yml
+      vars:
+        k3s_service_name: "{{ flannel_k3s_service_name }}"
+
+    - name: Re-check /run/flannel/subnet.env after bounded service recovery
+      block:
+        - name: Wait for flannel subnet.env file to exist after restart
+          ansible.builtin.wait_for:
+            path: /run/flannel/subnet.env
+            state: present
+            timeout: "{{ flannel_subnet_env_timeout | default(180) }}"
+
+        - name: Verify flannel subnet.env contains a subnet assignment after restart
+          ansible.builtin.shell: grep -q '^FLANNEL_SUBNET=' /run/flannel/subnet.env
+          args:
+            executable: /bin/bash
+          register: flannel_subnet_env_check_after_restart
+          changed_when: false
+          until: flannel_subnet_env_check_after_restart.rc == 0
+          retries: "{{ flannel_subnet_env_retries | default(12) }}"
+          delay: "{{ flannel_subnet_env_delay | default(5) }}"
+      rescue:
+        - name: Capture local flannel subnet.env content
+          ansible.builtin.command: cat /run/flannel/subnet.env
+          register: flannel_subnet_env_content
+          changed_when: false
+          failed_when: false
+
+        - name: Capture {{ flannel_k3s_service_name }} status during flannel wait failure
+          ansible.builtin.command: systemctl status {{ flannel_k3s_service_name }} --no-pager
+          register: flannel_wait_service_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture {{ flannel_k3s_service_name }} journal during flannel wait failure
+          ansible.builtin.command: journalctl -u {{ flannel_k3s_service_name }} --no-pager -n 120
+          register: flannel_wait_service_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Capture node routes during flannel wait failure
+          ansible.builtin.command: ip -4 route
+          register: flannel_wait_routes
+          changed_when: false
+          failed_when: false
+
+        - name: Fail with explicit flannel readiness diagnostics
+          ansible.builtin.fail:
+            msg: |
+              {{ inventory_hostname }} did not produce a usable /run/flannel/subnet.env before GitOps bootstrap, even after one bounded {{ flannel_k3s_service_name }} recovery restart.
+              subnet.env content:
+              {{ (flannel_subnet_env_content.stdout | default('') | trim) or 'file missing or empty' }}
+
+              systemctl status {{ flannel_k3s_service_name }}:
+              {{ (flannel_wait_service_status.stdout | default('') | trim) or 'no status output' }}
+
+              journalctl -u {{ flannel_k3s_service_name }} -n 120:
+              {{ (flannel_wait_service_journal.stdout | default('') | trim) or 'no journal output' }}
+
+              ip -4 route:
+              {{ (flannel_wait_routes.stdout | default('') | trim) or 'no route output' }}

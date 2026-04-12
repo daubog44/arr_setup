@@ -19,19 +19,13 @@ The system MUST provide a single supported bootstrap command that orchestrates i
 - **THEN** rerunning the same supported bootstrap command MUST be the primary supported recovery path unless the failure message explicitly says manual intervention is required
 
 ### Requirement: Bootstrap phase visibility
-The system MUST expose the phase structure of the bootstrap pipeline so operators can identify where a run is currently executing, which phases already converged, and where a failure occurred.
 
-#### Scenario: Phase-oriented execution
-- **WHEN** the bootstrap command runs
-- **THEN** it MUST progress through explicit phases covering preflight, provisioning, configuration, GitOps bootstrap, publication, and verification
+The system MUST expose the phase structure of the bootstrap pipeline so operators can identify where a run is currently executing and where a failure occurred.
 
 #### Scenario: Failure attribution
 - **WHEN** a bootstrap phase fails
 - **THEN** the operator output MUST identify the failing phase and point to the relevant command or component to inspect next
-
-#### Scenario: Last verified phase
-- **WHEN** a bootstrap phase fails after one or more earlier phases completed
-- **THEN** the operator output MUST identify the last verified phase so a rerun decision is explicit
+- **AND** failures caused by K3s node or CNI readiness MUST be reported as `Node configuration` failures instead of first surfacing as later GitOps rollout errors
 
 ### Requirement: Public service URL reporting
 The system MUST produce a final public endpoint report for the services exposed through the homelab ingress and Cloudflare path.

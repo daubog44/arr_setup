@@ -143,7 +143,7 @@ The required order is:
 
 1. preflight: validate `.env`, workstation tooling, and the writable GitOps remote
 2. infra provisioning: OpenTofu
-3. node configuration: Ansible
+3. node configuration: Ansible plus K3s service, flannel, and cluster node-readiness gating before GitOps bootstrap
 4. secret and GitOps publication
 5. staged ArgoCD readiness gates
 6. Cloudflare publication

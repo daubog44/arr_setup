@@ -39,7 +39,7 @@ Proxmox access uses two related inputs:
 
 1. Preflight: `check-env`, `doctor`, `sync`
 2. Infra provisioning: OpenTofu init and apply through the explicit `provision-infra` phase
-3. Node configuration: Ansible
+3. Node configuration: Ansible plus K3s service recovery, local flannel `/run/flannel/subnet.env` readiness, and cluster node `Ready` gating before GitOps bootstrap
 4. Secret and GitOps publication: regenerate rendered artifacts, push GitOps state, bootstrap ArgoCD
 5. Staged readiness gates:
    - ArgoCD API reachability
@@ -67,6 +67,7 @@ The run stops immediately for:
 - missing local tooling
 - missing or unreachable GitOps `origin` remote
 - OpenTofu or Ansible command failures
+- K3s node or flannel/CNI readiness failures during `Node configuration`
 - ArgoCD application degradation
 - Cloudflare API failures
 
