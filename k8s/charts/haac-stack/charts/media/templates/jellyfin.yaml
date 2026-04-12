@@ -16,7 +16,7 @@ spec:
       labels:
         app: jellyfin
     spec:
-      runtimeClassName: nvidia
+      runtimeClassName: {{ .Values.global.scheduling.gpu.nvidiaRuntimeClassName | quote }}
       containers:
         - name: jellyfin
           image: >-

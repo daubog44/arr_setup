@@ -20,6 +20,7 @@ global:
     dnsIp: "10.43.0.10"
   scheduling:
     gpu:
+      nvidiaRuntimeClassName: nvidia
       nvidiaNodeFeatureLabels:
         - feature.node.kubernetes.io/pci-0300_10de.present
         - feature.node.kubernetes.io/pci-0302_10de.present
@@ -127,6 +128,9 @@ global:
 gateway:
   name: haac-gateway
   class: traefik
+  entryPoints:
+    httpPort: 8000
+    httpsPort: 8443
 
 ingresses:
   authelia:
