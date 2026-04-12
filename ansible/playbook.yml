@@ -689,9 +689,9 @@
         - "'k3s_workers' in group_names"
 
     - name: Restart K3s to apply NVIDIA runtime changes
-      ansible.builtin.systemd:
-        name: "{{ 'k3s-agent' if 'k3s_workers' in group_names else 'k3s' }}"
-        state: restarted
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: "{{ 'k3s-agent' if 'k3s_workers' in group_names else 'k3s' }}"
       when:
         - k3s_bin_check.stat.exists
         - (hostvars[proxmox_host]['has_nvidia'] | default(false))
@@ -824,9 +824,9 @@
       when: hostvars[proxmox_host]['has_nvidia'] | default(false)
 
     - name: Restart K3s agent to apply nvidia runtime (after fresh install)
-      ansible.builtin.systemd:
-        name: k3s-agent
-        state: restarted
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s-agent
       when: hostvars[proxmox_host]['has_nvidia'] | default(false)
       ignore_errors: true
 
@@ -961,13 +961,13 @@
 
   handlers:
     - name: Reload systemd and restart K3s
-      ansible.builtin.systemd:
-        name: k3s
-        state: restarted
-        daemon_reload: yes
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s
+        k3s_service_daemon_reload: true
 
     - name: Reload systemd and restart k3s-agent
-      ansible.builtin.systemd:
-        name: k3s-agent
-        state: restarted
-        daemon_reload: yes
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s-agent
+        k3s_service_daemon_reload: true
