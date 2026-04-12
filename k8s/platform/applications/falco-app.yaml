@@ -11,7 +11,7 @@ spec:
     repoURL: https://falcosecurity.github.io/charts
     chart: falco
     # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
-    targetRevision: "8.0.2"
+    targetRevision: "8.0.1"
     helm:
       values: |
         # Use Falco's modern eBPF driver on newer kernels. This keeps us on the current
