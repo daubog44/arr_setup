@@ -10,6 +10,8 @@ This repository provisions and operates a Proxmox + K3s homelab/media stack with
 
 The stack includes the `*arr` suite, Jellyfin, qBittorrent/QUI, Authelia, Headlamp, Cloudflare Tunnel, Longhorn, monitoring, and security services.
 
+`task up` uses a state-safe OpenTofu apply path for existing LXC nodes because the current `bpg/proxmox` provider cannot round-trip HAAC-managed raw LXC config such as `idmap`. Keep `task plan` as the diagnostic path when you want a full provider-refresh view of unsupported drift.
+
 ## Repository Layout
 
 - `tofu/`: Proxmox infrastructure, LXC modules, inventory generation

@@ -8,8 +8,9 @@ The `task up` bootstrap path MUST NOT mutate an already-converged Proxmox LXC co
 
 - **WHEN** the declared `.env` and module-backed LXC bootstrap inputs are unchanged
 - **AND** the existing LXC config already contains HaaC-managed `idmap` or other runtime compatibility lines that the provider cannot model directly
-- **THEN** `tofu plan` does not propose an in-place update that removes those lines
+- **THEN** the `task up` provisioning path does not perform an in-place update that removes those lines
 - **AND** `task up` can continue past `provision-infra` without reopening that Proxmox drift
+- **AND** a separate full-refresh diagnostic plan may still report unsupported remote drift
 
 ### Requirement: declared LXC bootstrap changes remain explicit
 

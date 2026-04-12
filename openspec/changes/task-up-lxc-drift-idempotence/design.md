@@ -35,8 +35,17 @@ That means:
 
 Intentional spec changes to the base LXC declaration become destructive replacements, not in-place updates. That is acceptable here because unsafe in-place mutations are worse: they silently strip required runtime config and destabilize the cluster.
 
+### Bootstrap Contract
+
+The current provider gap appears during remote refresh. The operator contract becomes:
+
+- `task plan`: diagnostic path, refresh enabled, shows unsupported raw LXC drift
+- `task up` / `provision-infra`: state-safe apply path, refresh disabled, does not mutate otherwise healthy LXC nodes
+
+This keeps observability without letting the bootstrap command damage converged containers on rerun.
+
 ### Validation
 
-- `tofu plan` should become a no-op for the converged cluster
+- `python scripts/haac.py run-tofu --dir tofu plan -refresh=false -no-color` should become a no-op for the converged bootstrap path
 - `python scripts/haac.py task-run -- -n up` should still pass
 - `task up` should move beyond `provision-infra` without reintroducing the old LXC drift

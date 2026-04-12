@@ -83,7 +83,7 @@ tasks:
       - task: verify-all
 
   plan:
-    desc: Run a safe OpenTofu plan with all environment-backed variables.
+    desc: Run a diagnostic OpenTofu plan with provider refresh enabled so unsupported Proxmox LXC drift stays visible.
     deps: [check-env]
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
@@ -100,14 +100,14 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/playbook.yml --extra-args={{default "" .DEBUG_LEVEL}}'
 
   provision-infra:
-    desc: Reconcile the declared OpenTofu infrastructure before configuration continues.
+    desc: Reconcile the declared OpenTofu infrastructure using the state-safe apply path required by the current Proxmox LXC provider gap.
     env:
       PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -refresh=false -auto-approve'
 
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.

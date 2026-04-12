@@ -12,12 +12,14 @@ That leaves `task up` with a broken contract: a rerun can mutate already-converg
 
 ## What Changes
 
-- make the Proxmox LXC resource create-or-replace only, so OpenTofu stops issuing unsafe in-place updates for out-of-band LXC config
+- keep the Proxmox LXC resource on create-or-replace semantics, so OpenTofu stops issuing unsafe in-place updates for out-of-band LXC config during the bootstrap path
 - add an explicit declared-container fingerprint that forces replacement when the actual bootstrap spec changes in `.env` or module inputs
-- validate the new behavior with a real `tofu plan`, `task -n up`, and a live `task up` rerun when the environment is available
+- make `task up` use a state-safe OpenTofu apply path for existing containers while keeping `task plan` as the full-refresh diagnostic path
+- validate the new behavior with a state-safe `tofu plan`, `task -n up`, and a live `task up` rerun when the environment is available
 
 ## Impact
 
 - `task up` stops trying to remove HaaC-managed `idmap` lines on converged LXC nodes
 - the container bootstrap path becomes rerunnable without reopening the Proxmox drift loop
+- `task plan` stays available as the operator-facing diagnostic surface for unsupported remote drift
 - intentional container spec changes become explicit replacements instead of silent, unsafe in-place mutations
