@@ -426,6 +426,21 @@ def git_has_remote(remote_name: str = "origin") -> bool:
     return completed.returncode == 0
 
 
+def ensure_tcp_endpoint(host: str, port: int, *, label: str, timeout_seconds: int = 5) -> None:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return
+    except socket.gaierror as exc:
+        raise HaaCError(
+            f"{label} target '{host}' is not resolvable from this workstation. "
+            f"Update MASTER_TARGET_NODE or local DNS/hosts before running `task up`.\n{exc}"
+        ) from exc
+    except OSError as exc:
+        raise HaaCError(
+            f"{label} is not reachable at {host}:{port}. Connect to the required network or fix access before rerunning `task up`.\n{exc}"
+        ) from exc
+
+
 def stage_git_paths(paths: list[str] | None = None) -> None:
     if paths:
         run(["git", "add", "-A", "--", *paths])
@@ -2477,6 +2492,9 @@ def cmd_check_env(_: argparse.Namespace) -> None:
         ],
         env,
     )
+    proxmox_host = env.get("MASTER_TARGET_NODE", "pve").strip() or "pve"
+    ensure_tcp_endpoint(proxmox_host, 8006, label="Proxmox API")
+    ensure_tcp_endpoint(proxmox_host, 22, label="Proxmox SSH")
 
 
 def cmd_kubeconfig_path(_: argparse.Namespace) -> None:

@@ -39,6 +39,13 @@ tasks:
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
 
+  preflight:
+    desc: "Run the ordered bootstrap preflight: env validation, workstation/tooling checks, then GitOps sync."
+    cmds:
+      - task: check-env
+      - task: doctor
+      - task: sync
+
   install-tools:
     desc: Bootstrap the local platform-aware `.tools/<os>-<arch>/bin` toolchain and, on Windows, the WSL control-node packages.
     cmds:
@@ -61,12 +68,12 @@ tasks:
 
   up:
     desc: "Full bootstrap from scratch: OpenTofu, Ansible, GitOps bootstrap, app configuration, and verification."
-    deps: [check-env, doctor, sync]
     env:
       PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
+      - task: preflight
       - task: setup-hooks
       - task: provision-infra
       - task: configure-os
