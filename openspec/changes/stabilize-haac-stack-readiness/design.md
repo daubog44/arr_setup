@@ -35,3 +35,20 @@ Validation should prove the fix in the actual bootstrap path:
 - verify `nvidia-device-plugin` stays healthy without the live-only patch
 - verify `haac-gateway` becomes accepted
 - rerun `wait-for-stack` and record the next verified phase
+
+### 4. Make bootstrap Jobs rerunnable
+
+The next live blocker after the GPU and Gateway fixes is Argo repeatedly trying to replace existing `Job` resources:
+
+- `headlamp-token-bootstrap`
+- `downloaders-bootstrap`
+
+These Jobs currently use `argocd.argoproj.io/sync-options: Replace=true`, which is the wrong primitive for Kubernetes Jobs because selector/template fields are immutable once the Job exists.
+
+The safer GitOps pattern here is:
+
+- mark the Jobs as `PostSync` hooks
+- add `argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded`
+- remove `Replace=true`
+
+That keeps the Jobs rerunnable on later syncs while preventing immutable-field failures from blocking the whole application.

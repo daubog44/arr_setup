@@ -11,6 +11,7 @@ These are both workload-layer contract mismatches. They should be fixed declarat
 
 - Centralize the NVIDIA runtime class name under the shared chart values and use it for both GPU workloads and the NVIDIA device-plugin DaemonSet.
 - Align the Gateway listener contract with the Traefik entrypoint ports actually exposed by the current K3s Traefik deployment, and drop the invalid in-cluster HTTPS listener that has no TLS configuration.
+- Convert the post-setup bootstrap Jobs to rerunnable Argo hooks so repeat syncs do not fail on immutable Job selectors.
 - Validate the fix by publishing the chart changes and verifying that `wait-for-stack` moves beyond the `haac-stack` gate.
 
 ## Impact

@@ -2,6 +2,7 @@
 
 - [ ] 1.1 Add a shared Helm value for the NVIDIA runtime class and consume it in the GPU workload and NVIDIA device-plugin templates
 - [ ] 1.2 Align the Gateway listener contract with the bundled Traefik entrypoints and remove the invalid in-cluster HTTPS listener
+- [ ] 1.3 Convert the bootstrap Jobs to rerunnable Argo hooks instead of replacing immutable `Job` resources
 
 ## 2. Validation
 

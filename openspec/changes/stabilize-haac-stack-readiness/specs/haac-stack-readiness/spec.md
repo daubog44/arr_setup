@@ -26,3 +26,13 @@ The stack Gateway MUST use listener ports that Traefik can accept with the bundl
 - **AND** public TLS is terminated upstream by Cloudflare rather than by the in-cluster Gateway
 - **WHEN** the `haac-gateway` resource is reconciled
 - **THEN** Traefik MUST accept the Gateway instead of reporting `PortUnavailable` or invalid TLS configuration
+
+### Requirement: Bootstrap Jobs remain rerunnable across Argo resyncs
+
+Post-setup Jobs in the stack MUST use a rerunnable GitOps pattern that does not fail on immutable Kubernetes Job fields.
+
+#### Scenario: Bootstrap Job changes do not fail on immutable selectors
+
+- **GIVEN** a bootstrap Job has already run once in the cluster
+- **WHEN** ArgoCD reconciles an updated chart revision
+- **THEN** the bootstrap Job MUST be recreated through a hook lifecycle instead of failing with immutable `spec.selector` or template label errors
