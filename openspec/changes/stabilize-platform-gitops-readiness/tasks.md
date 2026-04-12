@@ -4,6 +4,7 @@
 - [ ] 1.2 Keep the imperative repo-server bootstrap patch seed aligned with the declarative overlay path
 - [ ] 1.3 Add explicit platform sync ordering so `kube-prometheus-stack` lands before `node-problem-detector` and `trivy-operator`
 - [ ] 1.4 Add the sync option needed to tolerate transient missing `ServiceMonitor` CRDs during first bootstrap
+- [ ] 1.5 Vendor the pinned upstream ArgoCD install manifests into the repo so the self-managed overlay does not require a remote Git fetch during manifest generation
 
 ## 2. Validation
 

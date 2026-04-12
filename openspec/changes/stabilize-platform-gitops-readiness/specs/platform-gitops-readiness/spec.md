@@ -8,6 +8,7 @@ The `task up` GitOps readiness phase MUST NOT stop at `haac-platform` because th
 
 - **WHEN** `task up` reaches the `haac-platform` readiness gate
 - **THEN** the `argocd` child Application sync source is available in the GitOps repo
+- **AND** the self-managed overlay can render without a remote manifest fetch at reconcile time
 - **AND** the repo-server customization renders as a valid merged Deployment
 - **AND** `haac-platform` can become `Synced` and `Healthy` instead of remaining `OutOfSync`
 

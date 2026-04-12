@@ -44,7 +44,7 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "bootstrap" / "root" / "applications" / "workloads-root.yaml",
     K8S_DIR / "workloads" / "applications" / "haac-stack.yaml",
     K8S_DIR / "platform" / "argocd" / "argocd-app.yaml",
-    K8S_DIR / "platform" / "argocd" / "argocd-cm.yaml",
+    K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-cm.yaml",
     K8S_DIR / "platform" / "applications" / "falco-app.yaml",
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
     K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
