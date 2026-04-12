@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 
+# Proxmox can reserialize LXC config keys independently from comment placement.
+# Keep markers only as cleanup targets for older migrations, not as active anchors.
 BEGIN_MARKER = "# BEGIN HAAC MANAGED LXC HARDWARE"
 END_MARKER = "# END HAAC MANAGED LXC HARDWARE"
 LEGACY_PATTERNS = (
@@ -50,8 +52,7 @@ def reconcile_lxc_config_text(text: str, managed_lines: list[str]) -> str:
         for line in original_lines
         if line not in (BEGIN_MARKER, END_MARKER) and not is_managed_legacy_line(line)
     ]
-    block_lines = [BEGIN_MARKER, *managed_lines, END_MARKER]
-    insertion_candidates = marker_indexes + managed_line_indexes
+    insertion_candidates = managed_line_indexes or marker_indexes
     if insertion_candidates:
         insert_source_index = min(insertion_candidates)
         insert_at = sum(
@@ -61,7 +62,7 @@ def reconcile_lxc_config_text(text: str, managed_lines: list[str]) -> str:
         )
     else:
         insert_at = len(preserved_lines)
-    new_lines = preserved_lines[:insert_at] + block_lines + preserved_lines[insert_at:]
+    new_lines = preserved_lines[:insert_at] + managed_lines + preserved_lines[insert_at:]
     new_text = "\n".join(new_lines)
     if text.endswith("\n"):
         new_text += "\n"
