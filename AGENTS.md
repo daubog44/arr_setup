@@ -33,6 +33,8 @@ The operator contract is:
 - Windows and Linux are first-class operator environments. `.tools/<os>-<arch>/bin` is the portable CLI layer.
 - The primary kubeconfig on the workstation must not be mutated as a side effect of a temporary tunnel session.
 - GitOps health must be validated in phases, not inferred from one workload alone.
+- `task up` must remain the primary supported rerun path after partial failure unless the failure output explicitly requires manual intervention.
+- Bootstrap failures must report the failing phase, the last verified phase, and rerun guidance rather than leaving recovery implicit.
 
 ## OpenSpec Workflow
 

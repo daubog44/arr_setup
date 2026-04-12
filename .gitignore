@@ -32,6 +32,11 @@ test.txt
 __pycache__/
 *.pyc
 .tools/
+.codex-potter-home/
+.codex-appserver-runtime/
+.codexpotter/
+docs/worklogs/*
+!docs/worklogs/README.md
 pub-sealed-secrets.pem
 kubeseal-cert.pem
 scripts/current-cluster-cert.pem

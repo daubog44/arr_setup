@@ -61,6 +61,34 @@ class HaaCError(RuntimeError):
     pass
 
 
+UP_TASK_LINE_PATTERN = re.compile(r"^task: \[([^\]]+)\]\s+(.*)$")
+UP_TASK_PHASES = {
+    "check-env": "Preflight",
+    "doctor": "Preflight",
+    "sync": "Preflight",
+    "setup-hooks": "Preflight",
+    "provision-infra": "Infrastructure provisioning",
+    "configure-os": "Node configuration",
+    "generate-secrets": "GitOps publication",
+    "push-changes": "GitOps publication",
+    "deploy-argocd": "GitOps publication",
+    "wait-for-argocd-sync": "GitOps readiness",
+    "sync-cloudflare": "Cloudflare publication",
+    "verify-cluster": "Cluster verification",
+    "verify-endpoints": "Public URL verification",
+}
+UP_PHASE_RERUN_GUIDANCE = {
+    "Preflight": "No remote bootstrap state changed. Fix the local prerequisite or Git issue, then rerun `task up`.",
+    "Infrastructure provisioning": "OpenTofu apply is the normal recovery path. Fix the provisioning issue, then rerun `task up` without destroying converged resources.",
+    "Node configuration": "Ansible is expected to reconcile existing hosts. Fix the configuration issue, then rerun `task up`.",
+    "GitOps publication": "Earlier phases remain valid. Resolve the Git or publication issue, then rerun `task up` to continue reconciliation.",
+    "GitOps readiness": "Earlier phases are already convergent. Fix the failing readiness gate, then rerun `task up`.",
+    "Cloudflare publication": "Cluster-side phases stay converged. Fix the Cloudflare issue, then rerun `task up`.",
+    "Cluster verification": "Provisioning and publication phases already completed. Fix the cluster-health issue, then rerun `task up`.",
+    "Public URL verification": "Earlier phases already converged. Fix the ingress, DNS, TLS, or auth issue, then rerun `task up`.",
+}
+
+
 def load_env_file(path: Path = ENV_FILE) -> dict[str, str]:
     data: dict[str, str] = {}
     if not path.exists():
@@ -398,6 +426,97 @@ def git_has_remote(remote_name: str = "origin") -> bool:
     return completed.returncode == 0
 
 
+def stage_git_paths(paths: list[str] | None = None) -> None:
+    if paths:
+        run(["git", "add", "-A", "--", *paths])
+        return
+    run(["git", "add", "-A"])
+
+
+def git_has_staged_changes() -> bool:
+    return run(["git", "diff", "--cached", "--quiet"], check=False).returncode != 0
+
+
+def checkpoint_git_changes(commit_message: str, *, empty_message: str, paths: list[str] | None = None) -> bool:
+    stage_git_paths(paths)
+    if not git_has_staged_changes():
+        print(empty_message)
+        return False
+
+    committed = run(["git", "commit", "-m", commit_message, "--no-verify"], check=False, capture_output=True)
+    require_success(committed, f"Git checkpoint failed for '{commit_message}'")
+    print(f"[ok] Git checkpoint commit: {run_stdout(['git', 'rev-parse', 'HEAD'])}")
+    return True
+
+
+def bootstrap_recovery_summary(
+    *,
+    failing_phase: str,
+    last_verified_phase: str,
+    rerun_guidance: str,
+    detail: str,
+) -> str:
+    return (
+        f"{detail}\n"
+        f"Bootstrap phase: {failing_phase}\n"
+        f"Last verified phase: {last_verified_phase}\n"
+        f"Full rerun guidance: {rerun_guidance}"
+    )
+
+
+def infer_up_phase(task_name: str, command_text: str) -> str | None:
+    phase = UP_TASK_PHASES.get(task_name)
+    if phase:
+        return phase
+    if task_name == "up" and " run-tofu " in f" {command_text} ":
+        return "Infrastructure provisioning"
+    return None
+
+
+def emit_up_failure_summary(output_lines: list[str]) -> None:
+    phases: list[str] = []
+    for line in output_lines:
+        match = UP_TASK_LINE_PATTERN.match(line)
+        if not match:
+            continue
+        phase = infer_up_phase(match.group(1), match.group(2))
+        if phase and (not phases or phases[-1] != phase):
+            phases.append(phase)
+
+    if not phases:
+        return
+
+    failing_phase = phases[-1]
+    last_verified_phase = phases[-2] if len(phases) >= 2 else "None"
+    rerun_guidance = UP_PHASE_RERUN_GUIDANCE.get(
+        failing_phase,
+        "Fix the reported issue, then rerun `task up` if earlier phases are already aligned.",
+    )
+    print(f"[recovery] Failing phase: {failing_phase}", file=sys.stderr)
+    print(f"[recovery] Last verified phase: {last_verified_phase}", file=sys.stderr)
+    print(f"[recovery] Full rerun guidance: {rerun_guidance}", file=sys.stderr)
+
+
+def run_task_with_output(task_binary: str, task_args: list[str], env: dict[str, str]) -> tuple[int, list[str]]:
+    process = subprocess.Popen(
+        [task_binary, *task_args],
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    if process.stdout is None:
+        return process.wait(), []
+
+    output_lines: list[str] = []
+    for line in process.stdout:
+        print(line, end="")
+        output_lines.append(line.rstrip("\n"))
+    return process.wait(), output_lines
+
+
 def wsl_command(*args: str, distro: str | None = None, user: str | None = None) -> list[str]:
     command = ["wsl"]
     if distro:
@@ -519,6 +638,17 @@ def wait_for_k8s_api(kubeconfig: Path, kubectl: str, timeout_seconds: int = 120,
     raise HaaCError("K3s API did not become ready before timeout")
 
 
+def session_kubeconfig_copy(source: Path, server: str) -> tuple[Path, Path]:
+    if not source.exists():
+        raise HaaCError(f"Kubeconfig not found: {source}")
+
+    session_dir = Path(tempfile.mkdtemp(prefix="haac-kubeconfig-"))
+    session_kubeconfig = session_dir / source.name
+    shutil.copy2(source, session_kubeconfig)
+    rewrite_kubeconfig_server(session_kubeconfig, server)
+    return session_dir, session_kubeconfig
+
+
 @contextmanager
 def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None, remote_port: int = 6443):
     resolved_local_port = local_port or allocate_local_port()
@@ -559,9 +689,12 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None,
 def cluster_session(proxmox_host: str, master_ip: str, kubeconfig: Path, kubectl: str):
     ensure_parent(kubeconfig)
     with ssh_tunnel(proxmox_host, master_ip) as local_port:
-        rewrite_kubeconfig_server(kubeconfig, f"https://127.0.0.1:{local_port}")
-        wait_for_k8s_api(kubeconfig, kubectl)
-        yield
+        session_dir, session_kubeconfig = session_kubeconfig_copy(kubeconfig, f"https://127.0.0.1:{local_port}")
+        try:
+            wait_for_k8s_api(session_kubeconfig, kubectl)
+            yield session_kubeconfig
+        finally:
+            shutil.rmtree(session_dir, ignore_errors=True)
 
 
 def render_env_placeholders(content: str, env: dict[str, str]) -> str:
@@ -1040,6 +1173,7 @@ def wait_for_jsonpath(
     timeout_seconds: int,
     interval_seconds: int = 10,
     degraded_check: list[str] | None = None,
+    degraded_label: str | None = None,
 ) -> str:
     deadline = time.time() + timeout_seconds
     last_value = "N/A"
@@ -1055,63 +1189,142 @@ def wait_for_jsonpath(
         if degraded_check:
             degraded_value = run_stdout([kubectl, "--kubeconfig", str(kubeconfig), *degraded_check], check=False)
             if degraded_value == "Degraded":
-                raise HaaCError("haac-stack is degraded according to ArgoCD")
+                label = degraded_label or " ".join(command)
+                raise HaaCError(f"{label} is degraded according to ArgoCD")
         time.sleep(interval_seconds)
     raise HaaCError(f"Timeout waiting for {' '.join(command)} (last value: {last_value})")
 
 
-def sync_repo() -> None:
-    if not is_git_repo():
-        print("Skipping git sync: repository metadata not found.")
+def seconds_remaining(deadline: float) -> int:
+    return max(1, int(deadline - time.time()))
+
+
+def wait_for_resource(
+    kubectl: str,
+    kubeconfig: Path,
+    command: list[str],
+    *,
+    label: str,
+    timeout_seconds: int,
+    interval_seconds: int = 10,
+) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        completed = run([kubectl, "--kubeconfig", str(kubeconfig), *command], check=False, capture_output=True)
+        if completed.returncode == 0:
+            return
+        time.sleep(interval_seconds)
+    raise HaaCError(f"Timeout waiting for {label}")
+
+
+def wait_for_argocd_application_ready(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    application: str,
+    stage_label: str,
+    deadline: float,
+) -> None:
+    print(f"[stage] {stage_label}: {application}")
+    resource_command = ["get", "application", application, "-n", "argocd"]
+    wait_for_resource(
+        kubectl,
+        kubeconfig,
+        resource_command,
+        label=f"ArgoCD application {application}",
+        timeout_seconds=seconds_remaining(deadline),
+    )
+    health_command = ["get", "application", application, "-n", "argocd", "-o", "jsonpath={.status.health.status}"]
+    wait_for_jsonpath(
+        kubectl,
+        kubeconfig,
+        ["get", "application", application, "-n", "argocd", "-o", "jsonpath={.status.sync.status}"],
+        expected="Synced",
+        timeout_seconds=seconds_remaining(deadline),
+        degraded_check=health_command,
+        degraded_label=f"ArgoCD application {application}",
+    )
+    wait_for_jsonpath(
+        kubectl,
+        kubeconfig,
+        health_command,
+        expected="Healthy",
+        timeout_seconds=seconds_remaining(deadline),
+        degraded_check=health_command,
+        degraded_label=f"ArgoCD application {application}",
+    )
+    print(f"[ok] {stage_label}: {application} synced and healthy")
+
+
+def require_success(completed: subprocess.CompletedProcess[str], context: str) -> None:
+    if completed.returncode == 0:
         return
+    detail = (completed.stderr or completed.stdout or f"exit code {completed.returncode}").strip()
+    raise HaaCError(f"{context}\n{detail}")
+
+
+def require_git_bootstrap_repo(remote_name: str = "origin") -> None:
+    if not is_git_repo():
+        raise HaaCError("Git repository metadata not found. `task up` requires a writable GitOps clone.")
+    if not git_has_remote(remote_name):
+        raise HaaCError(
+            f"Git remote '{remote_name}' is required so bootstrap changes can be synced and pushed before ArgoCD waits."
+        )
+
+
+def sync_repo() -> None:
+    require_git_bootstrap_repo()
     env = merged_env()
     revision = gitops_revision(env)
 
-    run(["git", "add", "."])
-    run(["git", "commit", "-m", "Auto-save before sync [skip ci]", "--no-verify"], check=False)
-
-    if not git_has_remote("origin"):
-        print("Skipping remote sync: git remote 'origin' not configured.")
-        return
+    checkpoint_git_changes(
+        "Auto-save before sync [skip ci]",
+        empty_message="[ok] GitOps repo already checkpointed before sync.",
+    )
 
     remote_ref = f"origin/{revision}"
-    run(["git", "fetch", "origin", revision], check=False)
-    run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False)
+    fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
+    require_success(fetch, f"Git fetch failed for {remote_ref}")
+    merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
+    require_success(merge, f"Git merge failed for {remote_ref}")
+    print(f"[ok] GitOps repo synchronized with {remote_ref}")
 
 
 def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
-    if not is_git_repo():
-        print("Skipping git push: repository metadata not found.")
-        return
+    require_git_bootstrap_repo()
     env = merged_env()
     revision = gitops_revision(env)
 
-    run(["git", "add", "."])
-    run(["git", "commit", "-m", "Auto-commit manual work [skip ci]", "--no-verify"], check=False)
+    checkpoint_git_changes(
+        "Auto-commit manual work [skip ci]",
+        empty_message="[ok] No local repo changes needed a checkpoint before GitOps publication.",
+    )
 
-    if git_has_remote("origin"):
-        remote_ref = f"origin/{revision}"
-        run(["git", "fetch", "origin", revision], check=False)
-        run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False)
+    remote_ref = f"origin/{revision}"
+    fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
+    require_success(fetch, f"Git fetch failed for {remote_ref}")
+    merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
+    require_success(merge, f"Git merge failed for {remote_ref}")
+    print(f"[ok] GitOps repo synchronized with {remote_ref}")
 
     generate_secrets_core(kubeconfig, kubectl, fetch_cert=False)
 
     if push_all:
-        run(["git", "add", "."])
+        stage_git_paths()
     else:
-        run(["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]])
+        stage_git_paths([str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]])
 
-    staged = run(["git", "diff", "--cached", "--quiet"], check=False)
-    if staged.returncode == 0:
-        print("No new changes to push.")
-        return
+    if not git_has_staged_changes():
+        print("[ok] GitOps output already converged; nothing new to publish.")
+    else:
+        published = run(["git", "commit", "-m", "Updated infrastructure [skip ci]", "--no-verify"], check=False, capture_output=True)
+        require_success(published, "GitOps publication commit failed")
+        print(f"[ok] GitOps publication commit: {run_stdout(['git', 'rev-parse', 'HEAD'])}")
 
-    amended = run(["git", "commit", "--amend", "--no-edit", "--no-verify"], check=False)
-    if amended.returncode != 0:
-        run(["git", "commit", "-m", "Updated infrastructure [skip ci]", "--no-verify"], check=False)
-
-    if git_has_remote("origin"):
-        run(["git", "push", "origin", revision], check=False)
+    pushed = run(["git", "push", "origin", revision], check=False, capture_output=True)
+    require_success(pushed, f"Git push failed for {revision}")
+    commit = run_stdout(["git", "rev-parse", "HEAD"])
+    print(f"Pushed GitOps source of truth: {commit} -> origin/{revision}")
 
 
 def install_hooks() -> None:
@@ -1160,20 +1373,20 @@ def pre_commit_hook() -> None:
 def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     render_gitops_manifests(env)
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
-        run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"], input_text=root_app)
+        run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "-f", "-"], input_text=root_app)
 
 
 def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str, helm: str) -> None:
     env = merged_env()
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
-        apply_rendered_file(K8S_DIR / "bootstrap" / "root" / "namespaces.yaml", kubeconfig, kubectl, env)
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        apply_rendered_file(K8S_DIR / "bootstrap" / "root" / "namespaces.yaml", session_kubeconfig, kubectl, env)
         run(
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "apply",
                 "--server-side",
                 "-f",
@@ -1185,7 +1398,7 @@ def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: s
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "wait",
                 "--for=condition=established",
                 "crd/plans.upgrade.cattle.io",
@@ -1198,7 +1411,7 @@ def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: s
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "get",
                 "application",
                 "haac-stack",
@@ -1215,7 +1428,7 @@ def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: s
             [
                 helm,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "upgrade",
                 "--install",
                 "haac-stack",
@@ -1228,33 +1441,73 @@ def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: s
 
 
 def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str, timeout_seconds: int = 3600) -> None:
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
-        if run([kubectl, "--kubeconfig", str(kubeconfig), "get", "applications", "-n", "argocd"], check=False).returncode != 0:
-            raise HaaCError("ArgoCD API server is not reachable")
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        last_verified_phase = "GitOps publication"
 
-        wait_for_jsonpath(
-            kubectl,
-            kubeconfig,
-            ["get", "application", "haac-stack", "-n", "argocd", "-o", "jsonpath={.status.sync.status}"],
-            expected="Synced",
-            timeout_seconds=timeout_seconds,
-            degraded_check=["get", "application", "haac-stack", "-n", "argocd", "-o", "jsonpath={.status.health.status}"],
-        )
+        def wait_for_readiness_gate(application: str, stage_label: str) -> None:
+            nonlocal last_verified_phase
+            try:
+                wait_for_argocd_application_ready(
+                    kubectl,
+                    session_kubeconfig,
+                    application=application,
+                    stage_label=stage_label,
+                    deadline=deadline,
+                )
+            except HaaCError as exc:
+                raise HaaCError(
+                    bootstrap_recovery_summary(
+                        failing_phase="GitOps readiness",
+                        last_verified_phase=last_verified_phase,
+                        rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                        detail=str(exc),
+                    )
+                ) from exc
+            last_verified_phase = stage_label
+
+        print("[stage] ArgoCD API reachability")
+        if run([kubectl, "--kubeconfig", str(session_kubeconfig), "get", "applications", "-n", "argocd"], check=False).returncode != 0:
+            raise HaaCError(
+                bootstrap_recovery_summary(
+                    failing_phase="GitOps readiness",
+                    last_verified_phase=last_verified_phase,
+                    rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                    detail="ArgoCD API server is not reachable",
+                )
+            )
+        print("[ok] ArgoCD API reachability")
+        last_verified_phase = "ArgoCD API reachability"
 
         deadline = time.time() + timeout_seconds
+        wait_for_readiness_gate("haac-platform", "Platform root gate")
+        wait_for_readiness_gate("argocd", "ArgoCD self-management gate")
+        wait_for_readiness_gate("haac-workloads", "Workloads root gate")
+        wait_for_readiness_gate("haac-stack", "Workload application gate")
+
+        print("[stage] Workload secret gate: media/protonvpn-key")
         while time.time() < deadline:
-            if run([kubectl, "--kubeconfig", str(kubeconfig), "get", "secret", "protonvpn-key", "-n", "media"], check=False).returncode == 0:
+            if run([kubectl, "--kubeconfig", str(session_kubeconfig), "get", "secret", "protonvpn-key", "-n", "media"], check=False).returncode == 0:
+                print("[ok] Workload secret gate: media/protonvpn-key")
+                last_verified_phase = "Workload secret gate"
                 break
             time.sleep(10)
         else:
-            raise HaaCError("Timed out waiting for secret media/protonvpn-key")
+            raise HaaCError(
+                bootstrap_recovery_summary(
+                    failing_phase="GitOps readiness",
+                    last_verified_phase=last_verified_phase,
+                    rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                    detail="Timed out waiting for secret media/protonvpn-key",
+                )
+            )
 
+        print("[stage] Downloader readiness gate")
         while time.time() < deadline:
             ready = run_stdout(
                 [
                     kubectl,
                     "--kubeconfig",
-                    str(kubeconfig),
+                    str(session_kubeconfig),
                     "get",
                     "pods",
                     "-n",
@@ -1271,7 +1524,7 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
                     [
                         kubectl,
                         "--kubeconfig",
-                        str(kubeconfig),
+                        str(session_kubeconfig),
                         "get",
                         "job",
                         "downloaders-bootstrap",
@@ -1281,11 +1534,11 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
                     check=False,
                 )
                 if bootstrap_job.returncode == 0:
-                    run(
+                    waited = run(
                         [
                             kubectl,
                             "--kubeconfig",
-                            str(kubeconfig),
+                            str(session_kubeconfig),
                             "wait",
                             "--for=condition=complete",
                             "job/downloaders-bootstrap",
@@ -1294,14 +1547,35 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
                             "--timeout=300s",
                         ],
                         check=False,
+                        capture_output=True,
                     )
+                    try:
+                        require_success(waited, "downloaders-bootstrap job did not complete successfully")
+                    except HaaCError as exc:
+                        raise HaaCError(
+                            bootstrap_recovery_summary(
+                                failing_phase="GitOps readiness",
+                                last_verified_phase=last_verified_phase,
+                                rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                                detail=str(exc),
+                            )
+                        ) from exc
+                print("[ok] Downloader readiness gate")
+                last_verified_phase = "Downloader readiness gate"
                 return
             time.sleep(10)
-        raise HaaCError("Timed out waiting for downloaders pod readiness")
+        raise HaaCError(
+            bootstrap_recovery_summary(
+                failing_phase="GitOps readiness",
+                last_verified_phase=last_verified_phase,
+                rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                detail="Timed out waiting for downloaders pod readiness",
+            )
+        )
 
 
 def verify_cluster(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         sections = [
             (["get", "nodes", "-o", "wide"], "--- Node Status ---"),
             (["get", "pods", "-A"], "--- Pod Health ---"),
@@ -1314,28 +1588,92 @@ def verify_cluster(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
         ]
         for command, title in sections:
             print(title)
-            completed = run([kubectl, "--kubeconfig", str(kubeconfig), *command], check=False, capture_output=True)
+            completed = run([kubectl, "--kubeconfig", str(session_kubeconfig), *command], check=False, capture_output=True)
             print((completed.stdout or completed.stderr).strip())
             print()
 
 
-def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> None:
-    urls = [
-        f"https://home.{domain_name}",
-        f"https://jellyfin.{domain_name}",
-        f"https://argocd.{domain_name}",
-        f"https://longhorn.{domain_name}",
-        f"https://sonarr.{domain_name}",
-        f"https://radarr.{domain_name}",
-        f"https://prowlarr.{domain_name}",
-        f"https://qui.{domain_name}",
-        f"https://autobrr.{domain_name}",
-        f"https://headlamp.{domain_name}",
-    ]
-    accepted_statuses = {200, 201, 202, 204, 301, 302, 307, 308, 401}
+def parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
-    for url in urls:
+
+def endpoint_specs_source_path() -> Path:
+    if VALUES_OUTPUT.exists():
+        return VALUES_OUTPUT
+    if VALUES_TEMPLATE.exists():
+        return VALUES_TEMPLATE
+    raise HaaCError("Missing values source of truth for public endpoint verification")
+
+
+def load_endpoint_specs(domain_name: str) -> list[dict[str, str]]:
+    source_path = endpoint_specs_source_path()
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    in_ingresses = False
+    current_name = ""
+    current: dict[str, str] = {}
+    endpoints: list[dict[str, str]] = []
+
+    def flush_current() -> None:
+        nonlocal current_name, current
+        if not current_name or "subdomain" not in current:
+            current_name = ""
+            current = {}
+            return
+        endpoints.append(
+            {
+                "name": current_name,
+                "subdomain": current["subdomain"],
+                "namespace": current.get("namespace", ""),
+                "service": current.get("service", ""),
+                "auth": "oidc" if parse_bool(current.get("auth_enabled", "false")) else "public",
+                "url": f"https://{current['subdomain']}.{domain_name}",
+            }
+        )
+        current_name = ""
+        current = {}
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not in_ingresses:
+            if stripped == "ingresses:":
+                in_ingresses = True
+            continue
+
+        if re.match(r"^\S", raw_line):
+            break
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        entry_match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", raw_line)
+        if entry_match:
+            flush_current()
+            current_name = entry_match.group(1)
+            current = {}
+            continue
+
+        prop_match = re.match(r"^    ([A-Za-z0-9_]+):\s*(.*)$", raw_line)
+        if prop_match and current_name:
+            key, value = prop_match.groups()
+            cleaned = value.strip().strip('"').strip("'")
+            if cleaned:
+                current[key] = cleaned
+
+    flush_current()
+    if not endpoints:
+        raise HaaCError(f"No ingress endpoints were found in {source_path}")
+    return endpoints
+
+
+def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> None:
+    endpoints = load_endpoint_specs(domain_name)
+    accepted_statuses = {200, 201, 202, 204, 301, 302, 307, 308, 401}
+    results: list[dict[str, str]] = []
+    failures: list[dict[str, str]] = []
+
+    for endpoint in endpoints:
+        url = endpoint["url"]
         success = False
+        last_status = 0
         for _ in range(retries):
             request = urllib.request.Request(url, method="GET")
             try:
@@ -1345,12 +1683,56 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
                 status = error.code
             except Exception:
                 status = 0
+            last_status = status
             if status in accepted_statuses:
                 success = True
                 break
             time.sleep(sleep_seconds)
+        result = {
+            "service": endpoint["name"],
+            "namespace": endpoint["namespace"],
+            "url": url,
+            "auth": endpoint["auth"],
+            "status": str(last_status),
+            "verification": "reachable" if success else "failed",
+        }
+        results.append(result)
         if not success:
-            raise HaaCError(f"Endpoint not reachable after retries: {url}")
+            failures.append(result)
+
+    print("--- Service URL Verification ---")
+    print("SERVICE\tNAMESPACE\tAUTH\tSTATUS\tURL")
+    for result in results:
+        print(
+            "\t".join(
+                [
+                    result["service"],
+                    result["namespace"],
+                    result["auth"],
+                    result["status"],
+                    result["url"],
+                ]
+            )
+        )
+    print()
+    overall = "full-success" if not failures else "partial-failure"
+    reachable = len(results) - len(failures)
+    print(f"Endpoint verification result: {overall} ({reachable}/{len(results)} reachable)")
+    if failures:
+        print("Failed endpoints:")
+        for result in failures:
+            print(f"- {result['service']} ({result['status']}): {result['url']}")
+    print()
+    print(json.dumps({"result": overall, "reachable": reachable, "total": len(results), "endpoints": results}, indent=2))
+    if failures:
+        raise HaaCError(
+            bootstrap_recovery_summary(
+                failing_phase="Public URL verification",
+                last_verified_phase="Cluster verification",
+                rerun_guidance=UP_PHASE_RERUN_GUIDANCE["Public URL verification"],
+                detail=f"Endpoint verification incomplete: {len(failures)} of {len(results)} endpoints failed",
+            )
+        )
 
 
 def extract_tunnel_id(token: str) -> str:
@@ -1425,6 +1807,7 @@ def sync_cloudflare() -> None:
     updated = cloudflare_request("PUT", config_url, env["CLOUDFLARE_API_TOKEN"], update_payload)
     if not updated.get("success"):
         raise HaaCError(f"Failed to update Cloudflare tunnel configuration: {updated}")
+    print(f"[ok] Cloudflare tunnel ingress reconciled for {domain_name}")
 
     dns_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records?per_page=100"
     all_records = cloudflare_request("GET", dns_url, env["CLOUDFLARE_API_TOKEN"])
@@ -1460,6 +1843,7 @@ def sync_cloudflare() -> None:
             )
             if not created.get("success"):
                 raise HaaCError(f"Failed to create DNS record {record_name}: {created}")
+    print(f"[ok] Cloudflare DNS reconciled: {domain_name}, *.{domain_name} -> {expected_target}")
 
 
 def get_pod_name(kubectl: str, kubeconfig: Path, namespace: str, selector: str) -> str:
@@ -1484,8 +1868,8 @@ def get_pod_name(kubectl: str, kubeconfig: Path, namespace: str, selector: str) 
 def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     require_env(["ARGOCD_USERNAME", "ARGOCD_PASSWORD"], env)
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
-        argocd_pod = get_pod_name(kubectl, kubeconfig, "argocd", "app.kubernetes.io/name=argocd-server")
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        argocd_pod = get_pod_name(kubectl, session_kubeconfig, "argocd", "app.kubernetes.io/name=argocd-server")
         if not argocd_pod:
             raise HaaCError("ArgoCD server pod not found while configuring local auth")
 
@@ -1493,7 +1877,7 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "exec",
                 "-n",
                 "argocd",
@@ -1516,7 +1900,7 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
                 [
                     kubectl,
                     "--kubeconfig",
-                    str(kubeconfig),
+                    str(session_kubeconfig),
                     "patch",
                     "secret",
                     "argocd-secret",
@@ -1539,7 +1923,7 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "patch",
                 "cm",
                 "argocd-cm",
@@ -1553,7 +1937,7 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "patch",
                 "cm",
                 "argocd-rbac-cm",
@@ -1567,7 +1951,7 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "patch",
                 "secret",
                 "argocd-secret",
@@ -1592,7 +1976,7 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
     qui_user = env["QUI_USERNAME"]
     qui_password = env["QUI_PASSWORD"]
 
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl):
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         deadline = time.time() + 600
         pod_name = ""
         while time.time() < deadline:
@@ -1600,7 +1984,7 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 [
                     kubectl,
                     "--kubeconfig",
-                    str(kubeconfig),
+                    str(session_kubeconfig),
                     "get",
                     "pod",
                     "-l",
@@ -1618,7 +2002,7 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                     [
                         kubectl,
                         "--kubeconfig",
-                        str(kubeconfig),
+                        str(session_kubeconfig),
                         "exec",
                         "-n",
                         "media",
@@ -1644,7 +2028,7 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "exec",
                 "-n",
                 "media",
@@ -1874,8 +2258,8 @@ def monitor(master_ip: str, proxmox_host: str, kubeconfig: Path) -> None:
     k9s = shutil.which("k9s")
     if not k9s:
         raise HaaCError("k9s is not installed or not on PATH.")
-    with cluster_session(proxmox_host, master_ip, kubeconfig, resolved_binary("kubectl")):
-        subprocess.run([k9s, "--all-namespaces"], cwd=str(ROOT), check=False)
+    with cluster_session(proxmox_host, master_ip, kubeconfig, resolved_binary("kubectl")) as session_kubeconfig:
+        subprocess.run([k9s, "--all-namespaces", "--kubeconfig", str(session_kubeconfig)], cwd=str(ROOT), check=False)
 
 
 def ensure_repo_ssh_keypair() -> None:
@@ -2086,6 +2470,10 @@ def cmd_check_env(_: argparse.Namespace) -> None:
             "STORAGE_GID",
             "GITOPS_REPO_URL",
             "GITOPS_REPO_REVISION",
+            "CLOUDFLARE_API_TOKEN",
+            "CLOUDFLARE_ACCOUNT_ID",
+            "CLOUDFLARE_ZONE_ID",
+            "CLOUDFLARE_TUNNEL_TOKEN",
         ],
         env,
     )
@@ -2225,9 +2613,9 @@ def cmd_run_ansible(args: argparse.Namespace) -> None:
 
 def cmd_generate_secrets(args: argparse.Namespace) -> None:
     kubeconfig = Path(args.kubeconfig)
-    with cluster_session(args.proxmox_host, args.master_ip, kubeconfig, args.kubectl):
-        generate_secrets_core(kubeconfig, args.kubectl, fetch_cert=True)
-        upload_inventory_configmap(args.kubectl, kubeconfig)
+    with cluster_session(args.proxmox_host, args.master_ip, kubeconfig, args.kubectl) as session_kubeconfig:
+        generate_secrets_core(session_kubeconfig, args.kubectl, fetch_cert=True)
+        upload_inventory_configmap(args.kubectl, session_kubeconfig)
 
 
 def cmd_generate_secrets_local(args: argparse.Namespace) -> None:
@@ -2295,6 +2683,13 @@ def cmd_task_run(args: argparse.Namespace) -> None:
     task_binary = ensure_local_cli_tool("task")
     env = os.environ.copy()
     env["PATH"] = os.pathsep.join([str(local_binary_path("task").parent), env.get("PATH", "")])
+    if "up" in task_args:
+        returncode, output_lines = run_task_with_output(task_binary, task_args, env)
+        if returncode != 0:
+            emit_up_failure_summary(output_lines)
+            raise HaaCError(f"Task command failed with exit code {returncode}")
+        return
+
     completed = subprocess.run([task_binary, *task_args], cwd=str(ROOT), env=env, check=False)
     if completed.returncode != 0:
         raise HaaCError(f"Task command failed with exit code {completed.returncode}")

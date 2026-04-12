@@ -135,6 +135,23 @@ It is responsible for:
 - Cloudflare tunnel and DNS reconciliation
 - local fallback deploy and verification
 
+## Bootstrap Contract
+
+The one-command bootstrap contract is stage-based and shared by `task up`, `.\haac.ps1 up`, and `sh ./haac.sh up`.
+
+The required order is:
+
+1. preflight: validate `.env`, workstation tooling, and the writable GitOps remote
+2. infra provisioning: OpenTofu
+3. node configuration: Ansible
+4. secret and GitOps publication
+5. staged ArgoCD readiness gates
+6. Cloudflare publication
+7. cluster verification
+8. public URL verification and summary
+
+`.env` is the input source of truth for both bootstrap prerequisites and public routing. The final public URL report is derived from the Helm ingress definitions in `k8s/charts/haac-stack/config-templates/values.yaml.template` and the generated `values.yaml`, not from a duplicated hardcoded list.
+
 `.env` is also the single source of truth for Terraform inputs. The wrapper translates env values into `TF_VAR_*` centrally before calling OpenTofu, instead of duplicating that mapping in `Taskfile.yml`.
 
 If global Task is missing, use:

@@ -119,10 +119,12 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 
 `task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline through the same `scripts/haac.py` orchestration layer.
 
+That bootstrap path is also the supported rerun path. A partial or previously successful run should be recoverable by rerunning the same command unless the failure output explicitly says manual intervention is required.
+
 The logical phase order is:
 
 1. preflight: `check-env`, `doctor`, `sync`
-2. infra provisioning: OpenTofu init and apply
+2. infra provisioning: OpenTofu init and apply through the explicit `provision-infra` phase
 3. node configuration: Ansible
 4. secret and GitOps publication: regenerate rendered artifacts, push the GitOps source of truth, bootstrap ArgoCD
 5. staged ArgoCD readiness: platform root, ArgoCD self-management, workloads root, `haac-stack`
@@ -136,7 +138,7 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
 
-Preflight, Git remote, OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Readiness and endpoint checks retry until timeout, then fail with the last verified gate. The detailed operator contract lives in `docs/runbooks/task-up.md`.
+Preflight, Git remote, OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
 
 ## Ralph Loop
 

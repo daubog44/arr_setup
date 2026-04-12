@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python .codex/scripts/session-start.py"
+      }
+    ]
+  }
+}

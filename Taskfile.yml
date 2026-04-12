@@ -30,12 +30,12 @@ tasks:
       - task: up
 
   check-env:
-    desc: Validate the local .env file and the minimum variables required by the stack.
+    desc: Validate the required `.env` inputs for infrastructure, GitOps publication, and Cloudflare endpoint publication.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
 
   doctor:
-    desc: Verify the local Windows/WSL or Unix tooling required by the project before a full run.
+    desc: Verify the local Windows/WSL or Unix tooling required before provisioning starts.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
 
@@ -55,7 +55,7 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" install-wsl-tools'
 
   sync:
-    desc: Save local work and sync the GitOps branch from `GITOPS_REPO_REVISION`, preferring local changes on merge conflicts.
+    desc: Save local work and validate the writable GitOps `origin` remote for `GITOPS_REPO_REVISION` before provisioning.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" sync-repo'
 
@@ -68,8 +68,7 @@ tasks:
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
       - task: setup-hooks
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
+      - task: provision-infra
       - task: configure-os
       - task: gitops-bootstrap
         vars:
@@ -93,6 +92,16 @@ tasks:
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/playbook.yml --extra-args={{default "" .DEBUG_LEVEL}}'
 
+  provision-infra:
+    desc: Reconcile the declared OpenTofu infrastructure before configuration continues.
+    env:
+      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      NAS_PATH: "{{.NAS_PATH_VALUE}}"
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
+
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.
     cmds:
@@ -105,7 +114,7 @@ tasks:
       - task: sync-cloudflare
 
   verify-all:
-    desc: Verify cluster health and public endpoints.
+    desc: Verify cluster health, then print the final public URL summary and fail if any endpoint is still unreachable.
     cmds:
       - task: verify-cluster
       - task: verify-endpoints
@@ -128,7 +137,7 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" generate-secrets --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   push-changes:
-    desc: Save local work, regenerate sealed secrets from the cached cert, then push changes if a git remote exists.
+    desc: Save local work, regenerate sealed secrets from the cached cert, then push the GitOps source of truth to the required `origin` remote.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" push-changes {{if eq .PUSH_ALL "true"}}--push-all{{end}} --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
@@ -144,7 +153,7 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" deploy-local --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --helm "{{.HELM}}"'
 
   wait-for-argocd-sync:
-    desc: Wait for ArgoCD to sync haac-stack and for the critical downloader pod to become ready.
+    desc: Wait through staged ArgoCD root/platform/workload gates and the critical downloader readiness gate.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" wait-for-stack --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --timeout 3600'
 
@@ -154,7 +163,7 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" verify-cluster --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   verify-endpoints:
-    desc: Check the public HTTP endpoints exposed through Cloudflare and Traefik.
+    desc: Check the public HTTP endpoints exposed through Cloudflare and Traefik, reporting full versus partial success.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" verify-web --domain "{{.DOMAIN_NAME_VALUE}}"'
 
@@ -197,3 +206,88 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" destroy -auto-approve'
       - '{{.PYTHON_CMD}} "scripts/haac.py" remove-file --path "scripts/pub-sealed-secrets.pem"'
+
+  loop:check:
+    desc: Verify the local OpenSpec/CodexPotter loop bootstrap and validate active changes.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" check'
+
+  loop:prompt:
+    desc: Print the dynamic Ralph loop prompt used for this repo.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      MODE: '{{default "apply" .MODE}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" prompt --slug "{{.SLUG}}" --mode "{{.MODE}}"'
+
+  loop:worklog:
+    desc: Print or create the current Ralph loop worklog path.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      MODE: '{{default "apply" .MODE}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" worklog --slug "{{.SLUG}}" --mode "{{.MODE}}"'
+
+  loop:yolo:
+    desc: Launch the autonomous OpenSpec-first Ralph loop with an isolated Codex home, using apply-first plus autodiscovery/auto-improve fallback.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      ROUNDS: '{{default "10" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode apply'
+
+  loop:yolo:dry:
+    desc: Dry run the Ralph loop bootstrap without launching CodexPotter.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      ROUNDS: '{{default "10" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode apply --dry-run'
+
+  loop:yolo:checked:
+    desc: Launch the Ralph loop after local readiness checks and Codex-side MCP preflight, with apply-first plus autodiscovery/auto-improve fallback.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      ROUNDS: '{{default "10" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode apply --with-preflight'
+
+  loop:yolo:global:
+    desc: Launch the Ralph loop against the existing global CODEX_HOME instead of an isolated repo-local home, with apply-first plus autodiscovery/auto-improve fallback.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      ROUNDS: '{{default "10" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode apply --use-global-home'
+
+  loop:yolo:global:dry:
+    desc: Dry run the global Ralph loop bootstrap.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      ROUNDS: '{{default "10" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode apply --use-global-home --dry-run'
+
+  loop:yolo:global:checked:
+    desc: Launch the global Ralph loop after local readiness checks and Codex-side MCP preflight.
+    vars:
+      SLUG: '{{default "session" .SLUG}}'
+      ROUNDS: '{{default "10" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode apply --use-global-home --with-preflight'
+
+  loop:discover:
+    desc: Run the loop in narrow discovery mode so it may open exactly one new evidence-backed OpenSpec change.
+    vars:
+      SLUG: '{{default "discovery" .SLUG}}'
+      ROUNDS: '{{default "3" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode discover'
+
+  loop:discover:dry:
+    desc: Dry run the loop discovery bootstrap.
+    vars:
+      SLUG: '{{default "discovery" .SLUG}}'
+      ROUNDS: '{{default "3" .ROUNDS}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac_loop.py" run --slug "{{.SLUG}}" --rounds "{{.ROUNDS}}" --mode discover --dry-run'
