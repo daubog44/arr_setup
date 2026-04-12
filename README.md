@@ -115,6 +115,103 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 - `verify-all`: cluster and endpoint checks
 - `down`: graceful shutdown and destroy
 
+## Task Up Contract
+
+`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline through the same `scripts/haac.py` orchestration layer.
+
+The logical phase order is:
+
+1. preflight: `check-env`, `doctor`, `sync`
+2. infra provisioning: OpenTofu init and apply
+3. node configuration: Ansible
+4. secret and GitOps publication: regenerate rendered artifacts, push the GitOps source of truth, bootstrap ArgoCD
+5. staged ArgoCD readiness: platform root, ArgoCD self-management, workloads root, `haac-stack`
+6. Cloudflare publication: tunnel ingress plus DNS reconciliation
+7. cluster verification
+8. public URL verification and final summary
+
+The minimum `.env` inputs for `task up` are grouped into three surfaces:
+
+- infra and storage: `LXC_PASSWORD`, `LXC_MASTER_HOSTNAME`, `NAS_ADDRESS`, `HOST_NAS_PATH`, `NAS_PATH`, `NAS_SHARE_NAME`, `SMB_USER`, `SMB_PASSWORD`, `STORAGE_UID`, `STORAGE_GID`
+- GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
+- public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
+
+Preflight, Git remote, OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Readiness and endpoint checks retry until timeout, then fail with the last verified gate. The detailed operator contract lives in `docs/runbooks/task-up.md`.
+
+## Ralph Loop
+
+This repo includes a CodexPotter-backed Ralph loop that works on top of the official OpenSpec CLI.
+
+Loop goals:
+
+- apply the current active OpenSpec change
+- keep validation, code review, and security review in the loop
+- self-improve by opening a new OpenSpec change if the loop detects a real missing capability in its own bootstrap, review gates, or discovery process
+
+Main loop entrypoints:
+
+- `task loop:check`
+- `task loop:yolo SLUG=task-up ROUNDS=10`
+- `task loop:yolo:checked SLUG=task-up ROUNDS=10`
+- `task loop:discover SLUG=bootstrap-gap ROUNDS=3`
+
+Loop transcript verbosity is controlled by `HAAC_POTTER_VERBOSITY`:
+
+- `minimal`: compact terminal output
+- `simple`: more explicit tool/edit transcript output
+
+`task loop:yolo` is apply-first, not apply-only. During the same run it may:
+
+- continue the first active OpenSpec change
+- switch to narrow discovery if no active change remains
+- open one new evidence-backed OpenSpec change if the loop detects a missing capability in bootstrap, review, validation, or its own runner
+
+That discovery scope is broader than the loop itself. It can target real HaaC gaps in:
+
+- OpenTofu, Ansible, K3s, ArgoCD, Helm, Kustomize, and Cloudflare flow
+- DRY and centralization regressions
+- security and trust-boundary issues
+- cross-platform Windows/Linux operator behavior
+- storage, GPU, networking, and post-setup automation mismatches
+
+Each discovered gap should become an OpenSpec change with a concrete proposed solution, not just a note.
+
+This includes loop-internal capability gaps too. If the model is missing the right repo-specific behavior, the loop may create or refine:
+
+- `scripts/haac_loop.py`
+- `docs/haac-loop-prompt.md`
+- `docs/loop-*.md`
+- repo-local skills under `.codex/skills/`
+- role prompts under `openspec/agents/`
+- `.codex/hooks.json` and related bootstrap glue
+
+When a round reaches public endpoint verification, the loop is expected to use Playwright MCP for browser-level navigation of the emitted URLs, not only the HTTP-level checks from `verify-web`.
+
+Supporting files:
+
+- `docs/haac-loop-prompt.md`
+- `docs/loop-review.md`
+- `docs/loop-discovery.md`
+- `docs/loop-subagents.md`
+- `docs/loop-worklog.md`
+- `openspec/agents/`
+- `.codex/skills/haac-*`
+
+The loop uses the same source of truth as the operator workflow: `.env`, `Taskfile.yml`, `scripts/haac.py`, and the active OpenSpec changes.
+
+## Spec-Driven Workflow
+
+The repo now uses a spec-driven workflow documented in `AGENTS.md` and `openspec/`.
+
+- `AGENTS.md` is the operator contract for the repository.
+- `openspec list --json` is the source of truth for which changes are currently active.
+- `openspec/specs/` contains the stable capability contracts that survive after archive.
+- `openspec/changes/` contains active change proposals and task work.
+- `openspec/changes/archive/` preserves the history of completed changes after their stable specs are synced.
+- `docs/runbooks/task-up.md` is the operator runbook for the main bootstrap path.
+
+For Codex users, the repo also includes a project-local SessionStart hook scaffold in `.codex/hooks.json` that can be used to enable a terse "caveman" session banner.
+
 ## Storage / Samba
 
 The cluster does not mount Samba directly from inside pods.
