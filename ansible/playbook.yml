@@ -932,6 +932,9 @@
       delay: 10
       changed_when: false
 
+    - name: Wait for cluster-side flannel and essential kube-system workloads before GitOps bootstrap
+      ansible.builtin.include_tasks: tasks/wait_for_kube_system_core.yml
+
     - name: Ensure argocd namespace exists for bootstrap
       ansible.builtin.command: k3s kubectl create namespace argocd --dry-run=client -o yaml
       register: argocd_ns_yaml
@@ -951,13 +954,114 @@
       changed_when: "'created' in sealed_secrets_result.stdout or 'configured' in sealed_secrets_result.stdout"
 
     - name: Wait for Sealed Secrets controller to be ready
-      ansible.builtin.command: >
-        k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=120s
-      register: ss_ready
-      until: ss_ready.rc == 0
-      retries: 6
-      delay: 10
-      changed_when: false
+      block:
+        - name: Poll Sealed Secrets controller rollout status
+          ansible.builtin.command: >
+            k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=120s
+          register: ss_ready
+          until: ss_ready.rc == 0
+          retries: 6
+          delay: 10
+          changed_when: false
+      rescue:
+        - name: Capture Sealed Secrets deployment status
+          ansible.builtin.command: k3s kubectl get deploy sealed-secrets-controller -n kube-system -o wide
+          register: sealed_secrets_deployment_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture Sealed Secrets pods
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get pods -n kube-system -o wide | grep sealed-secrets || true
+          args:
+            executable: /bin/bash
+          register: sealed_secrets_pods_status
+          changed_when: false
+          failed_when: false
+
+        - name: Capture Sealed Secrets pod names
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get pods -n kube-system -o custom-columns=NAME:.metadata.name --no-headers | grep sealed-secrets || true
+          args:
+            executable: /bin/bash
+          register: sealed_secrets_pod_names
+          changed_when: false
+          failed_when: false
+
+        - name: Capture Sealed Secrets pod describe output
+          ansible.builtin.shell: |
+            set -euo pipefail
+            pods="$(k3s kubectl get pods -n kube-system -o custom-columns=NAME:.metadata.name --no-headers | grep sealed-secrets || true)"
+            if [ -z "$pods" ]; then
+              echo "no Sealed Secrets pod found in kube-system"
+              exit 0
+            fi
+            first=1
+            while IFS= read -r pod; do
+              [ -n "$pod" ] || continue
+              if [ "$first" -eq 0 ]; then
+                printf '\n\n'
+              fi
+              first=0
+              echo "### $pod"
+              k3s kubectl describe pod -n kube-system "$pod"
+            done <<< "$pods"
+          args:
+            executable: /bin/bash
+          register: sealed_secrets_pod_describe
+          changed_when: false
+          failed_when: false
+
+        - name: Capture Sealed Secrets pod logs
+          ansible.builtin.shell: |
+            set -euo pipefail
+            pods="$(k3s kubectl get pods -n kube-system -o custom-columns=NAME:.metadata.name --no-headers | grep sealed-secrets || true)"
+            if [ -z "$pods" ]; then
+              echo "no Sealed Secrets pod found in kube-system"
+              exit 0
+            fi
+            first=1
+            while IFS= read -r pod; do
+              [ -n "$pod" ] || continue
+              if [ "$first" -eq 0 ]; then
+                printf '\n\n'
+              fi
+              first=0
+              echo "### $pod"
+              k3s kubectl logs -n kube-system "$pod" --all-containers --tail=120 || true
+            done <<< "$pods"
+          args:
+            executable: /bin/bash
+          register: sealed_secrets_pod_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Capture kube-system events during Sealed Secrets rollout failure
+          ansible.builtin.command: k3s kubectl get events -n kube-system --sort-by=.lastTimestamp
+          register: sealed_secrets_events
+          changed_when: false
+          failed_when: false
+
+        - name: Fail with explicit Sealed Secrets rollout diagnostics
+          ansible.builtin.fail:
+            msg: |
+              Sealed Secrets controller did not become ready before timeout.
+              kubectl get deploy sealed-secrets-controller -n kube-system -o wide:
+              {{ (sealed_secrets_deployment_status.stdout | default('') | trim) or 'no deployment output' }}
+
+              kubectl get pods -n kube-system | grep sealed-secrets:
+              {{ (sealed_secrets_pods_status.stdout | default('') | trim) or 'no Sealed Secrets pod output' }}
+
+              kubectl describe pod output:
+              {{ (sealed_secrets_pod_describe.stdout | default('') | trim) or 'no Sealed Secrets pod describe output' }}
+
+              kubectl logs output:
+              {{ (sealed_secrets_pod_logs.stdout | default('') | trim) or 'no Sealed Secrets pod log output' }}
+
+              kubectl get events -n kube-system --sort-by=.lastTimestamp:
+              {{ (sealed_secrets_events.stdout | default('') | trim) or 'no event output' }}
 
     - name: Wait for Sealed Secrets master key to be generated
       ansible.builtin.shell: |

@@ -1,4 +1,7 @@
 - name: Wait for /run/flannel/subnet.env on {{ inventory_hostname }}
+  vars:
+    flannel_cluster_node_name: "{{ hostvars[inventory_hostname].get('ansible_facts', {}).get('hostname') or hostvars[inventory_hostname].get('worker_name') or inventory_hostname }}"
+    flannel_master_delegate: "{{ groups['k3s_master'][0] }}"
   block:
     - name: Wait for flannel subnet.env file to exist
       ansible.builtin.wait_for:
@@ -39,42 +42,210 @@
           retries: "{{ flannel_subnet_env_retries | default(12) }}"
           delay: "{{ flannel_subnet_env_delay | default(5) }}"
       rescue:
-        - name: Capture local flannel subnet.env content
-          ansible.builtin.command: cat /run/flannel/subnet.env
-          register: flannel_subnet_env_content
+        - name: Capture cluster-side flannel pods for {{ flannel_cluster_node_name }} before bounded recovery
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get pods -n kube-system --field-selector spec.nodeName={{ flannel_cluster_node_name }} -o wide | grep -i flannel || true
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ flannel_master_delegate }}"
+          register: flannel_cluster_pods_before_recovery
           changed_when: false
           failed_when: false
 
-        - name: Capture {{ flannel_k3s_service_name }} status during flannel wait failure
-          ansible.builtin.command: systemctl status {{ flannel_k3s_service_name }} --no-pager
-          register: flannel_wait_service_status
+        - name: Capture cluster-side flannel daemonset summary before bounded recovery
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get daemonset -n kube-system -o wide | grep -i flannel || true
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ flannel_master_delegate }}"
+          register: flannel_cluster_daemonset_summary
           changed_when: false
           failed_when: false
 
-        - name: Capture {{ flannel_k3s_service_name }} journal during flannel wait failure
-          ansible.builtin.command: journalctl -u {{ flannel_k3s_service_name }} --no-pager -n 120
-          register: flannel_wait_service_journal
+        - name: Capture cluster-side flannel pod names for {{ flannel_cluster_node_name }} before bounded recovery
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get pods -n kube-system --field-selector spec.nodeName={{ flannel_cluster_node_name }} -o custom-columns=NAME:.metadata.name --no-headers | grep -i flannel || true
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ flannel_master_delegate }}"
+          register: flannel_cluster_pod_names_before_recovery
           changed_when: false
           failed_when: false
 
-        - name: Capture node routes during flannel wait failure
-          ansible.builtin.command: ip -4 route
-          register: flannel_wait_routes
+        - name: Capture cluster-side flannel pod describe before bounded recovery
+          ansible.builtin.shell: |
+            set -euo pipefail
+            pods="$(k3s kubectl get pods -n kube-system --field-selector spec.nodeName={{ flannel_cluster_node_name }} -o custom-columns=NAME:.metadata.name --no-headers | grep -i flannel || true)"
+            if [ -z "$pods" ]; then
+              echo "no flannel pod found on node {{ flannel_cluster_node_name }}"
+              exit 0
+            fi
+            first=1
+            while IFS= read -r pod; do
+              [ -n "$pod" ] || continue
+              if [ "$first" -eq 0 ]; then
+                printf '\n\n'
+              fi
+              first=0
+              echo "### $pod"
+              k3s kubectl describe pod -n kube-system "$pod"
+            done <<< "$pods"
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ flannel_master_delegate }}"
+          register: flannel_cluster_pod_describe_before_recovery
           changed_when: false
           failed_when: false
 
-        - name: Fail with explicit flannel readiness diagnostics
-          ansible.builtin.fail:
-            msg: |
-              {{ inventory_hostname }} did not produce a usable /run/flannel/subnet.env before GitOps bootstrap, even after one bounded {{ flannel_k3s_service_name }} recovery restart.
-              subnet.env content:
-              {{ (flannel_subnet_env_content.stdout | default('') | trim) or 'file missing or empty' }}
+        - name: Delete cluster-side flannel pod on {{ flannel_cluster_node_name }} for bounded recovery
+          ansible.builtin.command: k3s kubectl delete pod -n kube-system {{ item }} --wait=false
+          delegate_to: "{{ flannel_master_delegate }}"
+          loop: "{{ flannel_cluster_pod_names_before_recovery.stdout_lines | default([]) }}"
+          register: flannel_cluster_pod_delete
+          changed_when: true
+          failed_when: false
+          when: (flannel_cluster_pod_names_before_recovery.stdout_lines | default([]) | length) > 0
 
-              systemctl status {{ flannel_k3s_service_name }}:
-              {{ (flannel_wait_service_status.stdout | default('') | trim) or 'no status output' }}
+        - name: Wait for cluster-side flannel workload to return on {{ flannel_cluster_node_name }}
+          ansible.builtin.shell: |
+            set -euo pipefail
+            output=""
+            for attempt in $(seq 1 {{ flannel_subnet_env_retries | default(12) }}); do
+              output="$(k3s kubectl get pods -n kube-system --field-selector spec.nodeName={{ flannel_cluster_node_name }} -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase --no-headers | grep -i flannel || true)"
+              if [ -n "$output" ] && echo "$output" | awk 'BEGIN { ok = 1 } { if ($2 != "true" || $3 != "Running") ok = 0 } END { exit(ok ? 0 : 1) }'; then
+                echo "$output"
+                exit 0
+              fi
+              sleep {{ flannel_subnet_env_delay | default(5) }}
+            done
+            echo "$output"
+            exit 1
+          args:
+            executable: /bin/bash
+          delegate_to: "{{ flannel_master_delegate }}"
+          register: flannel_cluster_pods_after_recovery_wait
+          changed_when: false
+          failed_when: false
 
-              journalctl -u {{ flannel_k3s_service_name }} -n 120:
-              {{ (flannel_wait_service_journal.stdout | default('') | trim) or 'no journal output' }}
+        - name: Re-check /run/flannel/subnet.env after bounded flannel recovery
+          block:
+            - name: Wait for flannel subnet.env file to exist after bounded flannel recovery
+              ansible.builtin.wait_for:
+                path: /run/flannel/subnet.env
+                state: present
+                timeout: "{{ flannel_subnet_env_timeout | default(180) }}"
 
-              ip -4 route:
-              {{ (flannel_wait_routes.stdout | default('') | trim) or 'no route output' }}
+            - name: Verify flannel subnet.env contains a subnet assignment after bounded flannel recovery
+              ansible.builtin.shell: grep -q '^FLANNEL_SUBNET=' /run/flannel/subnet.env
+              args:
+                executable: /bin/bash
+              register: flannel_subnet_env_check_after_flannel_recovery
+              changed_when: false
+              until: flannel_subnet_env_check_after_flannel_recovery.rc == 0
+              retries: "{{ flannel_subnet_env_retries | default(12) }}"
+              delay: "{{ flannel_subnet_env_delay | default(5) }}"
+          rescue:
+            - name: Capture local flannel subnet.env content
+              ansible.builtin.command: cat /run/flannel/subnet.env
+              register: flannel_subnet_env_content
+              changed_when: false
+              failed_when: false
+
+            - name: Capture {{ flannel_k3s_service_name }} status during flannel wait failure
+              ansible.builtin.command: systemctl status {{ flannel_k3s_service_name }} --no-pager
+              register: flannel_wait_service_status
+              changed_when: false
+              failed_when: false
+
+            - name: Capture {{ flannel_k3s_service_name }} journal during flannel wait failure
+              ansible.builtin.command: journalctl -u {{ flannel_k3s_service_name }} --no-pager -n 120
+              register: flannel_wait_service_journal
+              changed_when: false
+              failed_when: false
+
+            - name: Capture node routes during flannel wait failure
+              ansible.builtin.command: ip -4 route
+              register: flannel_wait_routes
+              changed_when: false
+              failed_when: false
+
+            - name: Capture cluster-side flannel pods for {{ flannel_cluster_node_name }} after bounded recovery
+              ansible.builtin.shell: |
+                set -o pipefail
+                k3s kubectl get pods -n kube-system --field-selector spec.nodeName={{ flannel_cluster_node_name }} -o wide | grep -i flannel || true
+              args:
+                executable: /bin/bash
+              delegate_to: "{{ flannel_master_delegate }}"
+              register: flannel_cluster_pods_after_recovery
+              changed_when: false
+              failed_when: false
+
+            - name: Capture cluster-side flannel pod describe after bounded recovery
+              ansible.builtin.shell: |
+                set -euo pipefail
+                pods="$(k3s kubectl get pods -n kube-system --field-selector spec.nodeName={{ flannel_cluster_node_name }} -o custom-columns=NAME:.metadata.name --no-headers | grep -i flannel || true)"
+                if [ -z "$pods" ]; then
+                  echo "no flannel pod found on node {{ flannel_cluster_node_name }}"
+                  exit 0
+                fi
+                first=1
+                while IFS= read -r pod; do
+                  [ -n "$pod" ] || continue
+                  if [ "$first" -eq 0 ]; then
+                    printf '\n\n'
+                  fi
+                  first=0
+                  echo "### $pod"
+                  k3s kubectl describe pod -n kube-system "$pod"
+                done <<< "$pods"
+              args:
+                executable: /bin/bash
+              delegate_to: "{{ flannel_master_delegate }}"
+              register: flannel_cluster_pod_describe_after_recovery
+              changed_when: false
+              failed_when: false
+
+            - name: Fail with explicit flannel readiness diagnostics
+              ansible.builtin.fail:
+                msg: |
+                  {{ inventory_hostname }} did not produce a usable /run/flannel/subnet.env before GitOps bootstrap, even after one bounded {{ flannel_k3s_service_name }} recovery restart and one bounded flannel pod recovery attempt for cluster node {{ flannel_cluster_node_name }}.
+                  subnet.env content:
+                  {{ (flannel_subnet_env_content.stdout | default('') | trim) or 'file missing or empty' }}
+
+                  systemctl status {{ flannel_k3s_service_name }}:
+                  {{ (flannel_wait_service_status.stdout | default('') | trim) or 'no status output' }}
+
+                  journalctl -u {{ flannel_k3s_service_name }} -n 120:
+                  {{ (flannel_wait_service_journal.stdout | default('') | trim) or 'no journal output' }}
+
+                  ip -4 route:
+                  {{ (flannel_wait_routes.stdout | default('') | trim) or 'no route output' }}
+
+                  cluster-side flannel daemonset summary:
+                  {{ (flannel_cluster_daemonset_summary.stdout | default('') | trim) or 'no flannel daemonset summary found' }}
+
+                  cluster-side flannel pods before bounded recovery:
+                  {{ (flannel_cluster_pods_before_recovery.stdout | default('') | trim) or 'no flannel pod matched the affected node before recovery' }}
+
+                  cluster-side flannel pod describe before bounded recovery:
+                  {{ (flannel_cluster_pod_describe_before_recovery.stdout | default('') | trim) or 'no flannel pod describe output before recovery' }}
+
+                  cluster-side recovery action:
+                  {% set flannel_pods_before_recovery = flannel_cluster_pod_names_before_recovery.stdout_lines | default([]) %}
+                  {% if flannel_pods_before_recovery | length > 0 %}
+                  attempted `kubectl delete pod` for {{ flannel_pods_before_recovery | join(', ') }}
+                  {% else %}
+                  no flannel pod matched the affected node, so there was nothing node-scoped to delete
+                  {% endif %}
+
+                  cluster-side flannel wait after bounded recovery:
+                  {{ (flannel_cluster_pods_after_recovery_wait.stdout | default('') | trim) or 'no flannel readiness output after recovery' }}
+
+                  cluster-side flannel pods after bounded recovery:
+                  {{ (flannel_cluster_pods_after_recovery.stdout | default('') | trim) or 'no flannel pod matched the affected node after recovery' }}
+
+                  cluster-side flannel pod describe after bounded recovery:
+                  {{ (flannel_cluster_pod_describe_after_recovery.stdout | default('') | trim) or 'no flannel pod describe output after recovery' }}

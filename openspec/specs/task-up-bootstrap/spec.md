@@ -23,9 +23,15 @@ The system MUST provide a single supported bootstrap command that orchestrates i
 The system MUST expose the phase structure of the bootstrap pipeline so operators can identify where a run is currently executing and where a failure occurred.
 
 #### Scenario: Failure attribution
+
 - **WHEN** a bootstrap phase fails
 - **THEN** the operator output MUST identify the failing phase and point to the relevant command or component to inspect next
 - **AND** failures caused by K3s node or CNI readiness MUST be reported as `Node configuration` failures instead of first surfacing as later GitOps rollout errors
+
+#### Scenario: Sealed Secrets rollout does not converge after pre-bootstrap gates pass
+
+- **WHEN** the stronger pre-GitOps readiness gates pass but the Sealed Secrets controller still does not become Available
+- **THEN** the bootstrap MUST fail with controller-specific deployment, pod, log, and recent event diagnostics instead of only a generic rollout timeout
 
 ### Requirement: Public service URL reporting
 The system MUST produce a final public endpoint report for the services exposed through the homelab ingress and Cloudflare path.

@@ -16,6 +16,7 @@ So the next gap is not another generic K3s restart or another phase-level messag
 - Preserve the current `Node configuration` failure boundary.
 - Add one bounded flannel-specific recovery attempt after the existing K3s service recovery path.
 - Include cluster-side flannel workload diagnostics in the final failure output.
+- Refuse to enter GitOps bootstrap until the cluster-side flannel workload and essential `kube-system` deployments prove pod startup is healthy.
 
 **Non-Goals**
 
@@ -35,6 +36,29 @@ The intended shape is:
 - inspect the cluster-side flannel workload for that node from the master
 - perform one bounded flannel-specific recovery action for that node
 - re-check `/run/flannel/subnet.env`
+
+### Gate GitOps bootstrap on pod-capable kube-system readiness
+
+The current node-level `Ready` gate is too weak. It allows bootstrap to continue into Sealed Secrets even when the cluster is still not capable of starting normal pods.
+
+The intended shape is:
+
+- keep the existing node `Ready` gate because it still proves API and registration progress
+- add a cluster-side flannel readiness gate that requires one Ready flannel pod per K3s node
+- add an essential `kube-system` deployment gate for `coredns`, `local-path-provisioner`, and `metrics-server`
+- if that gate fails, stop before Sealed Secrets and print explicit `kube-system` diagnostics
+
+### Fail Sealed Secrets with controller-specific evidence
+
+If the stronger pre-GitOps gate passes but the Sealed Secrets controller still does not become Available, the failure needs to be narrowed to that controller instead of surfacing only a rollout timeout.
+
+The intended evidence bundle is:
+
+- `kubectl get deploy sealed-secrets-controller -n kube-system -o wide`
+- matching Sealed Secrets pod list
+- `kubectl describe pod` for matching pods
+- pod logs for matching pods
+- recent `kube-system` events
 
 ### Fail with one combined evidence bundle
 

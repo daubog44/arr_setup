@@ -11,7 +11,9 @@ That means the missing capability is no longer phase attribution. It is bounded 
 
 - Extend the flannel readiness helper to capture cluster-side flannel workload state from the master for the failing node.
 - Attempt one bounded flannel-specific recovery action after the existing K3s service restart path.
+- Gate GitOps bootstrap on recovered cluster-side flannel plus essential `kube-system` workloads instead of assuming node `Ready` is sufficient.
 - Fail with combined node-local and cluster-side flannel diagnostics if the node still does not recover.
+- If Sealed Secrets still cannot roll out after that gate, fail with controller-specific pod, log, and event diagnostics.
 
 ## Capabilities
 

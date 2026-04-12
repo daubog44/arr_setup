@@ -1,0 +1,179 @@
+- name: Wait for cluster-side flannel pods to be Ready on every K3s node before GitOps bootstrap
+  vars:
+    expected_k3s_node_count: "{{ (groups['k3s_master'] | length) + (groups['k3s_workers'] | length) }}"
+  block:
+    - name: Poll cluster-side flannel readiness
+      ansible.builtin.shell: |
+        set -euo pipefail
+        output="$(k3s kubectl get pods -n kube-system -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready,PHASE:.status.phase --no-headers | grep -i flannel || true)"
+        total="$(printf '%s\n' "$output" | awk 'NF {count++} END {print count+0}')"
+        ready="$(printf '%s\n' "$output" | awk 'NF && $3 == "true" && $4 == "Running" {count++} END {print count+0}')"
+        if [ "$total" -lt "{{ expected_k3s_node_count }}" ] || [ "$ready" -lt "{{ expected_k3s_node_count }}" ]; then
+          echo "$output"
+          exit 1
+        fi
+        echo "$output"
+      args:
+        executable: /bin/bash
+      register: cluster_flannel_ready
+      changed_when: false
+      until: cluster_flannel_ready.rc == 0
+      retries: 18
+      delay: 5
+  rescue:
+    - name: Capture cluster-side flannel daemonset summary before bounded cluster recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        k3s kubectl get daemonset -n kube-system -o wide | grep -i flannel || true
+      args:
+        executable: /bin/bash
+      register: cluster_flannel_daemonset_before_recovery
+      changed_when: false
+      failed_when: false
+
+    - name: Capture cluster-side flannel pods before bounded cluster recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        k3s kubectl get pods -n kube-system -o wide | grep -i flannel || true
+      args:
+        executable: /bin/bash
+      register: cluster_flannel_pods_before_recovery
+      changed_when: false
+      failed_when: false
+
+    - name: Capture non-ready cluster-side flannel pod names before bounded cluster recovery
+      ansible.builtin.shell: |
+        set -euo pipefail
+        k3s kubectl get pods -n kube-system -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase --no-headers \
+          | awk 'tolower($1) ~ /flannel/ && ($2 != "true" || $3 != "Running") { print $1 }'
+      args:
+        executable: /bin/bash
+      register: cluster_flannel_nonready_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Delete non-ready cluster-side flannel pods for bounded cluster recovery
+      ansible.builtin.command: k3s kubectl delete pod -n kube-system {{ item }} --wait=false
+      loop: "{{ cluster_flannel_nonready_pods.stdout_lines | default([]) }}"
+      register: cluster_flannel_pod_delete
+      changed_when: true
+      failed_when: false
+      when: (cluster_flannel_nonready_pods.stdout_lines | default([]) | length) > 0
+
+    - name: Re-check cluster-side flannel readiness after bounded cluster recovery
+      block:
+        - name: Poll cluster-side flannel readiness after bounded cluster recovery
+          ansible.builtin.shell: |
+            set -euo pipefail
+            output="$(k3s kubectl get pods -n kube-system -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready,PHASE:.status.phase --no-headers | grep -i flannel || true)"
+            total="$(printf '%s\n' "$output" | awk 'NF {count++} END {print count+0}')"
+            ready="$(printf '%s\n' "$output" | awk 'NF && $3 == "true" && $4 == "Running" {count++} END {print count+0}')"
+            if [ "$total" -lt "{{ expected_k3s_node_count }}" ] || [ "$ready" -lt "{{ expected_k3s_node_count }}" ]; then
+              echo "$output"
+              exit 1
+            fi
+            echo "$output"
+          args:
+            executable: /bin/bash
+          register: cluster_flannel_ready_after_recovery
+          changed_when: false
+          until: cluster_flannel_ready_after_recovery.rc == 0
+          retries: 18
+          delay: 5
+      rescue:
+        - name: Capture cluster-side flannel pods after bounded cluster recovery
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get pods -n kube-system -o wide | grep -i flannel || true
+          args:
+            executable: /bin/bash
+          register: cluster_flannel_pods_after_recovery
+          changed_when: false
+          failed_when: false
+
+        - name: Capture cluster-side flannel events after bounded cluster recovery
+          ansible.builtin.shell: |
+            set -o pipefail
+            k3s kubectl get events -n kube-system --sort-by=.lastTimestamp | grep -i flannel || true
+          args:
+            executable: /bin/bash
+          register: cluster_flannel_events_after_recovery
+          changed_when: false
+          failed_when: false
+
+        - name: Fail with explicit cluster-side flannel readiness diagnostics
+          ansible.builtin.fail:
+            msg: |
+              Cluster-side flannel readiness did not converge before GitOps bootstrap, even after one bounded recovery delete of non-ready flannel pods.
+              flannel daemonset summary before bounded recovery:
+              {{ (cluster_flannel_daemonset_before_recovery.stdout | default('') | trim) or 'no flannel daemonset summary found' }}
+
+              flannel pods before bounded recovery:
+              {{ (cluster_flannel_pods_before_recovery.stdout | default('') | trim) or 'no flannel pods found before recovery' }}
+
+              recovery action:
+              {% set nonready_flannel_pods = cluster_flannel_nonready_pods.stdout_lines | default([]) %}
+              {% if nonready_flannel_pods | length > 0 %}
+              attempted `kubectl delete pod` for {{ nonready_flannel_pods | join(', ') }}
+              {% else %}
+              no non-ready flannel pods were detected, so there was nothing cluster-side to delete
+              {% endif %}
+
+              flannel pods after bounded recovery:
+              {{ (cluster_flannel_pods_after_recovery.stdout | default('') | trim) or 'no flannel pods found after recovery' }}
+
+              flannel events after bounded recovery:
+              {{ (cluster_flannel_events_after_recovery.stdout | default('') | trim) or 'no flannel events found after recovery' }}
+
+- name: Wait for essential kube-system deployments required before GitOps bootstrap
+  vars:
+    kube_system_core_deployments:
+      - coredns
+      - local-path-provisioner
+      - metrics-server
+  block:
+    - name: Poll essential kube-system deployment availability
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for deployment in {{ kube_system_core_deployments | join(' ') }}; do
+          k3s kubectl get deployment "$deployment" -n kube-system >/dev/null 2>&1
+          k3s kubectl rollout status "deployment/$deployment" -n kube-system --timeout=20s >/dev/null
+        done
+      args:
+        executable: /bin/bash
+      register: kube_system_core_ready
+      changed_when: false
+      until: kube_system_core_ready.rc == 0
+      retries: 12
+      delay: 10
+  rescue:
+    - name: Capture kube-system deployments before GitOps bootstrap
+      ansible.builtin.command: k3s kubectl get deployment -n kube-system -o wide
+      register: kube_system_deployments_status
+      changed_when: false
+      failed_when: false
+
+    - name: Capture kube-system pods before GitOps bootstrap
+      ansible.builtin.command: k3s kubectl get pods -n kube-system -o wide
+      register: kube_system_pods_status
+      changed_when: false
+      failed_when: false
+
+    - name: Capture kube-system events before GitOps bootstrap
+      ansible.builtin.command: k3s kubectl get events -n kube-system --sort-by=.lastTimestamp
+      register: kube_system_events_status
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with explicit kube-system core readiness diagnostics
+      ansible.builtin.fail:
+        msg: |
+          Essential kube-system workloads did not converge before GitOps bootstrap.
+          kubectl get deployment -n kube-system -o wide:
+          {{ (kube_system_deployments_status.stdout | default('') | trim) or 'no deployment output' }}
+
+          kubectl get pods -n kube-system -o wide:
+          {{ (kube_system_pods_status.stdout | default('') | trim) or 'no pod output' }}
+
+          kubectl get events -n kube-system --sort-by=.lastTimestamp:
+          {{ (kube_system_events_status.stdout | default('') | trim) or 'no event output' }}
