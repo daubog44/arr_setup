@@ -13,5 +13,5 @@
 
 - [x] 3.1 Align `README.md`, `AGENTS.md`, and `docs/runbooks/task-up.md` with the final idempotence contract
 - [x] 3.2 Validate the change with `openspec validate task-up-idempotent-bootstrap`, `task -n up`, and focused bootstrap checks
-- [ ] 3.3 When the real environment is available, run `task up` twice and record the second-run behavior as the acceptance proof
+- [x] 3.3 When the real environment is available, run `task up` twice and record the second-run behavior as the acceptance proof
 - [x] 3.4 Surface `check-env` in operator guidance so `doctor` is not mistaken for full bootstrap readiness

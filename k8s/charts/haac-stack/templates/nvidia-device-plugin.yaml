@@ -24,6 +24,8 @@ spec:
             nodeSelectorTerms:
 # {{- range .Values.global.scheduling.gpu.nvidiaNodeFeatureLabels }}
               - matchExpressions:
+                  - key: "node-role.kubernetes.io/control-plane"
+                    operator: DoesNotExist
                   - key: "{{ . }}"
                     operator: In
                     values: ["true"]
