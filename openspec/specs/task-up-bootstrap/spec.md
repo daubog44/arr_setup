@@ -77,3 +77,8 @@ The system MUST validate the minimum local and environment prerequisites needed 
 - **WHEN** `MASTER_TARGET_NODE` is a valid Proxmox node identifier but is not itself resolvable from the operator workstation
 - **THEN** the bootstrap contract MUST allow a separate Proxmox access host input and preflight MUST validate that effective access host before provisioning begins
 
+#### Scenario: Supporting commands reuse the documented password source of truth
+- **WHEN** `.env` defines `LXC_PASSWORD` and the caller does not explicitly provide `PROXMOX_HOST_PASSWORD`
+- **THEN** the orchestration layer MUST derive the effective Proxmox host password from `LXC_PASSWORD` for supporting bootstrap commands and generated inventory consumers
+- **AND** the operator contract MUST not require a second documented `.env` password field just to satisfy those supporting commands
+

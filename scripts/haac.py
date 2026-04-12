@@ -111,6 +111,8 @@ def merged_env() -> dict[str, str]:
     merged = os.environ.copy()
     for key, value in env.items():
         merged.setdefault(key, value)
+    if not merged.get("PROXMOX_HOST_PASSWORD") and merged.get("LXC_PASSWORD"):
+        merged["PROXMOX_HOST_PASSWORD"] = merged["LXC_PASSWORD"]
     return merged
 
 

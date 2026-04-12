@@ -22,6 +22,8 @@ All three entrypoints run the same Task pipeline through `scripts/haac.py`.
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
 
+`LXC_PASSWORD` is the documented password source of truth. Supporting `scripts/haac.py` commands derive the effective Proxmox host password from it unless `PROXMOX_HOST_PASSWORD` is explicitly provided by the caller.
+
 Proxmox access uses two related inputs:
 
 - `MASTER_TARGET_NODE`: the Proxmox node name used by OpenTofu resources and generated inventory
