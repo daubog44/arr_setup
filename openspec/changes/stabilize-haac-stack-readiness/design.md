@@ -48,7 +48,7 @@ These Jobs currently use `argocd.argoproj.io/sync-options: Replace=true`, which 
 The safer GitOps pattern here is:
 
 - mark the Jobs as `PostSync` hooks
-- add `argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded`
+- add `argocd.argoproj.io/hook-delete-policy: BeforeHookCreation`
 - remove `Replace=true`
 
 That keeps the Jobs rerunnable on later syncs while preventing immutable-field failures from blocking the whole application.
