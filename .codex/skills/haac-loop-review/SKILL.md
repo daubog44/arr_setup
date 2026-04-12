@@ -15,6 +15,7 @@ Use this skill when:
 Required behavior:
 
 - run the validation ladder in order when applicable
+- treat `python scripts/haac.py check-env` as a distinct live-environment gate before `doctor`, dry-run, or live `task up` conclusions
 - call out skipped steps explicitly
 - request architecture and security review sidecars for risky work
 - if the round emits public URLs and Playwright MCP is available, require explicit browser navigation checks

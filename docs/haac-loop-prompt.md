@@ -37,6 +37,7 @@ If a required file is missing, treat that as setup debt and fix it first.
 - one new evidence-backed OpenSpec change per round, max
 - one coherent task chunk per round is preferred; do not spray unrelated repo edits
 - validation, review, and security review are mandatory for bootstrap-affecting work
+- when live bootstrap depends on workstation-to-Proxmox reachability, run and record `python scripts/haac.py check-env` before treating `doctor` or a blocked `task up` attempt as evidence of readiness
 - if validation fails, default action is fix or document the blocker with evidence, not silent acceptance
 - update docs and task checklists when behavior changes
 - if a missing loop capability blocks correctness, open exactly one new evidence-backed OpenSpec change for that gap
@@ -98,6 +99,7 @@ Do not claim progress on bootstrap work unless the round intentionally handled:
 - implementation
 - validation from `docs/loop-review.md`
 - worklog update
+- explicit blocker classification when bootstrap stops before completion: `check-env`, `doctor`, or a later phase
 - sidecar review when the touched area is risky enough to need it
 - browser-level URL verification with Playwright MCP when the round reached public endpoint output
 

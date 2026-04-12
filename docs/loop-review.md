@@ -7,17 +7,18 @@ Review is part of the loop, not an optional epilogue.
 Bootstrap-affecting work should validate in this order when applicable:
 
 1. `openspec validate <change>`
-2. `python scripts/haac.py doctor`
-3. `python scripts/haac.py task-run -- -n up`
-4. `python -m py_compile scripts/haac.py scripts/haac_loop.py scripts/hydrate-authelia.py`
-5. `helm template haac-stack k8s/charts/haac-stack`
-6. `kubectl kustomize k8s/bootstrap/root`
-7. `kubectl kustomize k8s/platform`
-8. `kubectl kustomize k8s/workloads`
-9. `task up` or wrapper equivalent when the real environment is available
-10. Playwright MCP browser navigation of the emitted public URLs when the round reaches endpoint verification
+2. `python scripts/haac.py check-env`
+3. `python scripts/haac.py doctor`
+4. `python scripts/haac.py task-run -- -n up`
+5. `python -m py_compile scripts/haac.py scripts/haac_loop.py scripts/hydrate-authelia.py`
+6. `helm template haac-stack k8s/charts/haac-stack`
+7. `kubectl kustomize k8s/bootstrap/root`
+8. `kubectl kustomize k8s/platform`
+9. `kubectl kustomize k8s/workloads`
+10. `task up` or wrapper equivalent when the real environment is available
+11. Playwright MCP browser navigation of the emitted public URLs when the round reaches endpoint verification
 
-If a step is not applicable, say why.
+If a step is not applicable, say why. Do not collapse `check-env` into `doctor`; they validate different surfaces.
 
 ## Public URL Verification
 
@@ -51,4 +52,5 @@ Required review perspectives:
 
 - fail fast on secret exposure, destructive commands, or incorrect source-of-truth duplication
 - retryable failures should be retried only when the retry condition is explicit
+- if `check-env` fails, record it as the live-environment preflight blocker instead of summarizing the round as a generic `doctor` or `task up` failure
 - if `task up` cannot run end to end, record the exact blocker and the furthest verified phase
