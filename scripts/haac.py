@@ -262,6 +262,10 @@ def proxmox_tunnel_command(
             ssh_key_wsl,
             "-o",
             "ExitOnForwardFailure=yes",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
             "-N",
             "-L",
             f"{local_port}:{master_ip}:{remote_port}",
@@ -277,6 +281,10 @@ def proxmox_tunnel_command(
         *proxmox_ssh_base_command(host, connect_timeout=connect_timeout)[:-1],
         "-o",
         "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=3",
         "-N",
         "-L",
         f"{local_port}:{master_ip}:{remote_port}",
@@ -682,6 +690,11 @@ def session_kubeconfig_copy(source: Path, server: str) -> tuple[Path, Path]:
     return session_dir, session_kubeconfig
 
 
+def tunnel_failure_detail(process: subprocess.Popen[str], command: list[str]) -> str:
+    stderr = process.stderr.read().strip() if process.stderr else ""
+    return stderr or command_label(command)
+
+
 @contextmanager
 def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None, remote_port: int = 6443):
     resolved_local_port = local_port or allocate_local_port()
@@ -692,30 +705,38 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None,
         remote_port=remote_port,
         connect_timeout=10,
     )
-    process = subprocess.Popen(
-        command,
-        cwd=str(ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if is_windows() else 0,
-    )
-    try:
-        time.sleep(2)
-        if process.poll() is not None:
-            stderr = process.stderr.read().strip() if process.stderr else ""
-            raise HaaCError(f"SSH tunnel failed to start: {stderr or command_label(command)}")
-        yield resolved_local_port
-    finally:
-        if process.poll() is None:
-            if is_windows():
-                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False, capture_output=True)
-            else:
-                process.send_signal(signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+    last_error = ""
+    for attempt in range(1, 4):
+        process = subprocess.Popen(
+            command,
+            cwd=str(ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if is_windows() else 0,
+        )
+        try:
+            time.sleep(2)
+            if process.poll() is not None:
+                last_error = tunnel_failure_detail(process, command)
+                if attempt < 3:
+                    print(f"[warn] SSH tunnel start attempt {attempt}/3 failed: {last_error}. Retrying...")
+                    time.sleep(attempt)
+                    continue
+                raise HaaCError(f"SSH tunnel failed to start: {last_error}")
+            yield resolved_local_port
+            return
+        finally:
+            if process.poll() is None:
+                if is_windows():
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False, capture_output=True)
+                else:
+                    process.send_signal(signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+    raise HaaCError(f"SSH tunnel failed to start: {last_error or command_label(command)}")
 
 
 @contextmanager
