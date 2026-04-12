@@ -4,6 +4,30 @@ resources:
   - https://github.com/argoproj/argo-cd/manifests/cluster-install?ref=v3.3.2
 patches:
   - target:
+      version: v1
+      kind: ConfigMap
+      name: argocd-cm
+      namespace: argocd
+    path: ../argocd-cm.yaml
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: argocd-rbac-cm
+      namespace: argocd
+    path: ../argocd-rbac-cm.yaml
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: argocd-cmd-params-cm
+      namespace: argocd
+    path: ../cmd-params.yaml
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: argocd-notifications-cm
+      namespace: argocd
+    path: ../notifications-cm.yaml
+  - target:
       group: apps
       version: v1
       kind: Deployment
