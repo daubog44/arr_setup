@@ -358,18 +358,34 @@ def sync_worklog_header(content: str, mode: str, changes: list[dict[str, object]
     return "\n".join(lines) + "\n"
 
 
+def select_same_day_worklog(day_dir: Path, slug: str) -> Path | None:
+    slug_value = slugify(slug)
+    candidates = []
+    for path in day_dir.glob("*.md"):
+        if not path.is_file():
+            continue
+        prefix, separator, suffix = path.stem.partition("-")
+        if not separator or len(prefix) != 4 or suffix != slug_value:
+            continue
+        candidates.append(path)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
+
+
 def ensure_worklog(slug: str, mode: str, changes: list[dict[str, object]]) -> Path:
     now = datetime.now()
     day_dir = WORKLOGS_DIR / now.strftime("%Y-%m-%d")
     day_dir.mkdir(parents=True, exist_ok=True)
-    worklog = day_dir / f"{now.strftime('%H%M')}-{slugify(slug)}.md"
-    if worklog.exists():
+    worklog = select_same_day_worklog(day_dir, slug)
+    if worklog is not None:
         existing = worklog.read_text(encoding="utf-8")
         updated = sync_worklog_header(existing, mode, changes)
         if updated != existing:
             worklog.write_text(updated, encoding="utf-8")
         return worklog
 
+    worklog = day_dir / f"{now.strftime('%H%M')}-{slugify(slug)}.md"
     content = "\n".join(
         [
             f"# {now.strftime('%Y-%m-%d %H:%M')} - {slugify(slug)}",
