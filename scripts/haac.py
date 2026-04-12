@@ -37,11 +37,13 @@ PUB_CERT_PATH = SCRIPTS_DIR / "pub-sealed-secrets.pem"
 SECRETS_DIR = K8S_DIR / "charts" / "haac-stack" / "templates" / "secrets"
 VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "values.yaml.template"
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
+ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "argocd-apps.yaml",
     K8S_DIR / "bootstrap" / "root" / "applications" / "platform-root.yaml",
     K8S_DIR / "bootstrap" / "root" / "applications" / "workloads-root.yaml",
     K8S_DIR / "workloads" / "applications" / "haac-stack.yaml",
+    K8S_DIR / "platform" / "argocd" / "argocd-app.yaml",
     K8S_DIR / "platform" / "argocd" / "argocd-cm.yaml",
     K8S_DIR / "platform" / "applications" / "falco-app.yaml",
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
@@ -1430,6 +1432,55 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "-f", "-"], input_text=root_app)
+        seed_argocd_bootstrap_patch(kubectl, session_kubeconfig)
+
+
+def seed_argocd_bootstrap_patch(kubectl: str, kubeconfig: Path, timeout_seconds: int = 120) -> None:
+    if not ARGOCD_REPOSERVER_PATCH.exists():
+        return
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        exists = run(
+            [kubectl, "--kubeconfig", str(kubeconfig), "get", "deployment", "argocd-repo-server", "-n", "argocd"],
+            check=False,
+        )
+        if exists.returncode == 0:
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(kubeconfig),
+                    "patch",
+                    "deployment",
+                    "argocd-repo-server",
+                    "-n",
+                    "argocd",
+                    "--type=json",
+                    f"--patch-file={ARGOCD_REPOSERVER_PATCH}",
+                ]
+            )
+            rollout = run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(kubeconfig),
+                    "rollout",
+                    "status",
+                    "deployment/argocd-repo-server",
+                    "-n",
+                    "argocd",
+                    "--timeout=180s",
+                ],
+                check=False,
+                capture_output=True,
+            )
+            require_success(rollout, "ArgoCD repo-server bootstrap patch did not become ready")
+            print("[ok] Seeded ArgoCD repo-server bootstrap patch")
+            return
+        time.sleep(5)
+
+    print("[warn] ArgoCD repo-server deployment not present yet; continuing without bootstrap patch seed")
 
 
 def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str, helm: str) -> None:

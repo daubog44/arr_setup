@@ -6,4 +6,3 @@ resources:
   - argocd-rbac-cm.yaml
   - cmd-params.yaml
   - notifications-cm.yaml
-  - reposerver-patch.yaml

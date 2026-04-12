@@ -13,8 +13,8 @@ metadata:
 spec:
   project: platform
   source:
-    repoURL: https://github.com/daubog44/arr_setup.git
-    targetRevision: main
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REPO_REVISION}
     path: k8s/platform/argocd/install-overlay
   destination:
     server: https://kubernetes.default.svc

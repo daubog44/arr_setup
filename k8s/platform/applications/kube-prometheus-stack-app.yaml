@@ -4,6 +4,7 @@ metadata:
   name: kube-prometheus-stack
   namespace: argocd
   annotations:
+    argocd.argoproj.io/sync-wave: "1"
     renovate/helm-chart: "kube-prometheus-stack"
 spec:
   project: platform

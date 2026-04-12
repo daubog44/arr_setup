@@ -975,15 +975,63 @@
       register: sealed_secrets_result
       changed_when: "'created' in sealed_secrets_result.stdout or 'configured' in sealed_secrets_result.stdout"
 
+    - name: Pin Sealed Secrets bootstrap controller to control-plane nodes
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat <<'EOF' | k3s kubectl patch deployment sealed-secrets-controller -n kube-system --type merge --patch-file /dev/stdin
+        spec:
+          template:
+            metadata:
+              annotations:
+                haac.io/bootstrap-placement: control-plane
+            spec:
+              nodeSelector:
+                node-role.kubernetes.io/control-plane: "true"
+              tolerations:
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+                  effect: NoSchedule
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+                  effect: NoExecute
+        EOF
+      args:
+        executable: /bin/bash
+      register: sealed_secrets_patch_result
+      changed_when: "'patched' in sealed_secrets_patch_result.stdout"
+
     - name: Wait for Sealed Secrets controller to be ready
       block:
         - name: Poll Sealed Secrets controller rollout status
           ansible.builtin.command: >
-            k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=120s
+            k3s kubectl rollout status deploy/sealed-secrets-controller -n kube-system --timeout=300s
           register: ss_ready
           until: ss_ready.rc == 0
-          retries: 6
+          retries: 3
           delay: 10
+          changed_when: false
+
+        - name: Wait for a ready Sealed Secrets controller pod
+          ansible.builtin.command: >
+            k3s kubectl wait --for=condition=Ready pod -n kube-system
+            -l name=sealed-secrets-controller --timeout=180s
+          register: ss_pod_ready
+          until: ss_pod_ready.rc == 0
+          retries: 2
+          delay: 10
+          changed_when: false
+
+        - name: Verify Sealed Secrets controller pod is on a control-plane node
+          ansible.builtin.shell: |
+            set -euo pipefail
+            pod_node="$(k3s kubectl get pod -n kube-system -l name=sealed-secrets-controller -o jsonpath='{.items[0].spec.nodeName}')"
+            [ -n "$pod_node" ]
+            control_plane_label="$(k3s kubectl get node "$pod_node" -o jsonpath='{.metadata.labels.node-role\.kubernetes\.io/control-plane}')"
+            [ -n "$control_plane_label" ]
+            printf 'sealed-secrets-controller node=%s control-plane=%s\n' "$pod_node" "$control_plane_label"
+          args:
+            executable: /bin/bash
+          register: sealed_secrets_control_plane_placement
           changed_when: false
       rescue:
         - name: Capture Sealed Secrets deployment status
@@ -1060,6 +1108,16 @@
           changed_when: false
           failed_when: false
 
+        - name: Capture Sealed Secrets pod placement
+          ansible.builtin.shell: |
+            set -euo pipefail
+            k3s kubectl get pods -n kube-system -l name=sealed-secrets-controller -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready --no-headers || true
+          args:
+            executable: /bin/bash
+          register: sealed_secrets_pod_placement
+          changed_when: false
+          failed_when: false
+
         - name: Capture kube-system events during Sealed Secrets rollout failure
           ansible.builtin.command: k3s kubectl get events -n kube-system --sort-by=.lastTimestamp
           register: sealed_secrets_events
@@ -1081,6 +1139,9 @@
 
               kubectl logs output:
               {{ (sealed_secrets_pod_logs.stdout | default('') | trim) or 'no Sealed Secrets pod log output' }}
+
+              kubectl get pods -n kube-system -l name=sealed-secrets-controller -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,READY:.status.containerStatuses[0].ready:
+              {{ (sealed_secrets_pod_placement.stdout | default('') | trim) or 'no Sealed Secrets placement output' }}
 
               kubectl get events -n kube-system --sort-by=.lastTimestamp:
               {{ (sealed_secrets_events.stdout | default('') | trim) or 'no event output' }}

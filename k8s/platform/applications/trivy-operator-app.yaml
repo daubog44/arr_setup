@@ -4,6 +4,7 @@ metadata:
   name: trivy-operator
   namespace: argocd
   annotations:
+    argocd.argoproj.io/sync-wave: "2"
     renovate/helm-chart: "trivy-operator"
 spec:
   project: platform
@@ -36,4 +37,5 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
       - ServerSideApply=true

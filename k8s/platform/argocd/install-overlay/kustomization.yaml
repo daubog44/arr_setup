@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/argoproj/argo-cd/manifests/cluster-install?ref=v3.3.2
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: argocd-repo-server
+    path: reposerver-patch.yaml
