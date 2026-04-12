@@ -38,17 +38,16 @@ Validation should prove the fix in the actual bootstrap path:
 
 ### 4. Make bootstrap Jobs rerunnable
 
-The next live blocker after the GPU and Gateway fixes is Argo repeatedly trying to replace existing `Job` resources:
+The next live blocker after the GPU and Gateway fixes is Argo repeatedly trying to reconcile existing `Job` resources:
 
 - `headlamp-token-bootstrap`
 - `downloaders-bootstrap`
 
 These Jobs currently use `argocd.argoproj.io/sync-options: Replace=true`, which is the wrong primitive for Kubernetes Jobs because selector/template fields are immutable once the Job exists.
 
-The safer GitOps pattern here is:
+The safer GitOps pattern here is the one ArgoCD documents for rerunnable Jobs:
 
-- mark the Jobs as `PostSync` hooks
-- add `argocd.argoproj.io/hook-delete-policy: BeforeHookCreation`
-- remove `Replace=true`
+- keep them as normal resources rather than hooks
+- set `argocd.argoproj.io/sync-options: Force=true,Replace=true`
 
-That keeps the Jobs rerunnable on later syncs while preventing immutable-field failures from blocking the whole application.
+That makes ArgoCD delete and recreate the Job on each rerun instead of trying to update immutable selector/template fields or waiting on a hook object that disappears from steady state.

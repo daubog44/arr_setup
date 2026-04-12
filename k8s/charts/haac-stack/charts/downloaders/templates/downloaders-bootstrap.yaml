@@ -44,8 +44,7 @@ metadata:
   namespace: media
   annotations:
     argocd.argoproj.io/sync-wave: "4"
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   ttlSecondsAfterFinished: 300
   template:
