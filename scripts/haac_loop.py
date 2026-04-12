@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +54,14 @@ REQUIRED_FILES = [
 ]
 
 REQUIRED_BINARIES = ["python", "git", "node", "npx", "codex", "codex-potter", "openspec"]
+
+
+@dataclass(frozen=True)
+class SessionState:
+    requested_mode: str
+    effective_mode: str
+    all_changes: list[dict[str, object]]
+    selected_changes: list[dict[str, object]]
 
 
 def run_command(
@@ -128,6 +137,23 @@ def select_changes_for_slug(slug: str, changes: list[dict[str, object]]) -> list
         if slug_tokens and any(token in name for token in slug_tokens):
             selected.append(change)
     return selected
+
+
+def effective_mode(mode: str, changes: list[dict[str, object]]) -> str:
+    if mode == "apply" and not changes:
+        return "discover"
+    return mode
+
+
+def resolve_session_state(slug: str, mode: str) -> SessionState:
+    all_changes = active_changes()
+    selected_changes = select_changes_for_slug(slug, all_changes)
+    return SessionState(
+        requested_mode=mode,
+        effective_mode=effective_mode(mode, selected_changes),
+        all_changes=all_changes,
+        selected_changes=selected_changes,
+    )
 
 
 def validate_active_changes(changes: list[dict[str, object]]) -> None:
@@ -305,28 +331,53 @@ def seal_stale_tracker() -> None:
         print(f"Sealed stale CodexPotter tracker: {relpath(tracker)}", flush=True)
 
 
+def active_change_summary(changes: list[dict[str, object]]) -> str:
+    return ", ".join(str(change["name"]) for change in changes) if changes else "none"
+
+
+def update_header_line(lines: list[str], prefix: str, value: str, insert_at: int) -> int:
+    replacement = f"{prefix} {value}"
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = replacement
+            return insert_at
+    lines.insert(insert_at, replacement)
+    return insert_at + 1
+
+
+def sync_worklog_header(content: str, mode: str, changes: list[dict[str, object]]) -> str:
+    lines = content.splitlines()
+    insert_at = 0
+    if lines:
+        insert_at = 1
+        if len(lines) > 1 and lines[1] == "":
+            insert_at = 2
+
+    insert_at = update_header_line(lines, "- mode:", mode, insert_at)
+    insert_at = update_header_line(lines, "- active_changes:", active_change_summary(changes), insert_at)
+    return "\n".join(lines) + "\n"
+
+
 def ensure_worklog(slug: str, mode: str, changes: list[dict[str, object]]) -> Path:
     now = datetime.now()
     day_dir = WORKLOGS_DIR / now.strftime("%Y-%m-%d")
     day_dir.mkdir(parents=True, exist_ok=True)
     worklog = day_dir / f"{now.strftime('%H%M')}-{slugify(slug)}.md"
     if worklog.exists():
+        existing = worklog.read_text(encoding="utf-8")
+        updated = sync_worklog_header(existing, mode, changes)
+        if updated != existing:
+            worklog.write_text(updated, encoding="utf-8")
         return worklog
 
-    active_names = ", ".join(str(change["name"]) for change in changes) if changes else "none"
-    worklog.write_text(
-        "\n".join(
-            [
-                f"# {now.strftime('%Y-%m-%d %H:%M')} - {slugify(slug)}",
-                "",
-                f"- mode: {mode}",
-                f"- active_changes: {active_names}",
-                "- notes:",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    content = "\n".join(
+        [
+            f"# {now.strftime('%Y-%m-%d %H:%M')} - {slugify(slug)}",
+            "",
+            "- notes:",
+        ]
     )
+    worklog.write_text(sync_worklog_header(content, mode, changes), encoding="utf-8")
     return worklog
 
 
@@ -388,6 +439,12 @@ def render_prompt(mode: str, slug: str, worklog: Path, changes: list[dict[str, o
     )
 
     return base + "\n\n" + "\n".join(mode_block) + "\n"
+
+
+def prepare_session(slug: str, mode: str) -> tuple[SessionState, Path]:
+    state = resolve_session_state(slug, mode)
+    worklog = ensure_worklog(slug, state.effective_mode, state.selected_changes)
+    return state, worklog
 
 
 def codex_potter_command(rounds: int, use_global_home: bool) -> list[str]:
@@ -563,26 +620,17 @@ def codex_preflight(env: dict[str, str], use_global_home: bool) -> None:
     raise HaaCError("Codex preflight failed.\n" + output.strip())
 
 
-def effective_mode(mode: str, changes: list[dict[str, object]]) -> str:
-    if mode == "apply" and not changes:
-        return "discover"
-    return mode
-
-
 def run_loop(slug: str, rounds: int, mode: str, use_global_home: bool, with_preflight: bool, dry_run: bool) -> None:
     check_loop(use_global_home)
     seal_stale_tracker()
-    all_changes = active_changes()
-    changes = select_changes_for_slug(slug, all_changes)
-    if all_changes and not changes:
+    state, worklog = prepare_session(slug, mode)
+    if state.all_changes and not state.selected_changes:
         print(
             f"No active OpenSpec change matched slug '{slugify(slug)}'; "
             "this run will use discovery for that scope.",
             flush=True,
         )
-    worklog = ensure_worklog(slug, mode, changes)
-    session_mode = effective_mode(mode, changes)
-    prompt = render_prompt(session_mode, slug, worklog, changes)
+    prompt = render_prompt(state.effective_mode, slug, worklog, state.selected_changes)
     command = codex_potter_command(rounds, use_global_home)
 
     if dry_run:
@@ -597,7 +645,7 @@ def run_loop(slug: str, rounds: int, mode: str, use_global_home: bool, with_pref
     if with_preflight:
         codex_preflight(env, use_global_home)
 
-    print(f"Starting CodexPotter rollout with up to {rounds} rounds in {session_mode} mode.", flush=True)
+    print(f"Starting CodexPotter rollout with up to {rounds} rounds in {state.effective_mode} mode.", flush=True)
     run_potter_rollout(command, env, prompt, rounds, use_global_home)
 
 
@@ -606,13 +654,13 @@ def cmd_check(args: argparse.Namespace) -> None:
 
 
 def cmd_worklog(args: argparse.Namespace) -> None:
-    path = ensure_worklog(args.slug, args.mode, active_changes())
+    _, path = prepare_session(args.slug, args.mode)
     print(relpath(path))
 
 
 def cmd_prompt(args: argparse.Namespace) -> None:
-    worklog = ensure_worklog(args.slug, args.mode, active_changes())
-    print(render_prompt(args.mode, args.slug, worklog, active_changes()))
+    state, worklog = prepare_session(args.slug, args.mode)
+    print(render_prompt(state.effective_mode, args.slug, worklog, state.selected_changes))
 
 
 def cmd_run(args: argparse.Namespace) -> None:
