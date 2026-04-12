@@ -150,8 +150,6 @@ ingresses:
     port: 80
     namespace: mgmt
     auth_enabled: true
-    extra_middlewares: 
-      - headlamp-token-header
   ntfy:
     subdomain: ntfy
     service: ntfy

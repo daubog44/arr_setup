@@ -27,12 +27,12 @@ The stack Gateway MUST use listener ports that Traefik can accept with the bundl
 - **WHEN** the `haac-gateway` resource is reconciled
 - **THEN** Traefik MUST accept the Gateway instead of reporting `PortUnavailable` or invalid TLS configuration
 
-### Requirement: Bootstrap Jobs remain rerunnable across Argo resyncs
+### Requirement: The stack MUST avoid non-standard Headlamp bootstrap resources that block reconciliation
 
-Post-setup Jobs in the stack MUST use a rerunnable GitOps pattern that does not fail on immutable Kubernetes Job fields.
+Headlamp configuration in the stack MUST rely on the standard in-cluster deployment path instead of extra bootstrap resources that keep the workload app from reconciling.
 
-#### Scenario: Bootstrap Job changes do not fail on immutable selectors
+#### Scenario: Headlamp stack resources no longer depend on a bootstrap token-header workaround
 
-- **GIVEN** a bootstrap Job has already run once in the cluster
-- **WHEN** ArgoCD reconciles an updated chart revision
-- **THEN** the bootstrap Job MUST be recreated through a hook lifecycle instead of failing with immutable `spec.selector` or template label errors
+- **GIVEN** Headlamp already runs with `serviceAccountName: headlamp-admin` in-cluster
+- **WHEN** `haac-stack` reconciles
+- **THEN** the chart MUST NOT require a separate `headlamp-token-bootstrap` Job or `headlamp-token-header` route middleware to treat the stack as converged

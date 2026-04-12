@@ -36,18 +36,19 @@ Validation should prove the fix in the actual bootstrap path:
 - verify `haac-gateway` becomes accepted
 - rerun `wait-for-stack` and record the next verified phase
 
-### 4. Make bootstrap Jobs rerunnable
+### 4. Simplify the remaining bootstrap surface
 
-The next live blocker after the GPU and Gateway fixes is Argo repeatedly trying to reconcile existing `Job` resources:
+The next live blocker after the GPU and Gateway fixes is the custom Headlamp bootstrap path. The repo currently adds:
 
-- `headlamp-token-bootstrap`
-- `downloaders-bootstrap`
+- an explicit `headlamp-admin-token` secret
+- a `headlamp-token-bootstrap` Job
+- a `headlamp-token-header` Traefik middleware injected through the route values
 
-These Jobs currently use `argocd.argoproj.io/sync-options: Replace=true`, which is the wrong primitive for Kubernetes Jobs because selector/template fields are immutable once the Job exists.
+That workaround is not part of the normal Headlamp in-cluster deployment model, and in live evidence it is the resource Argo keeps waiting on even after the Job object disappears from the cluster. The safer path is to remove that non-standard bootstrap branch entirely and keep Headlamp on the standard in-cluster service account path it already has through `serviceAccountName: headlamp-admin`.
 
-The safer GitOps pattern here is the one ArgoCD documents for rerunnable Jobs:
+The remaining downloader bootstrap can stay, but it should use the ArgoCD rerunnable Job pattern:
 
 - keep them as normal resources rather than hooks
 - set `argocd.argoproj.io/sync-options: Force=true,Replace=true`
 
-That makes ArgoCD delete and recreate the Job on each rerun instead of trying to update immutable selector/template fields or waiting on a hook object that disappears from steady state.
+That keeps the genuinely needed bootstrap job rerunnable without letting an unnecessary Headlamp workaround block the whole application.
