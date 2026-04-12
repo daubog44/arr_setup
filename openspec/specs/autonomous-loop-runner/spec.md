@@ -4,34 +4,22 @@
 Define the stable contract for the repo-local autonomous loop runner, its readiness checks, and browser-backed endpoint verification behavior.
 ## Requirements
 ### Requirement: Repo provides an autonomous loop runner
-The repository MUST provide a supported autonomous loop runner that uses the official OpenSpec CLI state, creates or reuses a session worklog whose header reflects the effective session mode and selected active changes, and launches CodexPotter from a deterministic bootstrap.
+The repository MUST provide a supported autonomous loop runner that uses the official OpenSpec CLI state, surfaces OpenSpec change-surface hygiene debt when completed or scaffold-only changes remain, creates or reuses a session worklog whose header reflects the effective session mode and selected active changes, and launches CodexPotter from a deterministic bootstrap.
 
-#### Scenario: Active change apply mode
-- **WHEN** the operator runs the supported loop apply entrypoint and one or more active OpenSpec changes match the session scope
-- **THEN** the runner MUST validate local readiness, identify the active OpenSpec changes, create or reuse a session worklog, and launch CodexPotter with an apply-mode prompt that targets the first active change with pending tasks
+#### Scenario: No active change but OpenSpec closeout debt exists
+- **WHEN** the operator runs a supported loop entrypoint and no active OpenSpec change matches the current scope, but one or more completed unarchived changes still exist under `openspec/changes/`
+- **THEN** the runner MUST surface that completed-change closeout debt in the session context instead of presenting the repo as cleanly idle
 
-#### Scenario: Apply request falls back to discovery
-- **WHEN** the operator requests apply mode but no active OpenSpec change matches the current session scope
-- **THEN** the runner MUST resolve the session to discovery mode before creating or updating the session worklog header and before rendering the prompt used for that session
-
-#### Scenario: Discovery mode
-- **WHEN** the operator runs the supported loop discovery entrypoint
-- **THEN** the runner MUST create or reuse a session worklog and launch CodexPotter with a prompt that performs narrow evidence-based discovery instead of normal apply mode
-
-#### Scenario: Standalone session artifact helpers
-- **WHEN** the operator uses the standalone loop `prompt` or `worklog` helpers
-- **THEN** those helpers MUST use the same effective-mode resolution and selected active-change set as the main `run` command
+#### Scenario: No active change but scaffold-only debt exists
+- **WHEN** the operator runs a supported loop entrypoint and the repo contains change directories whose on-disk contents are only `.openspec.yaml`
+- **THEN** the runner MUST surface that scaffold debt in the session context so the loop can classify it as OpenSpec hygiene work
 
 ### Requirement: Repo provides loop readiness checks
 The repository MUST expose a loop readiness check that validates the runner prerequisites and current OpenSpec change state before a long-running autonomous session starts.
 
-#### Scenario: Readiness check passes
-- **WHEN** the operator runs the readiness entrypoint and all required tools, docs, and active changes are valid
-- **THEN** the runner MUST report success without launching CodexPotter
-
-#### Scenario: Readiness check fails
-- **WHEN** a required tool, document, or active OpenSpec validation fails
-- **THEN** the runner MUST stop before launch and report the missing prerequisite or validation failure
+#### Scenario: Readiness finds change-surface hygiene debt
+- **WHEN** the operator runs the readiness entrypoint and the OpenSpec tree has completed-change closeout debt or scaffold-only change directories
+- **THEN** the runner MUST report that debt explicitly even if no active change is currently available
 
 ### Requirement: Loop performs browser-level public URL verification
 When a loop round reaches public endpoint verification, the loop MUST use Playwright MCP for browser-level navigation checks in addition to HTTP-level verification, unless the MCP is unavailable in the active runtime.
