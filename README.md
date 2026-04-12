@@ -94,10 +94,13 @@ If you do have `task` installed, `task up` still works.
 3. Run `python scripts/haac.py install-tools` or the local wrapper:
    - Windows: `.\haac.ps1 install-tools`
    - Linux/macOS: `sh ./haac.sh install-tools`
-4. Run `python scripts/haac.py doctor` or:
+4. Run `python scripts/haac.py check-env` or:
+   - Windows: `.\haac.ps1 check-env`
+   - Linux/macOS: `sh ./haac.sh check-env`
+5. Run `python scripts/haac.py doctor` or:
    - Windows: `.\haac.ps1 doctor`
    - Linux/macOS: `sh ./haac.sh doctor`
-5. Run the full bootstrap:
+6. Run the full bootstrap:
    - Windows: `.\haac.ps1 up`
    - Linux/macOS: `sh ./haac.sh up`
    - or `task up` if Task is already installed globally
@@ -107,6 +110,7 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 ## Main Commands
 
 - `install-tools`: bootstrap `.tools/<os>-<arch>/bin` and, on Windows, the WSL control-node packages plus the Linux portable toolchain used from WSL
+- `check-env`: verify required `.env` inputs plus workstation-to-Proxmox API and SSH reachability before bootstrap
 - `doctor`: verify local prerequisites
 - `up`: full provisioning and GitOps bootstrap
 - `plan`: OpenTofu plan only

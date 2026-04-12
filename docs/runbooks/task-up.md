@@ -31,8 +31,8 @@ Proxmox access uses two related inputs:
 
 1. `.env` is present and complete.
 2. `python scripts/haac.py install-tools` has been run at least once.
-3. `python scripts/haac.py doctor` passes and confirms the local workstation toolchain.
-4. `python scripts/haac.py check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
+3. `python scripts/haac.py check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
+4. `python scripts/haac.py doctor` passes and confirms the local workstation toolchain.
 5. `python scripts/haac.py sync-repo` can fetch and merge the writable `origin/<GITOPS_REPO_REVISION>` branch before provisioning starts.
 
 ## Phase Contract
