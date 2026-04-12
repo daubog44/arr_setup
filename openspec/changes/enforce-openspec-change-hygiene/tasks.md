@@ -9,5 +9,5 @@
 
 ## 3. Cleanup And Validation
 
-- [ ] 3.1 Remove scaffold-only change directories and archive the current completed changes so accepted deltas sync into `openspec/specs/`
+- [x] 3.1 Remove scaffold-only change directories and archive the current completed changes so accepted deltas sync into `openspec/specs/`
 - [ ] 3.2 Validate with `openspec validate enforce-openspec-change-hygiene`, `openspec validate --specs`, and focused loop CLI checks, then update the worklog and KB
