@@ -22,12 +22,17 @@ All three entrypoints run the same Task pipeline through `scripts/haac.py`.
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
 
+Proxmox access uses two related inputs:
+
+- `MASTER_TARGET_NODE`: the Proxmox node name used by OpenTofu resources and generated inventory
+- `PROXMOX_ACCESS_HOST`: optional workstation-reachable Proxmox API/SSH host; if unset, bootstrap falls back to `MASTER_TARGET_NODE`
+
 ## Preflight Contract
 
 1. `.env` is present and complete.
 2. `python scripts/haac.py install-tools` has been run at least once.
 3. `python scripts/haac.py doctor` passes and confirms the local workstation toolchain.
-4. `python scripts/haac.py check-env` confirms the Proxmox API and SSH target derived from `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
+4. `python scripts/haac.py check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
 5. `python scripts/haac.py sync-repo` can fetch and merge the writable `origin/<GITOPS_REPO_REVISION>` branch before provisioning starts.
 
 ## Phase Contract

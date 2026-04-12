@@ -114,6 +114,15 @@ def merged_env() -> dict[str, str]:
     return merged
 
 
+def proxmox_node_name(env: dict[str, str]) -> str:
+    return env.get("MASTER_TARGET_NODE", "pve").strip() or "pve"
+
+
+def proxmox_access_host(env: dict[str, str]) -> str:
+    access_host = env.get("PROXMOX_ACCESS_HOST", "").strip()
+    return access_host or proxmox_node_name(env)
+
+
 def local_kubeconfig_path() -> Path:
     override = os.environ.get("HAAC_KUBECONFIG_PATH")
     if override:
@@ -426,14 +435,21 @@ def git_has_remote(remote_name: str = "origin") -> bool:
     return completed.returncode == 0
 
 
-def ensure_tcp_endpoint(host: str, port: int, *, label: str, timeout_seconds: int = 5) -> None:
+def ensure_tcp_endpoint(
+    host: str,
+    port: int,
+    *,
+    label: str,
+    timeout_seconds: int = 5,
+    hint: str | None = None,
+) -> None:
     try:
         with socket.create_connection((host, port), timeout=timeout_seconds):
             return
     except socket.gaierror as exc:
+        guidance = hint or "Update the configured host or local DNS/hosts before running `task up`."
         raise HaaCError(
-            f"{label} target '{host}' is not resolvable from this workstation. "
-            f"Update MASTER_TARGET_NODE or local DNS/hosts before running `task up`.\n{exc}"
+            f"{label} target '{host}' is not resolvable from this workstation. {guidance}\n{exc}"
         ) from exc
     except OSError as exc:
         raise HaaCError(
@@ -2211,7 +2227,7 @@ def tofu_output_value(tofu_dir: Path, name: str, default: str = "") -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
-def shutdown_cluster(master_target_node: str, tofu_dir: Path) -> None:
+def shutdown_cluster(proxmox_host: str, tofu_dir: Path) -> None:
     outputs = tofu_output_json(tofu_dir)
     master_vmid = outputs.get("master_vmid", {}).get("value")
     worker_items = outputs.get("workers", {}).get("value", {})
@@ -2227,7 +2243,7 @@ def shutdown_cluster(master_target_node: str, tofu_dir: Path) -> None:
 
     for vmid, label in vmids:
         status = run(
-            proxmox_ssh_command(master_target_node, f"pct status {vmid}"),
+            proxmox_ssh_command(proxmox_host, f"pct status {vmid}"),
             check=False,
             capture_output=True,
         )
@@ -2235,23 +2251,23 @@ def shutdown_cluster(master_target_node: str, tofu_dir: Path) -> None:
             continue
         run(
             proxmox_ssh_command(
-                master_target_node,
+                proxmox_host,
                 f"pct exec {vmid} -- bash -lc 'systemctl stop k3s 2>/dev/null || true; systemctl stop k3s-agent 2>/dev/null || true'",
             ),
             check=False,
         )
         graceful = run(
-            proxmox_ssh_command(master_target_node, f"pct shutdown {vmid} --timeout 180"),
+            proxmox_ssh_command(proxmox_host, f"pct shutdown {vmid} --timeout 180"),
             check=False,
         )
         if graceful.returncode != 0:
-            run(proxmox_ssh_command(master_target_node, f"pct stop {vmid}"), check=False)
+            run(proxmox_ssh_command(proxmox_host, f"pct stop {vmid}"), check=False)
         print(f"Shutdown requested for {label} ({vmid})")
 
 
-def restore_k3s(master_target_node: str, tofu_dir: Path, backup_file: str, nas_mount_path: str) -> None:
+def restore_k3s(proxmox_host: str, tofu_dir: Path, backup_file: str, nas_mount_path: str) -> None:
     master_vmid = run_stdout([resolved_binary("tofu"), f"-chdir={tofu_dir}", "output", "-raw", "master_vmid"])
-    run(proxmox_ssh_command(master_target_node, f"pct exec {master_vmid} -- systemctl stop k3s"))
+    run(proxmox_ssh_command(proxmox_host, f"pct exec {master_vmid} -- systemctl stop k3s"))
 
     restore_script = f"""
 set -e
@@ -2260,8 +2276,8 @@ pct exec "$LXC_ID" -- mv /var/lib/rancher/k3s/server/db/state.db /var/lib/ranche
 cp {shlex.quote(nas_mount_path)}/{shlex.quote(backup_file)} /var/lib/lxc/$LXC_ID/rootfs/var/lib/rancher/k3s/server/db/state.db
 pct exec "$LXC_ID" -- chown root:root /var/lib/rancher/k3s/server/db/state.db
 """
-    run(proxmox_ssh_command(master_target_node, f"bash -lc {shlex.quote(restore_script)}"))
-    run(proxmox_ssh_command(master_target_node, f"pct exec {master_vmid} -- systemctl start k3s"))
+    run(proxmox_ssh_command(proxmox_host, f"bash -lc {shlex.quote(restore_script)}"))
+    run(proxmox_ssh_command(proxmox_host, f"pct exec {master_vmid} -- systemctl start k3s"))
 
 
 def remove_file(path: Path) -> None:
@@ -2492,13 +2508,21 @@ def cmd_check_env(_: argparse.Namespace) -> None:
         ],
         env,
     )
-    proxmox_host = env.get("MASTER_TARGET_NODE", "pve").strip() or "pve"
-    ensure_tcp_endpoint(proxmox_host, 8006, label="Proxmox API")
-    ensure_tcp_endpoint(proxmox_host, 22, label="Proxmox SSH")
+    access_host = proxmox_access_host(env)
+    access_hint = (
+        "Set PROXMOX_ACCESS_HOST to the workstation-reachable Proxmox IP/FQDN, "
+        "or ensure MASTER_TARGET_NODE resolves locally before running `task up`."
+    )
+    ensure_tcp_endpoint(access_host, 8006, label="Proxmox API", hint=access_hint)
+    ensure_tcp_endpoint(access_host, 22, label="Proxmox SSH", hint=access_hint)
 
 
 def cmd_kubeconfig_path(_: argparse.Namespace) -> None:
     print(local_kubeconfig_path())
+
+
+def cmd_proxmox_access_host(_: argparse.Namespace) -> None:
+    print(proxmox_access_host(merged_env()))
 
 
 def cmd_tool_path(args: argparse.Namespace) -> None:
@@ -2527,7 +2551,7 @@ def cmd_install_wsl_tools(_: argparse.Namespace) -> None:
 def resolve_default_gateway(env: dict[str, str]) -> str:
     if env.get("LXC_GATEWAY"):
         return env["LXC_GATEWAY"]
-    host = env.get("MASTER_TARGET_NODE", "pve")
+    host = proxmox_access_host(env)
     completed = run(
         proxmox_ssh_command(host, "ip route | awk '/default/ {print $3; exit}'", connect_timeout=5),
         check=False,
@@ -2569,6 +2593,7 @@ def tofu_tf_vars(env: dict[str, str]) -> dict[str, str]:
         "storage_gid": "STORAGE_GID",
     }
     mapped = {f"TF_VAR_{tf_var}": env.get(env_key, "") for tf_var, env_key in direct_env_map.items()}
+    mapped["TF_VAR_proxmox_access_host"] = proxmox_access_host(env)
     mapped["TF_VAR_lxc_gateway"] = resolve_default_gateway(env)
     mapped["TF_VAR_python_executable"] = env.get("PYTHON_CMD", "python")
     return mapped
@@ -2677,11 +2702,11 @@ def cmd_configure_argocd_local_auth(args: argparse.Namespace) -> None:
 
 
 def cmd_restore_k3s(args: argparse.Namespace) -> None:
-    restore_k3s(args.master_target_node, Path(args.tofu_dir), args.backup_file, args.nas_mount_path)
+    restore_k3s(args.proxmox_host, Path(args.tofu_dir), args.backup_file, args.nas_mount_path)
 
 
 def cmd_shutdown_cluster(args: argparse.Namespace) -> None:
-    shutdown_cluster(args.master_target_node, Path(args.tofu_dir))
+    shutdown_cluster(args.proxmox_host, Path(args.tofu_dir))
 
 
 def cmd_remove_file(args: argparse.Namespace) -> None:
@@ -2738,6 +2763,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     command = subparsers.add_parser("kubeconfig-path")
     command.set_defaults(func=cmd_kubeconfig_path)
+
+    command = subparsers.add_parser("proxmox-access-host")
+    command.set_defaults(func=cmd_proxmox_access_host)
 
     command = subparsers.add_parser("tool-path")
     command.add_argument(
@@ -2846,14 +2874,16 @@ def build_parser() -> argparse.ArgumentParser:
     command.set_defaults(func=cmd_configure_argocd_local_auth)
 
     command = subparsers.add_parser("restore-k3s")
-    command.add_argument("--master-target-node", required=True)
+    command.add_argument("--proxmox-host", dest="proxmox_host", required=True)
+    command.add_argument("--master-target-node", dest="proxmox_host", help=argparse.SUPPRESS)
     command.add_argument("--tofu-dir", required=True)
     command.add_argument("--backup-file", required=True)
     command.add_argument("--nas-mount-path", required=True)
     command.set_defaults(func=cmd_restore_k3s)
 
     command = subparsers.add_parser("shutdown-cluster")
-    command.add_argument("--master-target-node", required=True)
+    command.add_argument("--proxmox-host", dest="proxmox_host", required=True)
+    command.add_argument("--master-target-node", dest="proxmox_host", help=argparse.SUPPRESS)
     command.add_argument("--tofu-dir", required=True)
     command.set_defaults(func=cmd_shutdown_cluster)
 

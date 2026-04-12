@@ -152,6 +152,8 @@ The required order is:
 
 `.env` is the input source of truth for both bootstrap prerequisites and public routing. The final public URL report is derived from the Helm ingress definitions in `k8s/charts/haac-stack/config-templates/values.yaml.template` and the generated `values.yaml`, not from a duplicated hardcoded list.
 
+For Proxmox connectivity, `.env` separates node identity from workstation access: `MASTER_TARGET_NODE` is the Proxmox node name used by resources and generated inventory, while `PROXMOX_ACCESS_HOST` is the API/SSH host used by preflight, OpenTofu provider access, and tunnel setup. If the node name already resolves from the operator workstation, the access host falls back to `MASTER_TARGET_NODE`.
+
 `.env` is also the single source of truth for Terraform inputs. The wrapper translates env values into `TF_VAR_*` centrally before calling OpenTofu, instead of duplicating that mapping in `Taskfile.yml`.
 
 If global Task is missing, use:

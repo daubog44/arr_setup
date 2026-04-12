@@ -138,7 +138,9 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
 
-Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and Proxmox API/SSH target reachability before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
+`MASTER_TARGET_NODE` remains the Proxmox node name used inside OpenTofu and generated inventory. `PROXMOX_ACCESS_HOST` is the workstation-reachable IP or hostname used for the Proxmox API, SSH, and tunnel operations. If the node name itself already resolves locally, `PROXMOX_ACCESS_HOST` may be left unset and the bootstrap falls back to `MASTER_TARGET_NODE`.
+
+Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and validation of the effective Proxmox API/SSH access host before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
 
 ## Ralph Loop
 

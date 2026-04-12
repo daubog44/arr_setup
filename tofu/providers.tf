@@ -11,8 +11,12 @@ terraform {
   }
 }
 
+locals {
+  proxmox_access_host = var.proxmox_access_host != "" ? var.proxmox_access_host : var.master_target_node
+}
+
 provider "proxmox" {
-  endpoint = "https://${var.master_target_node}:8006/"
+  endpoint = "https://${local.proxmox_access_host}:8006/"
   username = "root@pam"
   password = var.lxc_password
 
@@ -24,5 +28,9 @@ provider "proxmox" {
     # Connection to the Proxmox host via SSH for file uploads/passthrough operations
     username = "root"
     password = var.lxc_password
+    node {
+      name    = var.master_target_node
+      address = local.proxmox_access_host
+    }
   }
 }

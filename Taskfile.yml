@@ -22,7 +22,7 @@ vars:
   MASTER_IP:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_ip --default 127.0.0.1'
   PROXMOX_HOST:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_target_node --default pve'
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" proxmox-access-host'
 
 tasks:
   default:
@@ -30,7 +30,7 @@ tasks:
       - task: up
 
   check-env:
-    desc: Validate the required `.env` inputs for infrastructure, GitOps publication, and Cloudflare endpoint publication.
+    desc: Validate the required `.env` inputs plus the effective workstation-to-Proxmox access path.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
 
@@ -198,12 +198,12 @@ tasks:
       BACKUP_FILE: '{{default "k3s-state-latest.db" .BACKUP_FILE}}'
       NAS_MOUNT_PATH: "/mnt/pve/HaaC-Storage/media/k3s"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" restore-k3s --master-target-node "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}" --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" restore-k3s --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}" --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
 
   shutdown-cluster:
     desc: Gracefully stop the K3s LXC containers on Proxmox.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" shutdown-cluster --master-target-node "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}"'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" shutdown-cluster --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}"'
 
   down:
     desc: Destroy the infrastructure after a graceful cluster shutdown.

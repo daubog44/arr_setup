@@ -4,8 +4,11 @@ variable "master_target_node" {
   default     = "pve"
 }
 
-
-# Removed proxmox_host variable as it's now derived dynamically from target_node
+variable "proxmox_access_host" {
+  description = "Workstation-reachable Proxmox API/SSH host. Leave empty to fall back to master_target_node."
+  type        = string
+  default     = ""
+}
 
 variable "lxc_password" {
   description = "Root password for the LXC containers"
