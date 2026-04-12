@@ -25,6 +25,11 @@ The system SHALL avoid duplicate operator-visible side effects when the desired 
 - **WHEN** the desired tunnel ingress and DNS records already exist and match the declared configuration
 - **THEN** the Cloudflare phase MUST report convergence instead of creating duplicate records or failing on pre-existing state
 
+#### Scenario: LXC hardware mapping already aligned
+- **WHEN** the desired HAAC-managed `lxc.idmap`, passthrough, mount, and compatibility lines already match the effective Proxmox LXC config
+- **THEN** rerunning `configure-os` or `task up` MUST leave those lines unchanged
+- **AND** the workflow MUST NOT restart the affected LXC containers solely because the hardware mapping section was re-rendered
+
 ### Requirement: Task Up Reports Phase-Specific Recovery
 The system SHALL report failures in terms of explicit bootstrap phases and preserve enough information for a safe rerun decision.
 
@@ -35,4 +40,3 @@ The system SHALL report failures in terms of explicit bootstrap phases and prese
 #### Scenario: Retryable gate timeout
 - **WHEN** a retrying readiness or verification gate times out
 - **THEN** the failure output MUST name the exact gate, the last successful checkpoint, and whether earlier convergent phases need no manual reset
-

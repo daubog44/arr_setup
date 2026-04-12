@@ -380,9 +380,11 @@
       ansible.builtin.shell: |
         python3 -c "
         import os, glob
+        def unique_sorted(paths):
+            return sorted({path for path in paths if path})
         config = []
         # Map both Intel (dri) and NVIDIA devices
-        for dev in glob.glob('/dev/dri/*') + glob.glob('/dev/nvidia*'):
+        for dev in unique_sorted(glob.glob('/dev/dri/*') + glob.glob('/dev/nvidia*')):
             if os.path.exists(dev) and not os.path.isdir(dev):
                 stat = os.stat(dev)
                 major = os.major(stat.st_rdev)
@@ -393,16 +395,20 @@
         # Search both base dir and nvidia/current/ where versioned .so files live
         lib_dirs = ['/usr/lib/x86_64-linux-gnu', '/usr/lib/x86_64-linux-gnu/nvidia/current']
         nvidia_libs = []
+        lib_patterns = (
+            'libnvidia*',
+            'libcuda*',
+            'libnvcuvid*',
+            'libnvoptix*',
+            'libEGL_nvidia*',
+            'libGLX_nvidia*',
+            'libGLESv*_nvidia*',
+            'libvdpau_nvidia*',
+        )
         for d in lib_dirs:
-            nvidia_libs += glob.glob(f'{d}/libnvidia*') + \
-                           glob.glob(f'{d}/libcuda*') + \
-                           glob.glob(f'{d}/libnvcuvid*') + \
-                           glob.glob(f'{d}/libnvoptix*') + \
-                           glob.glob(f'{d}/libEGL_nvidia*') + \
-                           glob.glob(f'{d}/libGLX_nvidia*') + \
-                           glob.glob(f'{d}/libGLESv*_nvidia*') + \
-                           glob.glob(f'{d}/libvdpau_nvidia*')
-        for lib in nvidia_libs:
+            for pattern in lib_patterns:
+                nvidia_libs.extend(glob.glob(f'{d}/{pattern}'))
+        for lib in unique_sorted(nvidia_libs):
             if os.path.isfile(lib) or os.path.islink(lib):
                 config.append(f'lxc.mount.entry: {lib} {lib[1:]} none bind,optional,create=file')
         # Mount nvidia-smi binary
@@ -414,39 +420,46 @@
       changed_when: false
       delegate_to: "{{ proxmox_host }}"
 
-    - name: Clean up old LXC custom mappings
-      ansible.builtin.shell: "sed -i '/^lxc\\.idmap:/d; /^lxc\\.cgroup2\\.devices\\.allow:/d; /^lxc\\.mount\\.entry: \\/dev\\//d; /^lxc\\.mount\\.entry: \\/usr\\/lib\\//d; /^lxc\\.mount\\.entry: \\/usr\\/bin\\/nvidia/d; /^lxc\\.apparmor\\.profile:/d; /^lxc\\.cap\\.drop:/d; /^lxc\\.mount\\.auto:/d; /^lxc\\.mount\\.entry: \\/sys\\/kernel\\/debug/d; /^lxc\\.mount\\.entry: \\/sys\\/kernel\\/btf/d' /etc/pve/lxc/{{ lxc_vmid }}.conf"
-      changed_when: false
-      delegate_to: "{{ proxmox_host }}"
+    - name: Compose desired HAAC-managed LXC hardware block lines
+      ansible.builtin.set_fact:
+        lxc_managed_config_lines: >-
+          {{
+            (
+              lxc_idmap_config.stdout_lines
+              + (gpu_passthrough_config.stdout_lines if (lxc_enable_gpu_passthrough | bool) else [])
+              + ([
+                  'lxc.cgroup2.devices.allow: a',
+                  'lxc.cap.drop: ',
+                  'lxc.apparmor.profile: unconfined',
+                  'lxc.mount.auto: proc:rw sys:rw'
+                ] if (lxc_k3s_compat_mode | bool) else [])
+              + ([
+                  'lxc.mount.entry: /sys/kernel/debug sys/kernel/debug none bind,optional 0 0',
+                  'lxc.mount.entry: /sys/kernel/btf sys/kernel/btf none bind,optional 0 0'
+                ] if (lxc_enable_ebpf_mounts | bool) else [])
+              + ([
+                  'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'
+                ] if (lxc_enable_tun | bool) else [])
+              + [
+                  'lxc.mount.entry: ' + (host_nas_path) + ' data none bind,create=dir'
+                ]
+            ) | reject('equalto', '') | list
+          }}
 
-    - name: Inject LXC GPU, IDMAP, and TUN device rules
-      ansible.builtin.lineinfile:
-        path: "/etc/pve/lxc/{{ lxc_vmid }}.conf"
-        line: "{{ item }}"
-      loop: >-
-        {{
-          (
-            lxc_idmap_config.stdout_lines
-            + (gpu_passthrough_config.stdout_lines if (lxc_enable_gpu_passthrough | bool) else [])
-            + ([
-                'lxc.cgroup2.devices.allow: a',
-                'lxc.cap.drop: ',
-                'lxc.apparmor.profile: unconfined',
-                'lxc.mount.auto: proc:rw sys:rw'
-              ] if (lxc_k3s_compat_mode | bool) else [])
-            + ([
-                'lxc.mount.entry: /sys/kernel/debug sys/kernel/debug none bind,optional 0 0',
-                'lxc.mount.entry: /sys/kernel/btf sys/kernel/btf none bind,optional 0 0'
-              ] if (lxc_enable_ebpf_mounts | bool) else [])
-            + ([
-                'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'
-              ] if (lxc_enable_tun | bool) else [])
-            + [
-                'lxc.mount.entry: ' + (host_nas_path) + ' data none bind,create=dir'
-              ]
-          ) | reject('equalto', '') | list
-        }}
+    - name: Stage LXC hardware reconciliation helper on Proxmox
+      ansible.builtin.copy:
+        dest: /tmp/reconcile_lxc_hardware_block.py
+        content: "{{ lookup('file', playbook_dir ~ '/../scripts/reconcile_lxc_hardware_block.py') }}"
+        mode: '0755'
+      delegate_to: "{{ proxmox_host }}"
+      run_once: true
+
+    - name: Reconcile HAAC-managed LXC hardware block
+      ansible.builtin.command: "python3 /tmp/reconcile_lxc_hardware_block.py /etc/pve/lxc/{{ lxc_vmid }}.conf"
+      environment:
+        HAAC_LXC_MANAGED_CONFIG_JSON: "{{ lxc_managed_config_lines | to_json }}"
       register: lxc_conf
+      changed_when: (lxc_conf.stdout | trim) == 'changed'
       delegate_to: "{{ proxmox_host }}"
 
     - name: Ensure LXC Container is restarted to apply hardware mappings
@@ -843,6 +856,12 @@
           or ((k3s_worker_base_config.changed | default(false)) and (k3s_agent_binary_before_write.stat.exists | default(false)))
           or (k3s_worker_default_runtime_removed.changed | default(false))
           or ((k3s_nvidia_runtime_configured is defined) and (k3s_nvidia_runtime_configured.changed | default(false)))
+
+    - name: Relax degraded Longhorn admission webhooks before bootstrap node mutations
+      ansible.builtin.include_tasks: tasks/relax_longhorn_admission_webhooks.yml
+      vars:
+        longhorn_webhook_delegate: "{{ groups['k3s_master'][0] }}"
+      run_once: true
 
     - name: Apply custom node labels to the node
       ansible.builtin.command: "k3s kubectl label node {{ ansible_facts['hostname'] }} {{ item.key }}={{ item.value }} --overwrite"
