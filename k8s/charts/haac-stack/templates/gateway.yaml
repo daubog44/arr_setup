@@ -14,11 +14,3 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
-    - name: https
-      protocol: HTTPS
-      port: {{ .Values.gateway.entryPoints.httpsPort }}
-      allowedRoutes:
-        namespaces:
-          from: All
-      # TLS config could be added here if needed, 
-      # but often Traefik handles it via Ingress or Gateway annotations.

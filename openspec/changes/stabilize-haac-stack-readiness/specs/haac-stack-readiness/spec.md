@@ -20,8 +20,9 @@ The chart MUST define one shared NVIDIA runtime class value and reuse it across 
 
 The stack Gateway MUST use listener ports that Traefik can accept with the bundled K3s deployment configuration.
 
-#### Scenario: Gateway listeners are accepted by Traefik
+#### Scenario: Gateway listener is accepted by Traefik
 
-- **GIVEN** the platform uses the bundled K3s Traefik deployment with entrypoints on `8000` and `8443`
+- **GIVEN** the platform uses the bundled K3s Traefik deployment with the `web` entrypoint on `8000`
+- **AND** public TLS is terminated upstream by Cloudflare rather than by the in-cluster Gateway
 - **WHEN** the `haac-gateway` resource is reconciled
-- **THEN** Traefik MUST accept the listeners instead of reporting `PortUnavailable`
+- **THEN** Traefik MUST accept the Gateway instead of reporting `PortUnavailable` or invalid TLS configuration

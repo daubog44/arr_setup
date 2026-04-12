@@ -16,7 +16,15 @@ Live Traefik args show:
 - `--entryPoints.web.address=:8000/tcp`
 - `--entryPoints.websecure.address=:8443/tcp`
 
-Traefik Gateway API marks the current Gateway invalid because the listeners ask for `80/443`. The smallest safe fix is to align the Gateway manifest with the active Traefik entrypoint ports used by the bundled K3s deployment. This is lower-risk than reshaping the bundled Traefik container ports during bootstrap.
+Traefik Gateway API marks the current Gateway invalid because:
+
+- the listeners originally asked for `80/443` instead of the active Traefik entrypoint ports
+- the in-cluster `HTTPS` listener has no TLS configuration at all
+
+Because Cloudflare already terminates public TLS for this homelab, the cluster-side Gateway only needs the HTTP listener. The smallest safe fix is therefore:
+
+- align the HTTP listener with the active Traefik `web` entrypoint port
+- remove the invalid in-cluster HTTPS listener instead of inventing TLS state the cluster is not meant to own
 
 ### 3. Validation
 

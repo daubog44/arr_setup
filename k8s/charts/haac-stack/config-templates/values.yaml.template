@@ -130,7 +130,6 @@ gateway:
   class: traefik
   entryPoints:
     httpPort: 8000
-    httpsPort: 8443
 
 ingresses:
   authelia:
