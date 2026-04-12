@@ -12,4 +12,4 @@ spec:
         - sh
         - -c
         args:
-        - /bin/cp --update=none /usr/local/bin/argocd /var/run/argocd/argocd && /bin/ln -sf /var/run/argocd/argocd /var/run/argocd/argocd-cmp-server
+        - /bin/cp --update=none /usr/local/bin/argocd /var/run/argocd/argocd && /bin/rm -rf /var/run/argocd/argocd-cmp-server && /bin/ln -s /var/run/argocd/argocd /var/run/argocd/argocd-cmp-server
