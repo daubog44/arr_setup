@@ -15,9 +15,7 @@ metadata:
   namespace: mgmt
   annotations:
     argocd.argoproj.io/sync-wave: "2"
-    helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "10"
-    helm.sh/hook-delete-policy: before-hook-creation
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   activeDeadlineSeconds: 300
   template:
@@ -30,6 +28,11 @@ spec:
           env:
             - name: SEMAPHORE_URL
               value: "http://semaphore.mgmt.svc.cluster.local:3000"
+            - name: SEMAPHORE_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: semaphore-db-secret
+                  key: ADMIN_USERNAME
             - name: SEMAPHORE_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -49,6 +52,7 @@ spec:
             - |
               set -e
               BASE="$SEMAPHORE_URL"
+              USERNAME="$SEMAPHORE_ADMIN_USERNAME"
               PASS="$SEMAPHORE_ADMIN_PASSWORD"
 
               # Wait for Semaphore to be ready
@@ -60,10 +64,10 @@ spec:
               echo "Semaphore is ready!"
 
               # Authenticate and get cookie
-              AUTH=$(curl -sf -c /tmp/cookies.txt -X POST "$BASE/api/auth/login" \
+              curl -sf -c /tmp/cookies.txt -X POST "$BASE/api/auth/login" \
                 -H "Content-Type: application/json" \
-                -d "{\"auth\":\"admin\",\"password\":\"$PASS\"}")
-              echo "Authenticated: $AUTH"
+                -d "{\"auth\":\"$USERNAME\",\"password\":\"$PASS\"}" > /dev/null
+              echo "Semaphore admin authentication succeeded."
 
               HDR='-H "Content-Type: application/json"'
 

@@ -27,6 +27,16 @@ spec:
           port: 3000
 
         # Database: use the bundled PostgreSQL subchart
+        database:
+          type: postgres
+          host: postgresql
+          port: 5432
+          name: semaphore
+          usernameFromSecret: false
+          username: semaphore
+          existingSecret: semaphore-db-secret
+          passwordKey: POSTGRES_PASSWORD
+
         postgresql:
           enabled: true
           auth:
@@ -37,37 +47,19 @@ spec:
               adminPasswordKey: POSTGRES_PASSWORD
               userPasswordKey: POSTGRES_PASSWORD
 
-        # Semaphore application config
-        semaphore:
-          access_key_encryption:
-            existingSecret: semaphore-db-secret
-            existingSecretKey: APP_SECRET
+        secrets:
+          existingSecret: semaphore-general
 
-          admin:
-            create: true
-            username: admin
-            email: admin@localhost
-            name: Admin
-            existingSecret: semaphore-db-secret
-            existingSecretKey: ADMIN_PASSWORD
+        admin:
+          create: true
+          existingSecret: semaphore-db-secret
+          fullnameKey: ADMIN_NAME
+          usernameKey: ADMIN_USERNAME
+          passwordKey: ADMIN_PASSWORD
+          emailKey: ADMIN_EMAIL
 
-          # OIDC via Authelia
-          oidcProviders:
-            authelia:
-              display_name: "Login con Authelia"
-              provider_url: "https://auth.${DOMAIN_NAME}"
-              client_id: "semaphore"
-              existingSecret: semaphore-db-secret
-              existingSecretKey: OIDC_SECRET
-              redirect_url: "https://ansible.${DOMAIN_NAME}/api/auth/oidc/redirect"
-              scopes:
-                - openid
-                - profile
-                - email
-                - groups
-              username_claim: "preferred_username"
-              email_claim: "email"
-              name_claim: "name"
+        oidc:
+          enable: false
 
         ingress:
           enabled: false
