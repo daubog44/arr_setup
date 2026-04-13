@@ -1,0 +1,37 @@
+- name: Delete stale K3s node object for {{ k3s_cluster_node_name }}
+  ansible.builtin.command: >
+    k3s kubectl delete node {{ k3s_cluster_node_name }} --ignore-not-found=true
+  delegate_to: "{{ groups['k3s_master'][0] }}"
+  register: k3s_stale_node_delete
+  changed_when: "'deleted' in (k3s_stale_node_delete.stdout | default(''))"
+
+- name: Delete stale K3s node-password secret for {{ k3s_cluster_node_name }}
+  ansible.builtin.command: >
+    k3s kubectl delete secret -n kube-system {{ k3s_cluster_node_name }}.node-password.k3s --ignore-not-found=true
+  delegate_to: "{{ groups['k3s_master'][0] }}"
+  register: k3s_stale_secret_delete
+  changed_when: "'deleted' in (k3s_stale_secret_delete.stdout | default(''))"
+
+- name: Reset stale local K3s agent registration state on {{ inventory_hostname }}
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ -x /usr/local/bin/k3s-agent-uninstall.sh ]; then
+      /usr/local/bin/k3s-agent-uninstall.sh || true
+    else
+      systemctl stop k3s-agent 2>/dev/null || true
+      systemctl disable k3s-agent 2>/dev/null || true
+      rm -f /etc/systemd/system/k3s-agent.service
+      rm -f /usr/local/bin/k3s-agent-uninstall.sh
+      rm -f /usr/local/bin/k3s
+      systemctl daemon-reload || true
+    fi
+    rm -rf /etc/rancher/node
+    rm -rf /var/lib/rancher/k3s/agent
+  args:
+    executable: /bin/bash
+  register: k3s_stale_local_reset
+  changed_when: true
+
+- name: Record stale K3s agent registration reset
+  ansible.builtin.set_fact:
+    k3s_agent_registration_reset: true

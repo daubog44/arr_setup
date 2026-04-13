@@ -1,13 +1,14 @@
 ## ADDED Requirements
 
-### Requirement: Falco uses a supported syscall driver on unprivileged LXC K3s nodes
-The platform GitOps configuration MUST select a Falco syscall driver that converges on the repository's unprivileged Proxmox LXC-based K3s nodes without relying on an undocumented host-wide BPF sysctl downgrade.
+### Requirement: Falco does not degrade platform health on unsupported unprivileged LXC nodes
+The platform GitOps configuration MUST avoid deploying a permanently crash-looping Falco application onto the repository's unprivileged Proxmox LXC-based K3s nodes when the required probe-build prerequisites are not satisfied.
 
-#### Scenario: LXC-compatible Falco driver is configured
-- **WHEN** the Falco platform application is rendered for this homelab stack
-- **THEN** the selected driver MUST avoid the failing `modern_ebpf` ring-buffer path observed on the live LXC nodes
+#### Scenario: Falco is skipped by default on unsupported LXC workers
+- **GIVEN** the homelab uses the default unprivileged Proxmox LXC worker model
+- **AND** Falco is not explicitly enabled through the operator inputs
+- **WHEN** the platform GitOps manifests are rendered
+- **THEN** the rendered Falco application manifest MUST become a clean no-op instead of an ArgoCD application that will crash-loop in-cluster
 
-#### Scenario: Falco becomes healthy after reconciliation
-- **WHEN** the Falco application syncs on the cluster
-- **THEN** the Falco DaemonSet pods MUST stop crash-looping on the monitored nodes
-
+#### Scenario: Enabled Falco keeps the classic `ebpf` driver path documented
+- **WHEN** Falco is explicitly enabled for a supported environment
+- **THEN** the enabled manifest MUST avoid the failing `modern_ebpf` ring-buffer path observed on the live LXC nodes

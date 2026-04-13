@@ -49,6 +49,8 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
     K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
 )
+FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
+DISABLED_GITOPS_LIST = "apiVersion: v1\nkind: List\nitems: []\n"
 HOOKS_DIR = ROOT / ".git" / "hooks"
 KUBESEAL_VERSION = "0.36.1"
 DEFAULT_WSL_DISTRO = "Debian"
@@ -774,11 +776,20 @@ def gitops_template_path(output_path: Path) -> Path:
     return output_path.with_name(f"{output_path.name}.template")
 
 
+def falco_enabled(env: dict[str, str]) -> bool:
+    if "HAAC_ENABLE_FALCO" in env:
+        return parse_bool(env["HAAC_ENABLE_FALCO"])
+    return not parse_bool(env.get("LXC_UNPRIVILEGED", "true"))
+
+
 def render_gitops_manifests(env: dict[str, str]) -> None:
     for output_path in GITOPS_RENDERED_OUTPUTS:
         template_path = gitops_template_path(output_path)
         if not template_path.exists():
             raise HaaCError(f"Missing GitOps manifest template: {template_path}")
+        if output_path == FALCO_APP_OUTPUT and not falco_enabled(env):
+            output_path.write_text(DISABLED_GITOPS_LIST, encoding="utf-8")
+            continue
         content = render_env_placeholders(template_path.read_text(encoding="utf-8"), env)
         output_path.write_text(content, encoding="utf-8")
 

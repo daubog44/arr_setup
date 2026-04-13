@@ -782,6 +782,41 @@
         path: /usr/local/bin/k3s
       register: k3s_agent_binary_before_write
 
+    - name: Check if the K3s agent systemd unit already exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service
+      register: k3s_agent_service_unit_before_write
+
+    - name: Check if the K3s agent containerd config already exists
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+      register: k3s_agent_containerd_config_before_write
+
+    - name: Detect partial K3s worker bootstrap state
+      ansible.builtin.set_fact:
+        k3s_cluster_node_name: "{{ ansible_facts['hostname'] | default(worker_name | default(inventory_hostname)) }}"
+        k3s_worker_partial_bootstrap: >-
+          {{
+            (k3s_agent_binary_before_write.stat.exists | default(false))
+            and (
+              not (k3s_agent_service_unit_before_write.stat.exists | default(false))
+              or not (k3s_agent_containerd_config_before_write.stat.exists | default(false))
+            )
+          }}
+        k3s_agent_registration_reset: false
+
+    - name: Reset stale K3s worker registration before reinstall
+      ansible.builtin.include_tasks: tasks/reset_stale_k3s_agent_registration.yml
+      when: k3s_worker_partial_bootstrap | bool
+
+    - name: Ensure K3s config directory exists on workers
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
     - name: Write K3s agent base config (LXC-compatible)
       ansible.builtin.copy:
         dest: /etc/rancher/k3s/config.yaml
@@ -810,8 +845,11 @@
         if [ -z "$TOKEN" ]; then echo "TOKEN NOT FOUND" && exit 1; fi
         if [ -n "$INSTALL_K3S_VERSION" ]; then export INSTALL_K3S_VERSION; fi
         curl -sfL https://get.k3s.io | K3S_URL=https://${MASTER_IP}:6443 K3S_TOKEN=${TOKEN} sh -
-      args:
-        creates: /usr/local/bin/k3s
+      register: k3s_agent_install
+      when:
+        - not (k3s_agent_binary_before_write.stat.exists | default(false))
+          or not (k3s_agent_service_unit_before_write.stat.exists | default(false))
+          or (k3s_agent_registration_reset | default(false))
 
     - name: Fix K3s-agent service definition for LXC compatibility (ignore modprobe failures)
       ansible.builtin.replace:
@@ -819,6 +857,19 @@
         regexp: 'ExecStartPre=/sbin/modprobe'
         replace: 'ExecStartPre=-/sbin/modprobe'
       register: k3s_agent_service_fix
+
+    - name: Start or recover K3s agent before runtime-specific mutation
+      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
+      vars:
+        k3s_service_name: k3s-agent
+        k3s_service_daemon_reload: "{{ k3s_agent_service_fix.changed | default(false) }}"
+      when:
+        - (k3s_agent_install.changed | default(false))
+          or (k3s_agent_registration_reset | default(false))
+          or (k3s_agent_service_fix.changed | default(false))
+          or ((k3s_worker_base_config.changed | default(false)) and (k3s_agent_binary_before_write.stat.exists | default(false)))
+          or (k3s_worker_default_runtime_removed.changed | default(false))
+          or not (k3s_agent_containerd_config_before_write.stat.exists | default(false))
 
     - name: Wait for K3s containerd config.toml to be created (async after install)
       ansible.builtin.wait_for:
@@ -846,16 +897,13 @@
         - hostvars[proxmox_host]['has_nvidia'] | default(false)
         - k3s_nvidia_runtime_present.rc != 0
 
-    - name: Restart K3s agent when config or runtime drift requires it
+    - name: Restart K3s agent after NVIDIA runtime handler changes
       ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
       vars:
         k3s_service_name: k3s-agent
         k3s_service_daemon_reload: "{{ k3s_agent_service_fix.changed | default(false) }}"
       when:
-        - (k3s_agent_service_fix.changed | default(false))
-          or ((k3s_worker_base_config.changed | default(false)) and (k3s_agent_binary_before_write.stat.exists | default(false)))
-          or (k3s_worker_default_runtime_removed.changed | default(false))
-          or ((k3s_nvidia_runtime_configured is defined) and (k3s_nvidia_runtime_configured.changed | default(false)))
+        - ((k3s_nvidia_runtime_configured is defined) and (k3s_nvidia_runtime_configured.changed | default(false)))
 
     - name: Relax degraded Longhorn admission webhooks before bootstrap node mutations
       ansible.builtin.include_tasks: tasks/relax_longhorn_admission_webhooks.yml

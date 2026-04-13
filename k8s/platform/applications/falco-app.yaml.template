@@ -14,10 +14,10 @@ spec:
     targetRevision: "8.0.1"
     helm:
       values: |
-        # The unprivileged Proxmox LXC guests used by this homelab block Falco's
-        # modern ring-buffer eBPF path (`Operation not permitted` on ring-buffer map
-        # creation). Keep Falco on the classic eBPF probe here so the DaemonSet stays
-        # healthy without lowering host-wide Proxmox BPF sysctls.
+        # Falco remains opt-in for this homelab because unprivileged Proxmox LXC guests
+        # do not provide a reliable probe-build path by default. When explicitly enabled,
+        # keep Falco on the classic eBPF probe and avoid the failing modern ring-buffer
+        # path.
         driver:
           enabled: true
           kind: ebpf
