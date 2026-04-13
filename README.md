@@ -12,6 +12,8 @@ The stack includes the `*arr` suite, Jellyfin, qBittorrent/QUI, Authelia, Headla
 
 `task up` uses a state-safe OpenTofu apply path for existing LXC nodes because the current `bpg/proxmox` provider cannot round-trip HAAC-managed raw LXC config such as `idmap`. Keep `task plan` as the diagnostic path when you want a full provider-refresh view of unsupported drift.
 
+Bootstrap-critical `mgmt` stateful workloads default to `local-path` in this repo. The current Proxmox LXC + ZFS substrate does not provide a reliable Longhorn replica backend for those services, so `task up` keeps the control plane and management layer on node-local storage while Longhorn remains available as a platform component.
+
 ## Repository Layout
 
 - `tofu/`: Proxmox infrastructure, LXC modules, inventory generation

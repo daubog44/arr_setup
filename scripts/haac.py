@@ -782,6 +782,47 @@ def falco_enabled(env: dict[str, str]) -> bool:
     return not parse_bool(env.get("LXC_UNPRIVILEGED", "true"))
 
 
+def cleanup_disabled_falco(kubectl: str, kubeconfig: Path) -> None:
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "delete",
+            "application",
+            "falco",
+            "-n",
+            "argocd",
+            "--ignore-not-found=true",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    completed = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "delete",
+            "all,cm,secret,sa,role,rolebinding,pvc",
+            "-n",
+            "security",
+            "-l",
+            "app.kubernetes.io/instance=falco",
+            "--ignore-not-found=true",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if completed.returncode == 0 and completed.stdout.strip():
+        print("[ok] Removed disabled Falco release resources from namespace security")
+
+
+def cleanup_disabled_platform_apps(kubectl: str, kubeconfig: Path, env: dict[str, str]) -> None:
+    if not falco_enabled(env):
+        cleanup_disabled_falco(kubectl, kubeconfig)
+
+
 def render_gitops_manifests(env: dict[str, str]) -> None:
     for output_path in GITOPS_RENDERED_OUTPUTS:
         template_path = gitops_template_path(output_path)
@@ -1457,6 +1498,7 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "-f", "-"], input_text=root_app)
         seed_argocd_bootstrap_patch(kubectl, session_kubeconfig)
+        cleanup_disabled_platform_apps(kubectl, session_kubeconfig, env)
 
 
 def seed_argocd_bootstrap_patch(kubectl: str, kubeconfig: Path, timeout_seconds: int = 120) -> None:

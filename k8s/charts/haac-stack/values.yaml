@@ -13,7 +13,7 @@ global:
   storage:
     uid: "13000"
     gid: "13000"
-    statefulClass: "longhorn"
+    statefulClass: "local-path"
   vpn:
     serverCountries: "Netherlands"
     podSubnet: "10.42.0.0/16,192.168.0.0/24,100.64.0.0/10"
