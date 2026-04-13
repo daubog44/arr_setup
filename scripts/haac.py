@@ -1648,6 +1648,7 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
                         "media",
                     ],
                     check=False,
+                    capture_output=True,
                 )
                 if bootstrap_job.returncode == 0:
                     waited = run(
@@ -1700,11 +1701,25 @@ def verify_cluster(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
             (["get", "pvc", "-A"], "--- PVCs ---"),
             (["get", "pv"], "--- PVs ---"),
             (["get", "ingress", "-A"], "--- Ingress ---"),
-            (["get", "certificates", "-A"], "--- Certificates ---"),
         ]
         for command, title in sections:
             print(title)
             completed = run([kubectl, "--kubeconfig", str(session_kubeconfig), *command], check=False, capture_output=True)
+            print((completed.stdout or completed.stderr).strip())
+            print()
+
+        certificate_resource = run(
+            [kubectl, "--kubeconfig", str(session_kubeconfig), "api-resources", "--no-headers"],
+            check=False,
+            capture_output=True,
+        )
+        if "certificates" in (certificate_resource.stdout or ""):
+            print("--- Certificates ---")
+            completed = run(
+                [kubectl, "--kubeconfig", str(session_kubeconfig), "get", "certificates", "-A"],
+                check=False,
+                capture_output=True,
+            )
             print((completed.stdout or completed.stderr).strip())
             print()
 
