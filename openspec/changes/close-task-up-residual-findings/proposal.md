@@ -1,19 +1,23 @@
 ## Why
 
-`task up` now succeeds end-to-end, but two residual findings remain after the happy path completes: Falco stays degraded in the `security` namespace on this unprivileged LXC platform, and OpenTofu still emits a deprecated Proxmox datasource warning on every run. Both issues weaken operator confidence because the bootstrap looks successful while leaving platform health and IaC hygiene incomplete.
+The two residual findings that motivated this change have already been addressed in source, but the active OpenSpec change still describes them as unresolved:
+
+- Falco is already opt-in through `.env`, the rendered [`falco-app.yaml`](C:/Users/Utente/OneDrive%20-%20ITS%20Tech%20Talent%20Factory/Desktop/dev/arr_setup-main/k8s/platform/applications/falco-app.yaml) becomes a no-op `List` when `HAAC_ENABLE_FALCO=false`, and `scripts/haac.py` already prunes disabled Falco resources from the cluster.
+- `tofu/main.tf` already uses the supported `proxmox_datastores` and `proxmox_download_file` objects, and `task plan` no longer reproduces a provider deprecation warning.
+
+Leaving the change backlog out of sync with the code is now the real issue: the loop can chase phantom work, and the repo docs stop reflecting the actual bootstrap contract.
 
 ## What Changes
 
-- Make Falco GitOps rendering capability-gated from `.env` so unsupported unprivileged LXC stacks do not deploy a permanently crash-looping security app by default.
-- Keep the enabled Falco deployment explicitly documented as an LXC compatibility choice around the `ebpf` probe path so the repo does not silently depend on host-wide BPF sysctl relaxation.
-- Replace the deprecated Proxmox datastore and download-file provider objects with their supported names.
-- Validate the result by checking Falco pod health, rerunning `task up`, and confirming the OpenTofu warning disappears.
+- Treat Falco's default-disabled LXC path as the accepted steady state for this repo and record that explicitly in the change artifacts.
+- Treat the Proxmox provider object migration as already complete and remove the stale spec language that still asks for a rename in `tofu/main.tf`.
+- Validate the residual findings against the current source of truth: rendered GitOps output plus real OpenTofu plan output.
 
 ## Capabilities
 
 ### New Capabilities
 - `falco-lxc-readiness`: Falco no longer degrades platform health on this unprivileged LXC K3s platform; it is either explicitly enabled on a supported probe path or cleanly skipped by default.
-- `proxmox-datasource-compatibility`: The OpenTofu configuration uses the supported Proxmox datastore and download-file provider objects and avoids deprecated provider APIs.
+- `proxmox-datasource-compatibility`: The OpenTofu configuration preserves the supported Proxmox datastore and download-file provider objects and avoids deprecated provider APIs.
 
 ### Modified Capabilities
 

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: OpenTofu uses supported Proxmox provider APIs
-The OpenTofu configuration MUST use the supported Proxmox provider datastore and download-file object names so normal bootstrap runs do not emit provider deprecation warnings for core infrastructure discovery and template download.
+The OpenTofu configuration MUST use and preserve the supported Proxmox provider datastore and download-file object names so normal bootstrap runs do not emit provider deprecation warnings for core infrastructure discovery and template download.
 
 #### Scenario: Datastore lookup avoids deprecated datasource names
 - **WHEN** OpenTofu initializes and plans or applies the Proxmox infrastructure

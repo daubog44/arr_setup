@@ -4,7 +4,7 @@ metadata:
   name: trivy-operator
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "4"
     renovate/helm-chart: "trivy-operator"
 spec:
   project: platform
@@ -15,18 +15,29 @@ spec:
     targetRevision: "0.32.1"
     helm:
       values: |
+        # Keep Trivy bounded on this single-master SQLite/Kine control plane.
+        # The chart expects namespace filters at the top level, not under `operator`.
+        targetNamespaces: "media,mgmt"
+        excludeNamespaces: "argocd,kube-system,longhorn-system,monitoring,security,chaos,node-feature-discovery,cloudflared"
+
         trivy:
-          # Automatically scan new workloads and configmaps
           ignoreUnfixed: true # In a homelab, only care about actionable/fixed CVEs
           
         # Enable Prometheus metrics for Vulnerability counts
         serviceMonitor:
           enabled: true
           
-        # Expose reports in the cluster
         operator:
-          # Scan workloads in these namespaces (or all if empty)
-          targetNamespaces: ""
+          scanJobTimeout: 3m
+          scanJobsConcurrentLimit: 1
+          vulnerabilityScannerEnabled: true
+          sbomGenerationEnabled: false
+          configAuditScannerEnabled: false
+          rbacAssessmentScannerEnabled: false
+          infraAssessmentScannerEnabled: false
+          clusterComplianceEnabled: false
+          exposedSecretScannerEnabled: false
+          scannerReportTTL: "6h"
           
   destination:
     server: https://kubernetes.default.svc
