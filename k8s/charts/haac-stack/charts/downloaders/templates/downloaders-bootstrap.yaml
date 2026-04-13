@@ -94,7 +94,7 @@ spec:
               wait_http "http://qbittorrent.media.svc.cluster.local"
 
               POD_JSON=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods?labelSelector=app%3Ddownloaders")
-              POD_NAME="${POD_JSON#*\"name\":\"}"
+              POD_NAME="${POD_JSON#*\"items\":[{\"metadata\":{\"name\":\"}"
               POD_NAME="${POD_NAME%%\"*}"
               if [ -z "$POD_NAME" ]; then
                 echo "Unable to find the downloaders pod for bootstrap." >&2
