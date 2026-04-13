@@ -1704,19 +1704,24 @@ def verify_cluster(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
         ]
         for command, title in sections:
             print(title)
-            completed = run([kubectl, "--kubeconfig", str(session_kubeconfig), *command], check=False, capture_output=True)
+            completed = run(
+                [kubectl, "--kubeconfig", str(session_kubeconfig), "--request-timeout=60s", *command],
+                check=False,
+                capture_output=True,
+            )
             print((completed.stdout or completed.stderr).strip())
             print()
 
         certificate_resource = run(
-            [kubectl, "--kubeconfig", str(session_kubeconfig), "api-resources", "--no-headers"],
+            [kubectl, "--kubeconfig", str(session_kubeconfig), "--request-timeout=60s", "api-resources", "-o", "name"],
             check=False,
             capture_output=True,
         )
-        if "certificates" in (certificate_resource.stdout or ""):
+        certificate_resources = certificate_resource.stdout or ""
+        if re.search(r"(?m)^certificates(?:\..+)?$", certificate_resources):
             print("--- Certificates ---")
             completed = run(
-                [kubectl, "--kubeconfig", str(session_kubeconfig), "get", "certificates", "-A"],
+                [kubectl, "--kubeconfig", str(session_kubeconfig), "--request-timeout=60s", "get", "certificates", "-A"],
                 check=False,
                 capture_output=True,
             )
