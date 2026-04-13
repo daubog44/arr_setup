@@ -200,7 +200,7 @@ ingresses:
     auth_enabled: false
   grafana:
     subdomain: grafana
-    service: grafana
+    service: kube-prometheus-stack-grafana
     port: 80
     namespace: monitoring
     auth_enabled: false
