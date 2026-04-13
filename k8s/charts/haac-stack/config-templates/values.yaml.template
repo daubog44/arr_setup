@@ -13,6 +13,7 @@ global:
   storage:
     uid: "${STORAGE_UID}"
     gid: "${STORAGE_GID}"
+    statefulClass: "${HAAC_STATEFUL_STORAGE_CLASS}"
   vpn:
     serverCountries: "${PROTONVPN_SERVER_COUNTRIES}"
     podSubnet: "${VPN_POD_SUBNET}"

@@ -89,7 +89,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: {{ .Values.global.storage.statefulClass | quote }}
   resources:
     requests:
       storage: 1Gi
