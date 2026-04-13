@@ -99,7 +99,10 @@ spec:
                   port=$(cat /tmp/gluetun/forwarded_port)
                   if [ "$port" != "$last_port" ] && [ -n "$port" ]; then
                     echo "Syncing port $port to qBittorrent..."
-                    curl -s -o /dev/null -c /tmp/cookies.txt -d "username=${QBIT_USER}&password=${QBIT_PASS}" http://localhost:8080/api/v2/auth/login
+                    curl -s -o /dev/null -c /tmp/cookies.txt \
+                      --data-urlencode "username=${QBIT_USER}" \
+                      --data-urlencode "password=${QBIT_PASS}" \
+                      http://localhost:8080/api/v2/auth/login
                     curl -s -o /dev/null -b /tmp/cookies.txt -d "json={\"listen_port\": ${port}}" http://localhost:8080/api/v2/app/setPreferences
                     echo "Port synchronized."
                     last_port=$port

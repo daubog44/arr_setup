@@ -68,15 +68,19 @@ spec:
               set -eu
 
               api_call() {
-                curl -fsS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                curl -fsS --connect-timeout 5 --max-time 20 --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
                   -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
                   "$@"
+              }
+
+              curl_common() {
+                curl --connect-timeout 5 --max-time 20 "$@"
               }
 
               wait_http() {
                 url="$1"
                 for _ in $(seq 1 60); do
-                  if curl -fsS "$url" >/dev/null 2>&1; then
+                  if curl_common -fsS "$url" >/dev/null 2>&1; then
                     return 0
                   fi
                   sleep 5
@@ -96,8 +100,9 @@ spec:
 
               qbit_login_ok() {
                 password="$1"
-                login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' \
-                  --data "username=admin&password=${password}" \
+                login_code=$(curl_common -sS -o /tmp/qbit-login.txt -w '%{http_code}' \
+                  --data-urlencode "username=admin" \
+                  --data-urlencode "password=${password}" \
                   http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login || true)
                 if [ "$login_code" = "200" ] && grep -q 'Ok\.' /tmp/qbit-login.txt; then
                   return 0
@@ -105,6 +110,7 @@ spec:
                 return 1
               }
 
+              echo "Waiting for qBittorrent and QUI endpoints..."
               wait_http "http://qbittorrent.media.svc.cluster.local:8080/api/v2/app/version"
               wait_http "http://qbittorrent.media.svc.cluster.local/api/auth/me"
 
@@ -117,17 +123,19 @@ spec:
               fi
 
               if ! qbit_login_ok "$QUI_PASSWORD"; then
+                echo "Desired qBittorrent password rejected. Attempting temporary-password recovery..."
                 POD_LOGS=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods/${POD_NAME}/log?container=qbittorrent")
                 TEMP_PASSWORD=$(printf '%s\n' "$POD_LOGS" | sed -n 's/.*A temporary password is provided for this session: //p' | tail -n 1 | tr -d '\r')
                 if [ -z "$TEMP_PASSWORD" ]; then
                   echo "qBittorrent is not accepting the desired password and no temporary password was found in logs." >&2
                   exit 1
                 fi
-                curl -fsS -c /tmp/qbit-cookies.txt \
-                  --data "username=admin&password=${TEMP_PASSWORD}" \
+                curl_common -fsS -c /tmp/qbit-cookies.txt \
+                  --data-urlencode "username=admin" \
+                  --data-urlencode "password=${TEMP_PASSWORD}" \
                   http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login >/dev/null
-                curl -fsS -b /tmp/qbit-cookies.txt \
-                  --data "new_password=${QUI_PASSWORD}" \
+                curl_common -fsS -b /tmp/qbit-cookies.txt \
+                  --data-urlencode "new_password=${QUI_PASSWORD}" \
                   http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/changePassword >/dev/null
               fi
 
@@ -136,19 +144,21 @@ spec:
                 exit 1
               fi
 
-              INSTANCE_PAYLOAD=$(printf '{"name":"qBittorrent","host":"http://127.0.0.1:8080","username":"admin","password":"%s","hasLocalFilesystemAccess":true}' "$QUI_PASSWORD")
+              echo "qBittorrent credentials reconciled. Upserting QUI instance..."
+              ESCAPED_QUI_PASSWORD=$(printf '%s' "$QUI_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')
+              INSTANCE_PAYLOAD=$(printf '{"name":"qBittorrent","host":"http://127.0.0.1:8080","username":"admin","password":"%s","hasLocalFilesystemAccess":true}' "$ESCAPED_QUI_PASSWORD")
 
-              INSTANCES=$(curl -fsS http://qbittorrent.media.svc.cluster.local/api/instances)
+              INSTANCES=$(curl_common -fsS http://qbittorrent.media.svc.cluster.local/api/instances)
               INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
               INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
 
               if [ -n "$INSTANCE_ID" ]; then
-                curl -fsS -X PUT \
+                curl_common -fsS -X PUT \
                   -H 'Content-Type: application/json' \
                   --data "$INSTANCE_PAYLOAD" \
                   "http://qbittorrent.media.svc.cluster.local/api/instances/${INSTANCE_ID}" >/dev/null
               else
-                CREATE_CODE=$(curl -sS -o /tmp/qui-instance-create.json -w '%{http_code}' \
+                CREATE_CODE=$(curl_common -sS -o /tmp/qui-instance-create.json -w '%{http_code}' \
                   -H 'Content-Type: application/json' \
                   --data "$INSTANCE_PAYLOAD" \
                   http://qbittorrent.media.svc.cluster.local/api/instances || true)
@@ -157,7 +167,7 @@ spec:
                   cat /tmp/qui-instance-create.json >&2
                   exit 1
                 fi
-                INSTANCES=$(curl -fsS http://qbittorrent.media.svc.cluster.local/api/instances)
+                INSTANCES=$(curl_common -fsS http://qbittorrent.media.svc.cluster.local/api/instances)
                 INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
                 INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
               fi
@@ -168,9 +178,11 @@ spec:
               fi
 
               TEST_RESPONSE=""
+              echo "Waiting for QUI instance connectivity test..."
               for _ in $(seq 1 24); do
-                TEST_RESPONSE=$(curl -sS -X POST "http://qbittorrent.media.svc.cluster.local/api/instances/${INSTANCE_ID}/test" || true)
+                TEST_RESPONSE=$(curl_common -sS -X POST "http://qbittorrent.media.svc.cluster.local/api/instances/${INSTANCE_ID}/test" || true)
                 if printf '%s' "$TEST_RESPONSE" | grep -q '"connected":true'; then
+                  echo "QUI instance connectivity test passed."
                   exit 0
                 fi
                 sleep 5
