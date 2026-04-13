@@ -1355,26 +1355,163 @@ def wait_for_argocd_application_ready(
         label=f"ArgoCD application {application}",
         timeout_seconds=seconds_remaining(deadline),
     )
-    health_command = ["get", "application", application, "-n", "argocd", "-o", "jsonpath={.status.health.status}"]
-    wait_for_jsonpath(
+    while time.time() < deadline:
+        app = kubectl_json(
+            kubectl,
+            kubeconfig,
+            ["get", "application", application, "-n", "argocd", "-o", "json"],
+            context=f"Read ArgoCD application {application}",
+        )
+        if recover_stale_argocd_operation(kubectl, kubeconfig, application, app):
+            time.sleep(5)
+            continue
+        if application == "haac-stack" and recover_stalled_downloaders_rollout(kubectl, kubeconfig):
+            time.sleep(5)
+            continue
+
+        status = app.get("status") or {}
+        sync_status = ((status.get("sync") or {}).get("status") or "").strip()
+        health_status = ((status.get("health") or {}).get("status") or "").strip()
+        operation_state = status.get("operationState") or {}
+        operation_phase = (operation_state.get("phase") or "").strip()
+
+        if sync_status == "Synced" and health_status == "Healthy":
+            print(f"[ok] {stage_label}: {application} synced and healthy")
+            return
+
+        if operation_phase in {"Error", "Failed"}:
+            detail = (operation_state.get("message") or f"ArgoCD application {application} failed").strip()
+            raise HaaCError(detail)
+
+        if operation_phase not in {"", "Running"} and health_status == "Degraded":
+            detail = (operation_state.get("message") or f"ArgoCD application {application} is degraded according to ArgoCD").strip()
+            raise HaaCError(detail)
+
+        time.sleep(10)
+    raise HaaCError(f"Timeout waiting for ArgoCD application {application} to become synced and healthy")
+
+
+def kubectl_json(
+    kubectl: str,
+    kubeconfig: Path,
+    command: list[str],
+    *,
+    context: str,
+) -> dict[str, object]:
+    completed = run([kubectl, "--kubeconfig", str(kubeconfig), *command], check=False, capture_output=True)
+    require_success(completed, context)
+    try:
+        return json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise HaaCError(f"{context}\nInvalid JSON returned by kubectl") from exc
+
+
+def recover_stale_argocd_operation(
+    kubectl: str,
+    kubeconfig: Path,
+    application: str,
+    app: dict[str, object],
+) -> bool:
+    status = app.get("status") or {}
+    operation_state = status.get("operationState") or {}
+    operation_phase = (operation_state.get("phase") or "").strip()
+    desired_revision = ((status.get("sync") or {}).get("revision") or "").strip()
+    active_revision = (((app.get("operation") or {}).get("sync") or {}).get("revision") or "").strip()
+    if operation_phase != "Running" or not desired_revision or not active_revision or active_revision == desired_revision:
+        return False
+
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "patch",
+            "application",
+            application,
+            "-n",
+            "argocd",
+            "--type",
+            "json",
+            "-p",
+            '[{"op":"remove","path":"/operation"}]',
+        ],
+        check=False,
+    )
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "annotate",
+            "application",
+            application,
+            "-n",
+            "argocd",
+            "argocd.argoproj.io/refresh=hard",
+            "--overwrite",
+        ],
+        check=False,
+    )
+    print(f"[heal] Reset stale ArgoCD operation for {application}: {active_revision[:12]} -> {desired_revision[:12]}")
+    return True
+
+
+def recover_stalled_downloaders_rollout(kubectl: str, kubeconfig: Path) -> bool:
+    if run(
+        [kubectl, "--kubeconfig", str(kubeconfig), "get", "serviceaccount", "downloaders-bootstrap", "-n", "media"],
+        check=False,
+    ).returncode != 0:
+        return False
+
+    deployment = kubectl_json(
         kubectl,
         kubeconfig,
-        ["get", "application", application, "-n", "argocd", "-o", "jsonpath={.status.sync.status}"],
-        expected="Synced",
-        timeout_seconds=seconds_remaining(deadline),
-        degraded_check=health_command,
-        degraded_label=f"ArgoCD application {application}",
+        ["get", "deployment", "downloaders", "-n", "media", "-o", "json"],
+        context="Read media/downloaders deployment",
     )
-    wait_for_jsonpath(
+    pod_annotations = (
+        ((deployment.get("spec") or {}).get("template") or {}).get("metadata") or {}
+    ).get("annotations") or {}
+    if pod_annotations.get("kubectl.kubernetes.io/restartedAt"):
+        return False
+    status = deployment.get("status") or {}
+    conditions = status.get("conditions") or []
+    failed_create = False
+    for condition in conditions:
+        message = (condition.get("message") or "").lower()
+        reason = (condition.get("reason") or "").strip()
+        if condition.get("type") == "ReplicaFailure" and "downloaders-bootstrap" in message:
+            failed_create = True
+            break
+        if condition.get("type") == "Progressing" and reason == "ProgressDeadlineExceeded":
+            failed_create = True
+            break
+    if not failed_create:
+        return False
+
+    pods = kubectl_json(
         kubectl,
         kubeconfig,
-        health_command,
-        expected="Healthy",
-        timeout_seconds=seconds_remaining(deadline),
-        degraded_check=health_command,
-        degraded_label=f"ArgoCD application {application}",
+        ["get", "pods", "-n", "media", "-l", "app=downloaders", "-o", "json"],
+        context="Read media/downloaders pods",
     )
-    print(f"[ok] {stage_label}: {application} synced and healthy")
+    if pods.get("items"):
+        return False
+
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "rollout",
+            "restart",
+            "deployment/downloaders",
+            "-n",
+            "media",
+        ]
+    )
+    print("[heal] Restarted media/downloaders after dependency recovery")
+    return True
 
 
 def require_success(completed: subprocess.CompletedProcess[str], context: str) -> None:
