@@ -1780,6 +1780,49 @@ def load_endpoint_specs(domain_name: str) -> list[dict[str, str]]:
     return endpoints
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def http_error_301(self, req, fp, code, msg, headers):
+        return fp
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        return fp
+
+    def http_error_303(self, req, fp, code, msg, headers):
+        return fp
+
+    def http_error_307(self, req, fp, code, msg, headers):
+        return fp
+
+    def http_error_308(self, req, fp, code, msg, headers):
+        return fp
+
+
+def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
+    opener = urllib.request.build_opener(NoRedirectHandler)
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/135.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
+    )
+    try:
+        with opener.open(request, timeout=timeout_seconds) as response:
+            return int(getattr(response, "status", response.getcode()))
+    except urllib.error.HTTPError as error:
+        return int(error.code)
+    except Exception:
+        return 0
+
+
 def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> None:
     endpoints = load_endpoint_specs(domain_name)
     accepted_statuses = {200, 201, 202, 204, 301, 302, 307, 308, 401}
@@ -1791,14 +1834,7 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
         success = False
         last_status = 0
         for _ in range(retries):
-            request = urllib.request.Request(url, method="GET")
-            try:
-                with urllib.request.urlopen(request, timeout=10) as response:
-                    status = response.status
-            except urllib.error.HTTPError as error:
-                status = error.code
-            except Exception:
-                status = 0
+            status = probe_web_status(url)
             last_status = status
             if status in accepted_statuses:
                 success = True

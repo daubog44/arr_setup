@@ -33,15 +33,13 @@ spec:
           extensionRef:
             group: traefik.io
             kind: Middleware
-            name: >-
-              {{ if eq ($conf.namespace | default $.Release.Namespace) "mgmt" }}force-https{{ else }}mgmt-force-https@kubernetescrd{{ end }}
+            name: "force-https"
 # {{- if $conf.auth_enabled }}
         - type: ExtensionRef
           extensionRef:
             group: traefik.io
             kind: Middleware
-            name: >-
-              {{ if eq ($conf.namespace | default $.Release.Namespace) "mgmt" }}authelia{{ else }}mgmt-authelia@kubernetescrd{{ end }}
+            name: "authelia"
 # {{- end }}
 # {{- if $conf.extra_middlewares }}
 # {{- range $conf.extra_middlewares }}
