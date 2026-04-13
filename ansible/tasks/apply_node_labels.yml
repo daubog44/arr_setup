@@ -6,6 +6,7 @@
   when: (sanitized_node_labels | length > 0)
   delegate_to: "{{ groups['k3s_master'][0] }}"
   ignore_errors: true
+  ignore_unreachable: true
 
 - name: Remove legacy GPU labels from the node
   ansible.builtin.command: >
@@ -15,3 +16,4 @@
   when: (hostvars[proxmox_host]['has_nvidia'] | default(false)) or (hostvars[proxmox_host]['has_intel'] | default(false)) or ((node_labels | default({})) | length > 0)
   delegate_to: "{{ groups['k3s_master'][0] }}"
   ignore_errors: true
+  ignore_unreachable: true

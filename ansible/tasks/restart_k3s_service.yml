@@ -14,7 +14,7 @@
       register: k3s_service_state
       changed_when: false
       failed_when: false
-      until: (k3s_service_state.stdout | trim) == 'active'
+      until: (k3s_service_state.stdout | trim) in (['active'] + (['activating'] if (k3s_service_allow_activating | default(false)) else []))
       retries: "{{ k3s_service_wait_retries | default(36) }}"
       delay: "{{ k3s_service_wait_delay | default(5) }}"
   rescue:

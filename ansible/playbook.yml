@@ -920,16 +920,9 @@
       ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
       vars:
         k3s_service_name: k3s-agent
+        k3s_service_allow_activating: true
       when:
         - "'k3s_workers' in group_names"
-        - hostvars[groups['k3s_master'][0]].longhorn_admission_webhooks_relaxed | default(false)
-
-    - name: Restart K3s server once after relaxing degraded Longhorn admission webhooks
-      ansible.builtin.include_tasks: tasks/restart_k3s_service.yml
-      vars:
-        k3s_service_name: k3s
-      when:
-        - "'k3s_master' in group_names"
         - hostvars[groups['k3s_master'][0]].longhorn_admission_webhooks_relaxed | default(false)
 
     - name: Wait for local flannel subnet state on K3s servers before GitOps bootstrap
