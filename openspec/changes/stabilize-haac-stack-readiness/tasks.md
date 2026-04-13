@@ -4,6 +4,7 @@
 - [ ] 1.2 Align the Gateway listener contract with the bundled Traefik entrypoints and remove the invalid in-cluster HTTPS listener
 - [ ] 1.3 Remove the non-standard Headlamp token-header bootstrap path and keep only the bootstrap jobs that are still required
 - [ ] 1.4 Replace the dead qBittorrent exporter image pin with a live compatible image/tag and align the metrics port contract
+- [ ] 1.5 Make the `downloaders` Deployment use a recreate rollout so qBittorrent state does not wedge readiness during updates
 
 ## 2. Validation
 
