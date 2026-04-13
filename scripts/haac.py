@@ -1075,9 +1075,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "NTFY_TOPIC",
             "ARGOCD_OIDC_SECRET",
             "HEADLAMP_OIDC_SECRET",
-            "QUI_USERNAME",
             "QUI_PASSWORD",
-            "QUI_OIDC_SECRET",
             "GRAFANA_OIDC_SECRET",
             "SEMAPHORE_DB_PASSWORD",
             "SEMAPHORE_APP_SECRET",
@@ -1137,9 +1135,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "media",
             SECRETS_DIR / "downloaders-auth-sealed-secret.yaml",
             {
-                "QUI_USERNAME": env["QUI_USERNAME"],
                 "QUI_PASSWORD": env["QUI_PASSWORD"],
-                "QUI_OIDC_SECRET": env["QUI_OIDC_SECRET"],
             },
             None,
         ),
@@ -2077,8 +2073,7 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
 
 def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
-    require_env(["QUI_USERNAME", "QUI_PASSWORD"], env)
-    qui_user = env["QUI_USERNAME"]
+    require_env(["QUI_PASSWORD"], env)
     qui_password = env["QUI_PASSWORD"]
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
@@ -2113,48 +2108,56 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                         "media",
                         pod_name,
                         "-c",
-                        "qui",
+                        "port-sync",
                         "--",
-                        "wget",
-                        "--spider",
-                        "-S",
-                        "http://localhost:7476/api/auth/validate",
+                        "/bin/sh",
+                        "-ec",
+                        "curl -fsS http://127.0.0.1:7476/api/auth/me >/dev/null && curl -fsS http://127.0.0.1:8080/api/v2/app/version >/dev/null",
                     ],
                     check=False,
                     capture_output=True,
                 )
-                if "HTTP/" in (health.stderr or health.stdout or ""):
+                if health.returncode == 0:
                     break
             time.sleep(5)
         else:
             raise HaaCError("QUI API did not become available before timeout")
 
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(session_kubeconfig),
-                "exec",
-                "-n",
-                "media",
-                pod_name,
-                "-c",
-                "qui",
-                "--",
-                "wget",
-                "-qO-",
-                '--post-data={"username":"%s","password":"%s"}' % (qui_user, qui_password),
-                "--header=Content-Type: application/json",
-                "http://localhost:7476/api/auth/setup",
-            ],
-            check=False,
+        def exec_port_sync(script: str, *, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
+            return run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "exec",
+                    "-n",
+                    "media",
+                    pod_name,
+                    "-c",
+                    "port-sync",
+                    "--",
+                    "/bin/sh",
+                    "-ec",
+                    script,
+                ],
+                check=check,
+                capture_output=capture_output,
+            )
+
+        qbit_password_q = shlex.quote(qui_password)
+        qbit_login_check = (
+            f"QBIT_PASSWORD={qbit_password_q}; "
+            "login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' "
+            "--data \"username=admin&password=${QBIT_PASSWORD}\" "
+            "http://127.0.0.1:8080/api/v2/auth/login || true); "
+            "[ \"$login_code\" = \"200\" ] && grep -q 'Ok\\.' /tmp/qbit-login.txt"
         )
 
         logs = run(
             [
                 kubectl,
                 "--kubeconfig",
-                str(kubeconfig),
+                str(session_kubeconfig),
                 "logs",
                 "-n",
                 "media",
@@ -2170,99 +2173,64 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             if "A temporary password is provided for this session:" in line:
                 temp_password = line.split()[-1]
 
-        if temp_password:
-            run(
-                [
-                    kubectl,
-                    "--kubeconfig",
-                    str(kubeconfig),
-                    "exec",
-                    "-n",
-                    "media",
-                    pod_name,
-                    "-c",
-                    "qui",
-                    "--",
-                    "wget",
-                    "-qO-",
-                    f"--post-data=username=admin&password={temp_password}",
-                    "--header=Content-Type: application/x-www-form-urlencoded",
-                    "--save-cookies",
-                    "/tmp/qbit_cookies.txt",
-                    "--keep-session-cookies",
-                    "http://localhost:8080/api/v2/auth/login",
-                ],
-                check=False,
-            )
-            run(
-                [
-                    kubectl,
-                    "--kubeconfig",
-                    str(kubeconfig),
-                    "exec",
-                    "-n",
-                    "media",
-                    pod_name,
-                    "-c",
-                    "qui",
-                    "--",
-                    "wget",
-                    "-qO-",
-                    f"--post-data=new_password={qui_password}",
-                    "--header=Content-Type: application/x-www-form-urlencoded",
-                    "--load-cookies",
-                    "/tmp/qbit_cookies.txt",
-                    "http://localhost:8080/api/v2/auth/changePassword",
-                ],
-                check=False,
+        if exec_port_sync(qbit_login_check, check=False).returncode != 0:
+            if not temp_password:
+                raise HaaCError(
+                    "qBittorrent is not accepting the desired password and no temporary password was found in container logs."
+                )
+
+            exec_port_sync(
+                f"TEMP_PASSWORD={shlex.quote(temp_password)}; "
+                f"QBIT_PASSWORD={qbit_password_q}; "
+                "curl -fsS -c /tmp/qbit-cookies.txt "
+                "--data \"username=admin&password=${TEMP_PASSWORD}\" "
+                "http://127.0.0.1:8080/api/v2/auth/login >/dev/null && "
+                "curl -fsS -b /tmp/qbit-cookies.txt "
+                "--data \"new_password=${QBIT_PASSWORD}\" "
+                "http://127.0.0.1:8080/api/v2/auth/changePassword >/dev/null"
             )
 
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(kubeconfig),
-                "exec",
-                "-n",
-                "media",
-                pod_name,
-                "-c",
-                "qui",
-                "--",
-                "wget",
-                "-qO-",
-                '--post-data={"username":"%s","password":"%s"}' % (qui_user, qui_password),
-                "--header=Content-Type: application/json",
-                "--save-cookies",
-                "/tmp/cookies.txt",
-                "--keep-session-cookies",
-                "http://localhost:7476/api/auth/login",
-            ],
-            check=False,
+        if exec_port_sync(qbit_login_check, check=False).returncode != 0:
+            raise HaaCError("qBittorrent did not accept the reconciled password.")
+
+        upsert_instance_script = (
+            f"QBIT_PASSWORD={qbit_password_q}; "
+            "extract_instance_id() { "
+            "compact=\"$1\"; "
+            "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\),\"name\":\"qBittorrent\".*/\\1/p'); "
+            "if [ -z \"$instance_id\" ]; then "
+            "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"name\":\"qBittorrent\",\"id\":\\([0-9][0-9]*\\).*/\\1/p'); "
+            "fi; "
+            "printf '%s' \"$instance_id\"; "
+            "}; "
+            "INSTANCE_PAYLOAD=$(printf '{\"name\":\"qBittorrent\",\"host\":\"http://127.0.0.1:8080\",\"username\":\"admin\",\"password\":\"%s\",\"hasLocalFilesystemAccess\":true}' \"$QBIT_PASSWORD\"); "
+            "INSTANCES=$(curl -fsS http://127.0.0.1:7476/api/instances); "
+            "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
+            "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
+            "if [ -n \"$INSTANCE_ID\" ]; then "
+            "curl -fsS -X PUT -H 'Content-Type: application/json' --data \"$INSTANCE_PAYLOAD\" "
+            "\"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}\" >/dev/null; "
+            "else "
+            "CREATE_CODE=$(curl -sS -o /tmp/qui-instance-create.json -w '%{http_code}' -H 'Content-Type: application/json' "
+            "--data \"$INSTANCE_PAYLOAD\" http://127.0.0.1:7476/api/instances || true); "
+            "if [ \"$CREATE_CODE\" != \"200\" ] && [ \"$CREATE_CODE\" != \"201\" ]; then "
+            "cat /tmp/qui-instance-create.json >&2; exit 1; "
+            "fi; "
+            "INSTANCES=$(curl -fsS http://127.0.0.1:7476/api/instances); "
+            "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
+            "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
+            "fi; "
+            "[ -n \"$INSTANCE_ID\" ]; "
+            "TEST_RESPONSE=''; "
+            "for _ in $(seq 1 24); do "
+            "TEST_RESPONSE=$(curl -sS -X POST \"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}/test\" || true); "
+            "if printf '%s' \"$TEST_RESPONSE\" | grep -q '\"connected\":true'; then exit 0; fi; "
+            "sleep 5; "
+            "done; "
+            "printf '%s\\n' \"$TEST_RESPONSE\" >&2; "
+            "exit 1"
         )
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(kubeconfig),
-                "exec",
-                "-n",
-                "media",
-                pod_name,
-                "-c",
-                "qui",
-                "--",
-                "wget",
-                "-qO-",
-                '--post-data={"name":"qBittorrent","type":"qbittorrent","enabled":true,"host":"localhost","port":8080,"tls":false,"tls_skip_verify":true,"username":"admin","password":"%s","settings":{"basic_auth":false}}'
-                % qui_password,
-                "--header=Content-Type: application/json",
-                "--load-cookies",
-                "/tmp/cookies.txt",
-                "http://localhost:7476/api/download_clients",
-            ],
-            check=False,
-        )
+        exec_port_sync(upsert_instance_script)
 
 
 def tofu_output_json(tofu_dir: Path) -> dict:

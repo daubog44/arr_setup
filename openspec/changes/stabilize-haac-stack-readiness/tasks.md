@@ -6,9 +6,12 @@
 - [ ] 1.4 Replace the dead qBittorrent exporter image pin with a live compatible image/tag and align the metrics port contract
 - [ ] 1.5 Make the `downloaders` Deployment use a non-overlapping rolling strategy so qBittorrent state does not wedge readiness during updates
 - [ ] 1.6 Make the `downloaders-bootstrap` Job parse the selected pod name without depending on non-guaranteed text utilities in the bootstrap image
+- [ ] 1.7 Remove QUI's internal OIDC bootstrap path, switch the workload to auth-disabled mode behind Authelia, and reconcile qBittorrent through `/api/instances`
+- [ ] 1.8 Align the manual `configure-apps` fallback in `scripts/haac.py` with the same QUI `/api/instances` contract used by the in-cluster bootstrap Job
 
 ## 2. Validation
 
 - [ ] 2.1 Validate with `helm template haac-stack k8s/charts/haac-stack`
 - [ ] 2.2 Publish the GitOps changes and verify `nvidia-device-plugin` stays healthy without a live-only patch
 - [ ] 2.3 Verify `haac-gateway` is accepted and rerun `python scripts/haac.py wait-for-stack ...` until it either passes `haac-stack` or fails on a later concrete gate
+- [ ] 2.4 Verify the `downloaders-bootstrap` Job no longer fails on legacy QUI endpoints and either succeeds or surfaces a later downloader-specific blocker

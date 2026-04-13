@@ -52,3 +52,21 @@ The remaining downloader bootstrap can stay, but it should use the ArgoCD rerunn
 - set `argocd.argoproj.io/sync-options: Force=true,Replace=true`
 
 That keeps the genuinely needed bootstrap job rerunnable without letting an unnecessary Headlamp workaround block the whole application.
+
+### 5. Align QUI with the deployed auth model
+
+Live evidence shows the shipped QUI version no longer supports the bootstrap contract currently encoded in the repo:
+
+- the chart enables internal OIDC inside QUI
+- the bootstrap paths still call `/api/auth/setup`, `/api/auth/login`, and `/api/download_clients`
+- the public `qui` route is already behind the cluster's Authelia forward-auth layer
+
+That creates an impossible state where QUI reports both "initial setup required" and "setup disabled when OIDC is enabled". The smallest coherent fix is:
+
+- remove QUI from Authelia's OIDC client list
+- disable QUI's internal OIDC in the chart
+- enable QUI's documented auth-disabled mode, scoped to loopback plus the cluster pod/service CIDRs
+- keep public protection at the ingress layer through Authelia
+- update both the in-cluster bootstrap Job and the manual fallback path to reconcile qBittorrent through `/api/instances`
+
+This keeps the operator-visible auth model unchanged while making the workload-layer bootstrap match the actual QUI API surface.

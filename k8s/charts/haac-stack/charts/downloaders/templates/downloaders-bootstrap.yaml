@@ -56,11 +56,6 @@ spec:
           image: >-
             {{ printf "%s:%s" .Values.global.images.curl.repository .Values.global.images.curl.tag }}
           env:
-            - name: QUI_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: downloaders-auth
-                  key: QUI_USERNAME
             - name: QUI_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -90,8 +85,28 @@ spec:
                 return 1
               }
 
-              wait_http "http://qbittorrent.media.svc.cluster.local:8080"
-              wait_http "http://qbittorrent.media.svc.cluster.local"
+              extract_instance_id() {
+                compact="$1"
+                instance_id=$(printf '%s' "$compact" | sed -n 's/.*"id":\([0-9][0-9]*\),"name":"qBittorrent".*/\1/p')
+                if [ -z "$instance_id" ]; then
+                  instance_id=$(printf '%s' "$compact" | sed -n 's/.*"name":"qBittorrent","id":\([0-9][0-9]*\).*/\1/p')
+                fi
+                printf '%s' "$instance_id"
+              }
+
+              qbit_login_ok() {
+                password="$1"
+                login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' \
+                  --data "username=admin&password=${password}" \
+                  http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login || true)
+                if [ "$login_code" = "200" ] && grep -q 'Ok\.' /tmp/qbit-login.txt; then
+                  return 0
+                fi
+                return 1
+              }
+
+              wait_http "http://qbittorrent.media.svc.cluster.local:8080/api/v2/app/version"
+              wait_http "http://qbittorrent.media.svc.cluster.local/api/auth/me"
 
               POD_JSON=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods?labelSelector=app%3Ddownloaders")
               POD_JSON_COMPACT=$(printf '%s' "$POD_JSON" | tr -d '\n ')
@@ -101,42 +116,66 @@ spec:
                 exit 1
               fi
 
-              QBIT_LOGIN_CODE=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' \
-                --data "username=${QUI_USERNAME}&password=${QUI_PASSWORD}" \
-                http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login || true)
-              if [ "$QBIT_LOGIN_CODE" != "200" ] || ! grep -q 'Ok.' /tmp/qbit-login.txt; then
+              if ! qbit_login_ok "$QUI_PASSWORD"; then
                 POD_LOGS=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods/${POD_NAME}/log?container=qbittorrent")
                 TEMP_PASSWORD=$(printf '%s\n' "$POD_LOGS" | sed -n 's/.*A temporary password is provided for this session: //p' | tail -n 1 | tr -d '\r')
-                if [ -n "$TEMP_PASSWORD" ]; then
-                  curl -fsS -c /tmp/qbit-cookies.txt \
-                    --data "username=admin&password=${TEMP_PASSWORD}" \
-                    http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login >/dev/null
-                  curl -fsS -b /tmp/qbit-cookies.txt \
-                    --data "new_password=${QUI_PASSWORD}" \
-                    http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/changePassword >/dev/null
+                if [ -z "$TEMP_PASSWORD" ]; then
+                  echo "qBittorrent is not accepting the desired password and no temporary password was found in logs." >&2
+                  exit 1
                 fi
+                curl -fsS -c /tmp/qbit-cookies.txt \
+                  --data "username=admin&password=${TEMP_PASSWORD}" \
+                  http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/login >/dev/null
+                curl -fsS -b /tmp/qbit-cookies.txt \
+                  --data "new_password=${QUI_PASSWORD}" \
+                  http://qbittorrent.media.svc.cluster.local:8080/api/v2/auth/changePassword >/dev/null
               fi
 
-              QUI_LOGIN_CODE=$(curl -sS -o /tmp/qui-login.json -w '%{http_code}' -c /tmp/qui-cookies.txt \
-                -H 'Content-Type: application/json' \
-                --data "{\"username\":\"${QUI_USERNAME}\",\"password\":\"${QUI_PASSWORD}\"}" \
-                http://qbittorrent.media.svc.cluster.local/api/auth/login || true)
-              if [ "$QUI_LOGIN_CODE" -ge 400 ]; then
-                curl -fsS -H 'Content-Type: application/json' \
-                  --data "{\"username\":\"${QUI_USERNAME}\",\"password\":\"${QUI_PASSWORD}\"}" \
-                  http://qbittorrent.media.svc.cluster.local/api/auth/setup >/dev/null || true
-                curl -fsS -c /tmp/qui-cookies.txt \
+              if ! qbit_login_ok "$QUI_PASSWORD"; then
+                echo "qBittorrent did not accept the reconciled password." >&2
+                exit 1
+              fi
+
+              INSTANCE_PAYLOAD=$(printf '{"name":"qBittorrent","host":"http://127.0.0.1:8080","username":"admin","password":"%s","hasLocalFilesystemAccess":true}' "$QUI_PASSWORD")
+
+              INSTANCES=$(curl -fsS http://qbittorrent.media.svc.cluster.local/api/instances)
+              INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
+              INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
+
+              if [ -n "$INSTANCE_ID" ]; then
+                curl -fsS -X PUT \
                   -H 'Content-Type: application/json' \
-                  --data "{\"username\":\"${QUI_USERNAME}\",\"password\":\"${QUI_PASSWORD}\"}" \
-                  http://qbittorrent.media.svc.cluster.local/api/auth/login >/dev/null
+                  --data "$INSTANCE_PAYLOAD" \
+                  "http://qbittorrent.media.svc.cluster.local/api/instances/${INSTANCE_ID}" >/dev/null
+              else
+                CREATE_CODE=$(curl -sS -o /tmp/qui-instance-create.json -w '%{http_code}' \
+                  -H 'Content-Type: application/json' \
+                  --data "$INSTANCE_PAYLOAD" \
+                  http://qbittorrent.media.svc.cluster.local/api/instances || true)
+                if [ "$CREATE_CODE" != "200" ] && [ "$CREATE_CODE" != "201" ]; then
+                  echo "Unable to create qBittorrent instance in QUI." >&2
+                  cat /tmp/qui-instance-create.json >&2
+                  exit 1
+                fi
+                INSTANCES=$(curl -fsS http://qbittorrent.media.svc.cluster.local/api/instances)
+                INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
+                INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
               fi
 
-              CLIENTS=$(curl -fsS -b /tmp/qui-cookies.txt http://qbittorrent.media.svc.cluster.local/api/download_clients)
-              if printf '%s' "$CLIENTS" | grep -q '"name":"qBittorrent"'; then
-                exit 0
+              if [ -z "$INSTANCE_ID" ]; then
+                echo "Unable to resolve the qBittorrent instance id from QUI." >&2
+                exit 1
               fi
 
-              curl -fsS -b /tmp/qui-cookies.txt \
-                -H 'Content-Type: application/json' \
-                --data "{\"name\":\"qBittorrent\",\"type\":\"qbittorrent\",\"enabled\":true,\"host\":\"localhost\",\"port\":8080,\"tls\":false,\"tls_skip_verify\":true,\"username\":\"admin\",\"password\":\"${QUI_PASSWORD}\",\"settings\":{\"basic_auth\":false}}" \
-                http://qbittorrent.media.svc.cluster.local/api/download_clients >/dev/null
+              TEST_RESPONSE=""
+              for _ in $(seq 1 24); do
+                TEST_RESPONSE=$(curl -sS -X POST "http://qbittorrent.media.svc.cluster.local/api/instances/${INSTANCE_ID}/test" || true)
+                if printf '%s' "$TEST_RESPONSE" | grep -q '"connected":true'; then
+                  exit 0
+                fi
+                sleep 5
+              done
+
+              echo "QUI did not report a connected qBittorrent instance before timeout." >&2
+              printf '%s\n' "$TEST_RESPONSE" >&2
+              exit 1

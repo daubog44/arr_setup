@@ -84,10 +84,7 @@ spec:
             {{ printf "%s:%s" .Values.global.images.curl.repository .Values.global.images.curl.tag }}
           env:
             - name: QBIT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: downloaders-auth
-                  key: QUI_USERNAME
+              value: "admin"
             - name: QBIT_PASS
               valueFrom:
                 secretKeyRef:
@@ -162,21 +159,13 @@ spec:
             {{ printf "%s:%s" .Values.global.images.qui.repository .Values.global.images.qui.tag }}
           env:
             - name: QUI__OIDC_ENABLED
-              value: "true"
-            - name: QUI__OIDC_ISSUER
-              value: "http://authelia.mgmt.svc.cluster.local:9091"
-            - name: QUI__OIDC_CLIENT_ID
-              value: "qui"
-            - name: QUI__OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: downloaders-auth
-                  key: QUI_OIDC_SECRET
-            - name: QUI__OIDC_REDIRECT_URL
-              value: "https://qui.{{ .Values.global.domainName }}/api/auth/oidc/callback"
-            - name: QUI__OIDC_DISABLE_BUILT_IN_LOGIN
               value: "false"
-
+            - name: QUI__AUTH_DISABLED
+              value: "true"
+            - name: QUI__I_ACKNOWLEDGE_THIS_IS_A_BAD_IDEA
+              value: "true"
+            - name: QUI__AUTH_DISABLED_ALLOWED_CIDRS
+              value: "127.0.0.1/32,::1/128,{{ .Values.global.vpn.podSubnet }},{{ .Values.global.vpn.svcSubnet }}"
           ports:
             - containerPort: 7476
               name: qui-ui
@@ -202,10 +191,7 @@ spec:
             - name: QBITTORRENT_PORT
               value: "8080" # Localhost since it's a sidecar
             - name: QBITTORRENT_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: downloaders-auth
-                  key: QUI_USERNAME
+              value: "admin"
             - name: QBITTORRENT_PASSWORD
               valueFrom:
                 secretKeyRef:

@@ -12,6 +12,7 @@ Live reconciliation also exposed a third workload-layer mismatch after the earli
 - the `downloaders` Deployment stays unready because `caseyscarborough/qbittorrent-exporter:1.3.0` no longer exists in the registry, so the exporter sidecar sits in `ErrImagePull`
 - even after fixing the exporter image, the `downloaders` rollout can wedge because the default rolling strategy overlaps old and new qBittorrent pods against the same config volume; deleting the old pod lets the new pod become ready immediately
 - the remaining `downloaders-bootstrap` Job can still crash-loop because its pod-name discovery relies on external text utilities that are not guaranteed to exist in the chosen image, even though the Kubernetes API response itself is sufficient
+- after those fixes, the remaining `downloaders-bootstrap` logic still targets legacy QUI auth and client APIs (`/api/auth/setup`, `/api/auth/login`, `/api/download_clients`) that no longer match the shipped QUI version, while the chart simultaneously enables OIDC inside QUI even though the public route is already protected by Authelia
 
 ## What Changes
 
@@ -21,6 +22,7 @@ Live reconciliation also exposed a third workload-layer mismatch after the earli
 - Replace the dead qBittorrent exporter image pin with a live compatible image/tag and align the metrics port contract in the Deployment and Service.
 - Make the `downloaders` Deployment use a non-overlapping rolling strategy (`maxSurge: 0`, `maxUnavailable: 1`) so qBittorrent state does not wedge readiness during GitOps updates.
 - Make the `downloaders-bootstrap` Job parse the selected pod name with shell built-ins so it remains compatible with the bootstrap image and does not wedge the workload gate.
+- Remove QUI's redundant internal OIDC dependency, keep QUI protected by the existing Authelia forward-auth layer, and reconcile the qBittorrent instance through the supported `/api/instances` API instead of the dead legacy endpoints.
 - Validate the fix by publishing the chart changes and verifying that `wait-for-stack` moves beyond the `haac-stack` gate.
 
 ## Impact
@@ -28,3 +30,4 @@ Live reconciliation also exposed a third workload-layer mismatch after the earli
 - `task up` should stop failing at the workload readiness gate for these known degradations.
 - GPU runtime selection becomes more DRY: the chart has one source of truth for the NVIDIA runtime class.
 - Gateway API health reflects the real Traefik entrypoint contract instead of staying degraded indefinitely.
+- Downloader bootstrap becomes version-coherent with the current QUI image and no longer depends on a self-contradictory `setup required` plus `OIDC enabled` state.
