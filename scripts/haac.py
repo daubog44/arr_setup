@@ -1096,7 +1096,7 @@ def upload_inventory_configmap(kubectl: str, kubeconfig: Path) -> None:
             "yaml",
         ]
     )
-    run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"], input_text=namespace_yaml)
+    run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=namespace_yaml)
 
     configmap_yaml = run_stdout(
         [
@@ -1114,7 +1114,7 @@ def upload_inventory_configmap(kubectl: str, kubeconfig: Path) -> None:
             "yaml",
         ]
     )
-    run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"], input_text=configmap_yaml)
+    run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=configmap_yaml)
 
 
 def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -> None:
@@ -1282,7 +1282,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
 
 def apply_rendered_file(file_path: Path, kubeconfig: Path, kubectl: str, env: dict[str, str]) -> None:
     content = render_env_placeholders(file_path.read_text(encoding="utf-8"), env)
-    run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"], input_text=content)
+    run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=content)
 
 
 def wait_for_jsonpath(
@@ -1633,7 +1633,7 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
     render_gitops_manifests(env)
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
-        run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "-f", "-"], input_text=root_app)
+        run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=root_app)
         seed_argocd_bootstrap_patch(kubectl, session_kubeconfig)
         cleanup_disabled_platform_apps(kubectl, session_kubeconfig, env)
 
