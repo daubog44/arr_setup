@@ -25,6 +25,8 @@ spec:
         mongodb:
           architecture: standalone
           replicaCount: 1
+          persistence:
+            storageClass: local-path
         
   destination:
     server: https://kubernetes.default.svc
