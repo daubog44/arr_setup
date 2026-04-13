@@ -969,36 +969,16 @@
       changed_when: false
 
     # --- Sealed Secrets Controller ---
-    - name: Install Sealed Secrets Controller
-      ansible.builtin.command: >
-        k3s kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.36.6/controller.yaml
-      register: sealed_secrets_result
-      changed_when: "'created' in sealed_secrets_result.stdout or 'configured' in sealed_secrets_result.stdout"
+    - name: Resolve Sealed Secrets controller bootstrap version
+      ansible.builtin.set_fact:
+        sealed_secrets_controller_version: >-
+          {{
+            lookup('env', 'HAAC_SEALED_SECRETS_CONTROLLER_VERSION')
+            | default(lookup('env', 'HAAC_KUBESEAL_VERSION') | default('0.36.6', true), true)
+          }}
 
-    - name: Pin Sealed Secrets bootstrap controller to control-plane nodes
-      ansible.builtin.shell: |
-        set -euo pipefail
-        cat <<'EOF' | k3s kubectl patch deployment sealed-secrets-controller -n kube-system --type merge --patch-file /dev/stdin
-        spec:
-          template:
-            metadata:
-              annotations:
-                haac.io/bootstrap-placement: control-plane
-            spec:
-              nodeSelector:
-                node-role.kubernetes.io/control-plane: "true"
-              tolerations:
-                - key: node-role.kubernetes.io/control-plane
-                  operator: Exists
-                  effect: NoSchedule
-                - key: node-role.kubernetes.io/control-plane
-                  operator: Exists
-                  effect: NoExecute
-        EOF
-      args:
-        executable: /bin/bash
-      register: sealed_secrets_patch_result
-      changed_when: "'patched' in sealed_secrets_patch_result.stdout"
+    - name: Install Sealed Secrets Controller with control-plane placement
+      ansible.builtin.include_tasks: tasks/apply_sealed_secrets_controller.yml
 
     - name: Wait for Sealed Secrets controller to be ready
       block:
