@@ -108,10 +108,10 @@ spec:
               INV_ID=$(echo "$INV" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created inventory ID: $INV_ID"
 
-              # 5. Create environment (suppress host key checking)
+              # 5. Create environment (accept new SSH host keys instead of disabling trust)
               ENV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/environment" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"False\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}")
+                -d "{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"True\\\",\\\"HAAC_SSH_HOST_KEY_CHECKING\\\":\\\"accept-new\\\",\\\"HAAC_SSH_PRIVATE_KEY_PATH\\\":\\\"/etc/ansible-ssh/id_ed25519\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}")
               ENV_ID=$(echo "$ENV" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created environment ID: $ENV_ID"
 

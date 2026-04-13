@@ -22,6 +22,9 @@ import zipfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
+from haaclib.authelia import resolve_admin_password_hash
+from haaclib.redaction import redact_sensitive_text, secret_values_from_env
+from haaclib.sshconfig import ensure_known_hosts_file, resolve_known_hosts_path, resolve_ssh_host_key_mode
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
@@ -32,6 +35,8 @@ LEGACY_TOOLS_METADATA_PATH = TOOLS_DIR / "versions.json"
 SSH_DIR = ROOT / ".ssh"
 SSH_PRIVATE_KEY_PATH = SSH_DIR / "haac_ed25519"
 SSH_PUBLIC_KEY_PATH = SSH_DIR / "haac_ed25519.pub"
+SEMAPHORE_SSH_PRIVATE_KEY_PATH = SSH_DIR / "haac_semaphore_ed25519"
+SEMAPHORE_SSH_PUBLIC_KEY_PATH = SSH_DIR / "haac_semaphore_ed25519.pub"
 ENV_FILE = ROOT / ".env"
 PUB_CERT_PATH = SCRIPTS_DIR / "pub-sealed-secrets.pem"
 SECRETS_DIR = K8S_DIR / "charts" / "haac-stack" / "templates" / "secrets"
@@ -193,10 +198,35 @@ def resolved_binary(name: str) -> str:
     return tool_location(name) or name
 
 
-def ssh_common_options(*, connect_timeout: int = 5) -> list[str]:
+def redaction_values(env: dict[str, str] | None = None) -> list[str]:
+    return secret_values_from_env(env or merged_env())
+
+
+def redact_text(text: str, env: dict[str, str] | None = None) -> str:
+    return redact_sensitive_text(text, redaction_values(env))
+
+
+def known_hosts_path(env: dict[str, str] | None = None) -> Path:
+    return ensure_known_hosts_file(resolve_known_hosts_path(ROOT, env or merged_env()))
+
+
+def ssh_host_key_checking_mode(env: dict[str, str] | None = None) -> str:
+    return resolve_ssh_host_key_mode(env or merged_env())
+
+
+def ssh_common_options(
+    *,
+    connect_timeout: int = 5,
+    env: dict[str, str] | None = None,
+    known_hosts_file: str | None = None,
+) -> list[str]:
+    working_env = env or merged_env()
+    known_hosts_file = known_hosts_file or str(known_hosts_path(working_env))
     return [
         "-o",
-        "StrictHostKeyChecking=no",
+        f"StrictHostKeyChecking={ssh_host_key_checking_mode(working_env)}",
+        "-o",
+        f"UserKnownHostsFile={known_hosts_file}",
         "-o",
         "BatchMode=yes",
         "-o",
@@ -207,11 +237,10 @@ def ssh_common_options(*, connect_timeout: int = 5) -> list[str]:
 
 
 def proxmox_ssh_base_command(host: str, *, connect_timeout: int = 5) -> list[str]:
+    env = merged_env()
     command = [
         "ssh",
-        *ssh_common_options(connect_timeout=connect_timeout),
-        "-o",
-        "UserKnownHostsFile=/dev/null",
+        *ssh_common_options(connect_timeout=connect_timeout, env=env),
         "-o",
         "IdentitiesOnly=yes",
     ]
@@ -225,11 +254,10 @@ def proxmox_ssh_command(host: str, remote_command: str, *, connect_timeout: int 
     if is_windows():
         env = merged_env()
         ssh_key_wsl = ensure_wsl_ssh_keypair(env)
+        known_hosts_wsl = ensure_wsl_known_hosts(env)
         ssh_command = [
             "ssh",
-            *ssh_common_options(connect_timeout=connect_timeout),
-            "-o",
-            "UserKnownHostsFile=/dev/null",
+            *ssh_common_options(connect_timeout=connect_timeout, env=env, known_hosts_file=known_hosts_wsl),
             "-o",
             "IdentitiesOnly=yes",
             "-i",
@@ -257,11 +285,10 @@ def proxmox_tunnel_command(
     if is_windows():
         env = merged_env()
         ssh_key_wsl = ensure_wsl_ssh_keypair(env)
+        known_hosts_wsl = ensure_wsl_known_hosts(env)
         ssh_command = [
             "ssh",
-            *ssh_common_options(connect_timeout=connect_timeout),
-            "-o",
-            "UserKnownHostsFile=/dev/null",
+            *ssh_common_options(connect_timeout=connect_timeout, env=env, known_hosts_file=known_hosts_wsl),
             "-o",
             "IdentitiesOnly=yes",
             "-i",
@@ -399,6 +426,7 @@ def run(
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = wrap_wsl_tool_command(command, cwd, env)
+    working_env = env or merged_env()
     completed = subprocess.run(
         command,
         cwd=str(cwd),
@@ -414,7 +442,7 @@ def run(
         stderr = completed.stderr.strip() if completed.stderr else ""
         stdout = completed.stdout.strip() if completed.stdout else ""
         detail = stderr or stdout or f"exit code {completed.returncode}"
-        raise HaaCError(f"Command failed: {command_label(command)}\n{detail}")
+        raise HaaCError(f"Command failed: {redact_text(command_label(command), working_env)}\n{redact_text(detail, working_env)}")
     return completed
 
 
@@ -614,6 +642,20 @@ def ensure_wsl_ssh_keypair(env: dict[str, str]) -> str:
     return private_key_wsl
 
 
+def ensure_wsl_known_hosts(env: dict[str, str]) -> str:
+    local_known_hosts = known_hosts_path(env)
+    home_dir = wsl_home_dir(env)
+    known_hosts_wsl = f"{home_dir}/.ssh/haac_known_hosts"
+    encoded_known_hosts = base64.b64encode(local_known_hosts.read_bytes()).decode("ascii")
+    command = (
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+        "printf '%s' '" + encoded_known_hosts + "' | base64 -d > ~/.ssh/haac_known_hosts && "
+        "chmod 600 ~/.ssh/haac_known_hosts"
+    )
+    run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
+    return known_hosts_wsl
+
+
 def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env: dict[str, str]) -> None:
     if shutil.which("wsl") is None:
         raise HaaCError(
@@ -626,9 +668,10 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
     kubeconfig_wsl = to_posix_wsl_path(local_kubeconfig_path(), env)
     kube_dir_wsl = str(PurePosixPath(kubeconfig_wsl).parent)
     ssh_key_wsl = ensure_wsl_ssh_keypair(env)
+    known_hosts_wsl = ensure_wsl_known_hosts(env)
 
     env_exports = {
-        key: env[key]
+        key: env[key].strip()
         for key in (
             "PROXMOX_HOST_PASSWORD",
             "LXC_PASSWORD",
@@ -647,15 +690,34 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
     }
     env_exports["HAAC_KUBECONFIG_PATH"] = kubeconfig_wsl
     env_exports["HAAC_SSH_PRIVATE_KEY_PATH"] = ssh_key_wsl
+    env_exports["HAAC_SSH_KNOWN_HOSTS_PATH"] = known_hosts_wsl
+    env_exports["HAAC_SSH_HOST_KEY_CHECKING"] = ssh_host_key_checking_mode(env)
 
-    exports = " ".join(f"{key}={shlex.quote(value)}" for key, value in env_exports.items())
+    fd, temp_env_path = tempfile.mkstemp(prefix="haac-ansible-", suffix=".env")
+    os.close(fd)
+    temp_env_file = Path(temp_env_path)
+    temp_env_file.write_text(
+        "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env_exports.items()),
+        encoding="utf-8",
+        newline="\n",
+    )
+    temp_env_file_wsl = to_posix_wsl_path(temp_env_file, env)
     args = " ".join(shlex.quote(arg) for arg in extra_args)
     command = (
+        f"set -a && . {shlex.quote(temp_env_file_wsl)} && set +a && "
         f"cd {shlex.quote(repo_wsl)} && "
         f"mkdir -p {shlex.quote(kube_dir_wsl)} && "
-        f"{exports} ansible-playbook {args} -i {shlex.quote(inventory_wsl)} {shlex.quote(playbook_wsl)}"
+        f"ansible-playbook {args} -i {shlex.quote(inventory_wsl)} {shlex.quote(playbook_wsl)}"
     ).strip()
-    run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
+    try:
+        run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
+    finally:
+        for _ in range(10):
+            try:
+                temp_env_file.unlink(missing_ok=True)
+                break
+            except PermissionError:
+                time.sleep(0.2)
 
 
 def allocate_local_port() -> int:
@@ -1260,7 +1322,8 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
         ),
     ]
 
-    ssh_key = ROOT / ".ssh" / "haac_ed25519"
+    ensure_semaphore_ssh_keypair()
+    ssh_key = SEMAPHORE_SSH_PRIVATE_KEY_PATH
     if ssh_key.exists():
         secrets.append(
             (
@@ -1518,7 +1581,7 @@ def require_success(completed: subprocess.CompletedProcess[str], context: str) -
     if completed.returncode == 0:
         return
     detail = (completed.stderr or completed.stdout or f"exit code {completed.returncode}").strip()
-    raise HaaCError(f"{context}\n{detail}")
+    raise HaaCError(f"{context}\n{redact_text(detail)}")
 
 
 def require_git_bootstrap_repo(remote_name: str = "origin") -> None:
@@ -1530,19 +1593,54 @@ def require_git_bootstrap_repo(remote_name: str = "origin") -> None:
         )
 
 
-def sync_repo() -> None:
+def git_dirty_paths() -> list[str]:
+    status = run_stdout(["git", "status", "--porcelain"], check=False)
+    paths: list[str] = []
+    for line in status.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:] if len(line) > 3 else line
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path.strip())
+    return paths
+
+
+def git_head(ref: str) -> str:
+    return run_stdout(["git", "rev-parse", ref])
+
+
+def sync_repo(push_all: bool) -> None:
     require_git_bootstrap_repo()
     env = merged_env()
     revision = gitops_revision(env)
 
-    checkpoint_git_changes(
-        "Auto-save before sync [skip ci]",
-        empty_message="[ok] GitOps repo already checkpointed before sync.",
-    )
-
     remote_ref = f"origin/{revision}"
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
+
+    dirty_paths = git_dirty_paths()
+    if dirty_paths and not push_all:
+        local_head = git_head("HEAD")
+        remote_head = git_head(remote_ref)
+        if local_head != remote_head:
+            dirty_preview = ", ".join(dirty_paths[:5])
+            if len(dirty_paths) > 5:
+                dirty_preview += ", ..."
+            raise HaaCError(
+                "PUSH_ALL=false refuses to checkpoint unrelated local work while the GitOps branch is behind origin.\n"
+                f"Dirty paths: {dirty_preview}\n"
+                "Commit or stash those edits, or rerun with PUSH_ALL=true if you intentionally want an automatic checkpoint."
+            )
+        print("[warn] Preserving local uncommitted work because PUSH_ALL=false and the GitOps branch is already current.")
+        return
+
+    if push_all:
+        checkpoint_git_changes(
+            "Auto-save before sync [skip ci]",
+            empty_message="[ok] GitOps repo already checkpointed before sync.",
+        )
+
     merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
     require_success(merge, f"Git merge failed for {remote_ref}")
     print(f"[ok] GitOps repo synchronized with {remote_ref}")
@@ -1553,17 +1651,22 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
     env = merged_env()
     revision = gitops_revision(env)
 
-    checkpoint_git_changes(
-        "Auto-commit manual work [skip ci]",
-        empty_message="[ok] No local repo changes needed a checkpoint before GitOps publication.",
-    )
-
     remote_ref = f"origin/{revision}"
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
-    merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
-    require_success(merge, f"Git merge failed for {remote_ref}")
-    print(f"[ok] GitOps repo synchronized with {remote_ref}")
+    if push_all:
+        checkpoint_git_changes(
+            "Auto-commit manual work [skip ci]",
+            empty_message="[ok] No local repo changes needed a checkpoint before GitOps publication.",
+        )
+        merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
+        require_success(merge, f"Git merge failed for {remote_ref}")
+        print(f"[ok] GitOps repo synchronized with {remote_ref}")
+    elif git_head("HEAD") != git_head(remote_ref):
+        raise HaaCError(
+            "GitOps publication requires the local branch to match origin when PUSH_ALL=false. "
+            "Run `task sync` first with a clean worktree or rerun with PUSH_ALL=true."
+        )
 
     generate_secrets_core(kubeconfig, kubectl, fetch_cert=False)
 
@@ -1632,9 +1735,34 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
     env = merged_env()
     render_gitops_manifests(env)
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "apply",
+                "--server-side",
+                "--force-conflicts",
+                "--validate=false",
+                "-k",
+                str(K8S_DIR / "platform" / "argocd" / "install-overlay"),
+            ]
+        )
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "rollout",
+                "status",
+                "deployment/argocd-server",
+                "-n",
+                "argocd",
+                "--timeout=300s",
+            ]
+        )
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=root_app)
-        seed_argocd_bootstrap_patch(kubectl, session_kubeconfig)
         cleanup_disabled_platform_apps(kubectl, session_kubeconfig, env)
 
 
@@ -2623,9 +2751,33 @@ def ensure_repo_ssh_keypair() -> None:
     )
 
 
+def ensure_semaphore_ssh_keypair() -> None:
+    if SEMAPHORE_SSH_PRIVATE_KEY_PATH.exists() and SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
+        return
+    if shutil.which("ssh-keygen") is None:
+        raise HaaCError("ssh-keygen is required to create the Semaphore SSH keypair.")
+    SSH_DIR.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-f",
+            str(SEMAPHORE_SSH_PRIVATE_KEY_PATH),
+            "-N",
+            "",
+            "-C",
+            "haac-semaphore@local",
+        ]
+    )
+
+
 def doctor() -> None:
     env = merged_env()
     failures: list[str] = []
+    ensure_repo_ssh_keypair()
+    ensure_semaphore_ssh_keypair()
+    known_hosts_path(env)
     checks = [
         ("python", "python"),
         ("git", "git"),
@@ -2658,6 +2810,14 @@ def doctor() -> None:
     else:
         print(f"[missing] repo ssh keypair: {SSH_PRIVATE_KEY_PATH}")
         failures.append("repo-ssh-keypair")
+
+    if SEMAPHORE_SSH_PRIVATE_KEY_PATH.exists() and SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
+        print(f"[ok] semaphore ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
+    else:
+        print(f"[missing] semaphore ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
+        failures.append("semaphore-ssh-keypair")
+
+    print(f"[ok] known_hosts path: {known_hosts_path(env)}")
 
     if is_windows():
         distro = wsl_distro(env)
@@ -2786,6 +2946,7 @@ def install_tools() -> None:
         )
 
     ensure_repo_ssh_keypair()
+    ensure_semaphore_ssh_keypair()
 
     if is_windows():
         install_wsl_tools()
@@ -2991,8 +3152,8 @@ def cmd_tofu_output(args: argparse.Namespace) -> None:
     print(tofu_output_value(Path(args.dir), args.name, args.default))
 
 
-def cmd_sync_repo(_: argparse.Namespace) -> None:
-    sync_repo()
+def cmd_sync_repo(args: argparse.Namespace) -> None:
+    sync_repo(args.push_all)
 
 
 def cmd_setup_hooks(_: argparse.Namespace) -> None:
@@ -3014,6 +3175,8 @@ def cmd_run_ansible(args: argparse.Namespace) -> None:
 
     env["HAAC_KUBECONFIG_PATH"] = str(local_kubeconfig_path())
     env["HAAC_SSH_PRIVATE_KEY_PATH"] = str(SSH_PRIVATE_KEY_PATH)
+    env["HAAC_SSH_KNOWN_HOSTS_PATH"] = str(known_hosts_path(env))
+    env["HAAC_SSH_HOST_KEY_CHECKING"] = ssh_host_key_checking_mode(env)
     ensure_parent(local_kubeconfig_path())
     run(["ansible-playbook", *extra_args, "-i", str(inventory), str(playbook)], env=env)
 
@@ -3154,6 +3317,7 @@ def build_parser() -> argparse.ArgumentParser:
     command.set_defaults(func=cmd_tofu_output)
 
     command = subparsers.add_parser("sync-repo")
+    command.add_argument("--push-all", action="store_true")
     command.set_defaults(func=cmd_sync_repo)
 
     command = subparsers.add_parser("setup-hooks")

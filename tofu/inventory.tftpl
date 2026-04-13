@@ -18,7 +18,9 @@ all:
           ansible_host: ${host == master_target_node ? proxmox_access_host : host}
           ansible_user: ${proxmox_host_user}
           ansible_password: "{{ lookup('env', 'PROXMOX_HOST_PASSWORD') }}"
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
+            -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
 %{ endfor ~}
     k3s_master:
       hosts:
@@ -26,11 +28,11 @@ all:
           ansible_user: root
           ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}"
           ansible_ssh_common_args: >-
-            -o StrictHostKeyChecking=no
-            -o UserKnownHostsFile=/dev/null
+            -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
+            -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
             -o IdentitiesOnly=yes
             -o IdentityFile={{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}
-            -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }} -W %h:%p ${proxmox_host_user}@${proxmox_access_host}"
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }} -W %h:%p ${proxmox_host_user}@${proxmox_access_host}"
           lxc_vmid: "${master_vmid}"
           proxmox_host: "${master_target_node}"
     k3s_workers:
@@ -40,11 +42,11 @@ all:
           ansible_user: root
           ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}"
           ansible_ssh_common_args: >-
-            -o StrictHostKeyChecking=no
-            -o UserKnownHostsFile=/dev/null
+            -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
+            -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
             -o IdentitiesOnly=yes
             -o IdentityFile={{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }}
-            -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }} -W %h:%p ${proxmox_host_user}@${worker_configs[name].target_node == master_target_node ? proxmox_access_host : worker_configs[name].target_node}"
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_ed25519', true) }} -W %h:%p ${proxmox_host_user}@${worker_configs[name].target_node == master_target_node ? proxmox_access_host : worker_configs[name].target_node}"
           lxc_vmid: "${worker.vm_id}"
           worker_name: "${name}"
           proxmox_host: "${worker_configs[name].target_node}"

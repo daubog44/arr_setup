@@ -14,14 +14,15 @@
         group: root
         mode: '0700'
 
-    - name: Authorize the repo SSH key on Proxmox root for ProxyJump access
+    - name: Authorize the operator and automation SSH keys on Proxmox root for ProxyJump access
       ansible.builtin.lineinfile:
         path: /root/.ssh/authorized_keys
-        line: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') }}"
+        line: "{{ lookup('file', item) }}"
         create: true
         owner: root
         group: root
         mode: '0600'
+      loop: "{{ query('fileglob', playbook_dir ~ '/../.ssh/haac*.pub') }}"
 
     - name: Disable Proxmox Enterprise repository (requires paid subscription)
       ansible.builtin.replace:
@@ -476,9 +477,9 @@
       when: lxc_conf.changed
       delegate_to: "{{ proxmox_host }}"
 
-    - name: Ensure repo SSH public key is installed and persists in guest root account
+    - name: Ensure operator and automation SSH public keys are installed and persist in guest root account
       ansible.builtin.shell: |
-        pubkey="$(printf '%s' '{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') | trim | b64encode }}' | base64 -d)"
+        pubkey="$(printf '%s' '{{ lookup('file', item) | trim | b64encode }}' | base64 -d)"
         pct exec {{ lxc_vmid }} -- sh -lc "install -d -m 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys || printf '%s\n' \"\$pubkey\" >> /root/.ssh/authorized_keys"
         pct exec {{ lxc_vmid }} -- sh -lc "grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys"
       register: guest_ssh_key_ready
@@ -487,6 +488,7 @@
       delay: 3
       changed_when: false
       delegate_to: "{{ proxmox_host }}"
+      loop: "{{ query('fileglob', playbook_dir ~ '/../.ssh/haac*.pub') }}"
 
 
 - name: Automate OS Baseline and Dependencies (All K3s Nodes)
@@ -1175,23 +1177,8 @@
       retries: 24
       delay: 5
 
-    # --- ArgoCD ---
-    - name: Install ArgoCD
-      ansible.builtin.command: >
-        k3s kubectl apply -n argocd --server-side --force-conflicts
-        --validate=false
-        -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.2/manifests/install.yaml
-      register: install_argo
-      changed_when: "'created' in install_argo.stdout or 'configured' in install_argo.stdout"
-
-    - name: Wait for ArgoCD server to be ready
-      ansible.builtin.command: >
-        k3s kubectl rollout status deploy/argocd-server -n argocd --timeout=120s
-      register: argo_ready
-      retries: 10
-      delay: 15
-      until: argo_ready.rc == 0
-      changed_when: false
+    # ArgoCD bootstrap ownership intentionally lives in scripts/haac.py -> deploy_argocd().
+    # That path applies the repo-local install overlay so the bootstrap source of truth stays in Git.
 
 - name: Deferred Kubernetes Node Label Reconciliation
   hosts: k3s_master:k3s_workers

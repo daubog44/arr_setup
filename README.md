@@ -145,10 +145,19 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 - infra and storage: `LXC_PASSWORD`, `LXC_MASTER_HOSTNAME`, `NAS_ADDRESS`, `HOST_NAS_PATH`, `NAS_PATH`, `NAS_SHARE_NAME`, `SMB_USER`, `SMB_PASSWORD`, `STORAGE_UID`, `STORAGE_GID`
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
+- local auth bootstrap: `AUTHELIA_ADMIN_PASSWORD` as the explicit source of truth for the local Authelia admin account
 
 `LXC_PASSWORD` remains the documented password source of truth. Supporting `scripts/haac.py` bootstrap commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
 
+`PUSH_ALL` is now safe-by-default. With `PUSH_ALL=false`, `task up` publishes only generated GitOps artifacts and refuses to auto-checkpoint unrelated local work when the branch is behind `origin`. `PUSH_ALL=true` remains available as the explicit wide-publication escape hatch.
+
 `MASTER_TARGET_NODE` remains the Proxmox node name used inside OpenTofu and generated inventory. `PROXMOX_ACCESS_HOST` is the workstation-reachable IP or hostname used for the Proxmox API, SSH, and tunnel operations. If the node name itself already resolves locally, `PROXMOX_ACCESS_HOST` may be left unset and the bootstrap falls back to `MASTER_TARGET_NODE`.
+
+SSH trust is no longer forced off by default. The operator path now uses a repo-local `known_hosts` file together with `StrictHostKeyChecking=accept-new`, so the first bootstrap stays practical without silently bypassing host verification on later runs.
+
+ArgoCD bootstrap ownership is now local to the repo: Ansible prepares the cluster prerequisites, while `scripts/haac.py deploy-argocd` installs ArgoCD from `k8s/platform/argocd/install-overlay` and only then applies the app-of-apps root.
+
+Cloudflare Tunnel autoupdate is configurable again through `.env` via `HAAC_ENABLE_CLOUDFLARED_AUTOUPDATE`. Trivy remains intentionally bounded to avoid control-plane churn on the single-master SQLite/Kine topology.
 
 Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and validation of the effective Proxmox API/SSH access host before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. `configure-os` also stops before GitOps bootstrap if K3s service recovery does not yield local flannel subnet state or a fully `Ready` node set. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
 

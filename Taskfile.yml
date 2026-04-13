@@ -5,7 +5,7 @@ dotenv: [".env"]
 vars:
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   PUSH_ALL:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name PUSH_ALL --default true'
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name PUSH_ALL --default false'
   TOFU_DIR: tofu
   LXC_PASSWORD_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'
@@ -64,7 +64,7 @@ tasks:
   sync:
     desc: Save local work and validate the writable GitOps `origin` remote for `GITOPS_REPO_REVISION` before provisioning.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" sync-repo'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" sync-repo {{if eq .PUSH_ALL "true"}}--push-all{{end}}'
 
   up:
     desc: "Full bootstrap from scratch: OpenTofu, Ansible, GitOps bootstrap, app configuration, and verification."

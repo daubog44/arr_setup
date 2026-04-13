@@ -22,6 +22,9 @@ spec:
         
         # Deploy the chaos center and agent together for homelab simplicity
         adminMode: true
+        mongodb:
+          architecture: standalone
+          replicaCount: 1
         
   destination:
     server: https://kubernetes.default.svc

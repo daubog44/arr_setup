@@ -24,7 +24,9 @@ spec:
             {{ .Values.global.images.cloudflared.repository }}:{{ .Values.global.images.cloudflared.tag }}
           args:
             - tunnel
+            {{- if not .Values.global.cloudflared.autoUpdate.enabled }}
             - --no-autoupdate
+            {{- end }}
             - --protocol
             - http2
             - run

@@ -36,6 +36,9 @@ global:
     version: "${HAAC_K3S_VERSION}"
     autoUpgrade:
       enabled: ${HAAC_ENABLE_K3S_AUTO_UPGRADES}
+  cloudflared:
+    autoUpdate:
+      enabled: ${HAAC_ENABLE_CLOUDFLARED_AUTOUPDATE}
   images:
     gluetun:
       repository: qmcgaw/gluetun

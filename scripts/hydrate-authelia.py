@@ -5,6 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from haaclib.authelia import resolve_admin_password_hash
 
 CURRENT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = CURRENT_DIR.parent
@@ -86,6 +87,11 @@ def main() -> None:
     env = load_env(Path(args.env_file))
     if "DOMAIN_NAME" in os.environ:
         env["DOMAIN_NAME"] = os.environ["DOMAIN_NAME"]
+    env["AUTHELIA_ADMIN_PASSWORD_HASH"] = resolve_admin_password_hash(
+        env,
+        env_file=Path(args.env_file),
+        wsl_distro=env.get("HAAC_WSL_DISTRO", "Debian"),
+    )
 
     output_dir = Path(args.output_dir)
     key_content = read_oidc_key(env, output_dir)
