@@ -70,3 +70,21 @@ That creates an impossible state where QUI reports both "initial setup required"
 - update both the in-cluster bootstrap Job and the manual fallback path to reconcile qBittorrent through `/api/instances`
 
 This keeps the operator-visible auth model unchanged while making the workload-layer bootstrap match the actual QUI API surface.
+
+### 6. Move downloader bootstrap into the same pod as qBittorrent
+
+Live verification from the cluster shows the current separate Job model cannot be made reliable enough for qBittorrent bootstrap:
+
+- `http://qbittorrent.media.svc.cluster.local:8080/api/v2/app/version` returns `403` from the separate bootstrap pod
+- the same API works over `127.0.0.1` inside the `downloaders` pod
+- qBittorrent credential reconciliation therefore has a same-pod locality requirement
+
+The smallest robust design is:
+
+- keep the narrow service account plus RBAC that can read pod logs in `media`
+- attach that service account to the `downloaders` Deployment
+- run the qBittorrent password recovery plus QUI `/api/instances` reconciliation at the start of the `port-sync` sidecar
+- keep the existing long-running port-forward sync loop after bootstrap succeeds
+- remove the standalone `downloaders-bootstrap` Job so ArgoCD health no longer depends on a bootstrap pod that cannot satisfy qBittorrent's API constraints
+
+This keeps bootstrap automatic, declarative, and same-pod local where the underlying applications actually allow it.

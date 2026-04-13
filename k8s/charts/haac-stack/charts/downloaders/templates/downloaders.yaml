@@ -21,6 +21,7 @@ spec:
       labels:
         app: downloaders
     spec:
+      serviceAccountName: downloaders-bootstrap
       containers:
         - name: gluetun
           image: >-
@@ -93,6 +94,127 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              set -eu
+
+              curl_common() {
+                curl --connect-timeout 5 --max-time 20 "$@"
+              }
+
+              api_call() {
+                curl_common -fsS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                  -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                  "$@"
+              }
+
+              wait_http() {
+                url="$1"
+                for _ in $(seq 1 60); do
+                  if curl_common -fsS "$url" >/dev/null 2>&1; then
+                    return 0
+                  fi
+                  sleep 5
+                done
+                echo "Timed out waiting for $url" >&2
+                return 1
+              }
+
+              qbit_login_ok() {
+                password="$1"
+                login_code=$(curl_common -sS -o /tmp/qbit-login.txt -w '%{http_code}' \
+                  --data-urlencode "username=${QBIT_USER}" \
+                  --data-urlencode "password=${password}" \
+                  http://127.0.0.1:8080/api/v2/auth/login || true)
+                if [ "$login_code" = "200" ] && grep -q 'Ok\.' /tmp/qbit-login.txt; then
+                  return 0
+                fi
+                return 1
+              }
+
+              extract_instance_id() {
+                compact="$1"
+                instance_id=$(printf '%s' "$compact" | sed -n 's/.*"id":\([0-9][0-9]*\),"name":"qBittorrent".*/\1/p')
+                if [ -z "$instance_id" ]; then
+                  instance_id=$(printf '%s' "$compact" | sed -n 's/.*"name":"qBittorrent","id":\([0-9][0-9]*\).*/\1/p')
+                fi
+                printf '%s' "$instance_id"
+              }
+
+              echo "Waiting for qBittorrent and QUI endpoints..."
+              wait_http "http://127.0.0.1:8080/api/v2/app/version"
+              wait_http "http://127.0.0.1:7476/api/auth/me"
+
+              if ! qbit_login_ok "$QBIT_PASS"; then
+                echo "Desired qBittorrent password rejected. Attempting temporary-password recovery..."
+                POD_LOGS=$(api_call "https://kubernetes.default.svc/api/v1/namespaces/media/pods/${HOSTNAME}/log?container=qbittorrent")
+                TEMP_PASSWORD=$(printf '%s\n' "$POD_LOGS" | sed -n 's/.*A temporary password is provided for this session: //p' | tail -n 1 | tr -d '\r')
+                if [ -z "$TEMP_PASSWORD" ]; then
+                  echo "qBittorrent is not accepting the desired password and no temporary password was found in logs." >&2
+                  exit 1
+                fi
+                curl_common -fsS -c /tmp/qbit-cookies.txt \
+                  --data-urlencode "username=${QBIT_USER}" \
+                  --data-urlencode "password=${TEMP_PASSWORD}" \
+                  http://127.0.0.1:8080/api/v2/auth/login >/dev/null
+                curl_common -fsS -b /tmp/qbit-cookies.txt \
+                  --data-urlencode "new_password=${QBIT_PASS}" \
+                  http://127.0.0.1:8080/api/v2/auth/changePassword >/dev/null
+              fi
+
+              if ! qbit_login_ok "$QBIT_PASS"; then
+                echo "qBittorrent did not accept the reconciled password." >&2
+                exit 1
+              fi
+
+              echo "qBittorrent credentials reconciled. Upserting QUI instance..."
+              ESCAPED_QBIT_PASS=$(printf '%s' "$QBIT_PASS" | sed 's/\\/\\\\/g; s/"/\\"/g')
+              INSTANCE_PAYLOAD=$(printf '{"name":"qBittorrent","host":"http://127.0.0.1:8080","username":"admin","password":"%s","hasLocalFilesystemAccess":true}' "$ESCAPED_QBIT_PASS")
+              INSTANCES=$(curl_common -fsS http://127.0.0.1:7476/api/instances)
+              INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
+              INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
+
+              if [ -n "$INSTANCE_ID" ]; then
+                curl_common -fsS -X PUT \
+                  -H 'Content-Type: application/json' \
+                  --data "$INSTANCE_PAYLOAD" \
+                  "http://127.0.0.1:7476/api/instances/${INSTANCE_ID}" >/dev/null
+              else
+                CREATE_CODE=$(curl_common -sS -o /tmp/qui-instance-create.json -w '%{http_code}' \
+                  -H 'Content-Type: application/json' \
+                  --data "$INSTANCE_PAYLOAD" \
+                  http://127.0.0.1:7476/api/instances || true)
+                if [ "$CREATE_CODE" != "200" ] && [ "$CREATE_CODE" != "201" ]; then
+                  echo "Unable to create qBittorrent instance in QUI." >&2
+                  cat /tmp/qui-instance-create.json >&2
+                  exit 1
+                fi
+                INSTANCES=$(curl_common -fsS http://127.0.0.1:7476/api/instances)
+                INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
+                INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
+              fi
+
+              if [ -z "$INSTANCE_ID" ]; then
+                echo "Unable to resolve the qBittorrent instance id from QUI." >&2
+                exit 1
+              fi
+
+              echo "Waiting for QUI instance connectivity test..."
+              TEST_RESPONSE=""
+              for _ in $(seq 1 24); do
+                TEST_RESPONSE=$(curl_common -sS -X POST "http://127.0.0.1:7476/api/instances/${INSTANCE_ID}/test" || true)
+                if printf '%s' "$TEST_RESPONSE" | grep -q '"connected":true'; then
+                  echo "QUI instance connectivity test passed."
+                  break
+                fi
+                sleep 5
+              done
+
+              if ! printf '%s' "$TEST_RESPONSE" | grep -q '"connected":true'; then
+                echo "QUI did not report a connected qBittorrent instance before timeout." >&2
+                printf '%s\n' "$TEST_RESPONSE" >&2
+                exit 1
+              fi
+
+              echo "Bootstrap complete. Starting port-forward sync loop..."
               last_port=0
               while true; do
                 if [ -f /tmp/gluetun/forwarded_port ]; then
