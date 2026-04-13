@@ -19,7 +19,7 @@ Live reconciliation also exposed a third workload-layer mismatch after the earli
 - Align the Gateway listener contract with the Traefik entrypoint ports actually exposed by the current K3s Traefik deployment, and drop the invalid in-cluster HTTPS listener that has no TLS configuration.
 - Remove the non-standard Headlamp token-header bootstrap workaround that keeps blocking `haac-stack`, while retaining the remaining bootstrap Job on a rerunnable Argo pattern.
 - Replace the dead qBittorrent exporter image pin with a live compatible image/tag and align the metrics port contract in the Deployment and Service.
-- Make the `downloaders` Deployment use a recreate rollout so qBittorrent does not overlap old and new pods against the same config state during GitOps updates.
+- Make the `downloaders` Deployment use a non-overlapping rolling strategy (`maxSurge: 0`, `maxUnavailable: 1`) so qBittorrent state does not wedge readiness during GitOps updates.
 - Make the `downloaders-bootstrap` Job parse the selected pod name with shell built-ins so it remains compatible with the bootstrap image and does not wedge the workload gate.
 - Validate the fix by publishing the chart changes and verifying that `wait-for-stack` moves beyond the `haac-stack` gate.
 
