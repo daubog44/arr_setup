@@ -35,6 +35,12 @@ spec:
       enableServiceLinks: false
       securityContext:
         fsGroup: 1000
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       initContainers:
         - name: init-permissions
           image: >-

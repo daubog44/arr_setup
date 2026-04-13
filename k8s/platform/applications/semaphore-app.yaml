@@ -48,6 +48,13 @@ spec:
             secretKeys:
               adminPasswordKey: POSTGRES_PASSWORD
               userPasswordKey: POSTGRES_PASSWORD
+          primary:
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: "true"
+            tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
 
         secrets:
           existingSecret: semaphore-general
@@ -95,6 +102,13 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+
+        nodeSelector:
+          node-role.kubernetes.io/control-plane: "true"
+        tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
 
         # Mount the dynamic Ansible inventory from ConfigMap
         # Updated by Taskfile after each Terraform run
