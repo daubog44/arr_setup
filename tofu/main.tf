@@ -4,7 +4,7 @@ data "external" "latest_debian13" {
 }
 
 # Fetch all datastores on the specified Proxmox node to dynamically find local-zfs or local-lvm
-data "proxmox_virtual_environment_datastores" "available" {
+data "proxmox_datastores" "available" {
   node_name = var.master_target_node
 }
 
@@ -12,11 +12,11 @@ data "proxmox_virtual_environment_datastores" "available" {
 locals {
   # Find the ID of the datastore meant for VM/CT rootfs. 
   # If the user provided a var, use it. Otherwise, prefer local-zfs, fallback to local-lvm, else fallback to whatever is first
-  datastores_list         = [for ds in data.proxmox_virtual_environment_datastores.available.datastores : ds.id]
+  datastores_list         = [for ds in data.proxmox_datastores.available.datastores : ds.id]
   chosen_rootfs_datastore = var.lxc_rootfs_datastore != "" ? var.lxc_rootfs_datastore : (contains(local.datastores_list, "local-zfs") ? "local-zfs" : (contains(local.datastores_list, "local-lvm") ? "local-lvm" : local.datastores_list[0]))
 }
 
-resource "proxmox_virtual_environment_download_file" "debian_container_template" {
+resource "proxmox_download_file" "debian_container_template" {
   content_type = "vztmpl"
   datastore_id = "local"
   node_name    = var.master_target_node
@@ -43,7 +43,7 @@ module "k3s_master" {
   gateway          = var.lxc_gateway != "" ? var.lxc_gateway : cidrhost(var.k3s_master_ip, 1)
   lxc_password     = var.lxc_password
   ssh_public_key   = trimspace(file("${path.module}/../.ssh/haac_ed25519.pub"))
-  template_file_id = proxmox_virtual_environment_download_file.debian_container_template.id
+  template_file_id = proxmox_download_file.debian_container_template.id
   datastore_id     = local.chosen_rootfs_datastore
   nas_path         = var.host_nas_path
   dns_servers      = compact([var.lxc_gateway, "1.1.1.1"])
@@ -64,7 +64,7 @@ module "k3s_workers" {
   gateway          = var.lxc_gateway != "" ? var.lxc_gateway : cidrhost(each.value.ip, 1)
   lxc_password     = var.lxc_password
   ssh_public_key   = trimspace(file("${path.module}/../.ssh/haac_ed25519.pub"))
-  template_file_id = proxmox_virtual_environment_download_file.debian_container_template.id
+  template_file_id = proxmox_download_file.debian_container_template.id
   datastore_id     = local.chosen_rootfs_datastore
   nas_path         = var.host_nas_path
   dns_servers      = compact([var.lxc_gateway, "1.1.1.1"])

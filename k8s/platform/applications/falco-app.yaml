@@ -14,11 +14,13 @@ spec:
     targetRevision: "8.0.1"
     helm:
       values: |
-        # Use Falco's modern eBPF driver on newer kernels. This keeps us on the current
-        # Falco driver path while avoiding the legacy kernel module.
+        # The unprivileged Proxmox LXC guests used by this homelab block Falco's
+        # modern ring-buffer eBPF path (`Operation not permitted` on ring-buffer map
+        # creation). Keep Falco on the classic eBPF probe here so the DaemonSet stays
+        # healthy without lowering host-wide Proxmox BPF sysctls.
         driver:
           enabled: true
-          kind: modern_ebpf
+          kind: ebpf
         # LXC still needs an explicit privileged Falco container for the probe setup.
         containerSecurityContext:
           privileged: true
