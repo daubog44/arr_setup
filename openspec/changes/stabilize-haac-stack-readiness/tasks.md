@@ -3,6 +3,7 @@
 - [ ] 1.1 Add a shared Helm value for the NVIDIA runtime class and consume it in the GPU workload and NVIDIA device-plugin templates
 - [ ] 1.2 Align the Gateway listener contract with the bundled Traefik entrypoints and remove the invalid in-cluster HTTPS listener
 - [ ] 1.3 Remove the non-standard Headlamp token-header bootstrap path and keep only the bootstrap jobs that are still required
+- [ ] 1.4 Replace the dead qBittorrent exporter image pin with a live compatible image/tag and align the metrics port contract
 
 ## 2. Validation
 

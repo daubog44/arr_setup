@@ -49,8 +49,8 @@ global:
       repository: ghcr.io/autobrr/qui
       tag: v1.14.1
     qbitExporter:
-      repository: caseyscarborough/qbittorrent-exporter
-      tag: "1.3.0"
+      repository: vincejv/qbittorrent-exporter
+      tag: "1.3.5-31"
     radarr:
       repository: lscr.io/linuxserver/radarr
       tag: 5.28.0

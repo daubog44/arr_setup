@@ -189,7 +189,7 @@ spec:
           image: >-
             {{ printf "%s:%s" .Values.global.images.qbitExporter.repository .Values.global.images.qbitExporter.tag }}
           ports:
-            - containerPort: 8000
+            - containerPort: 17871
               name: metrics
           env:
             - name: QBITTORRENT_BASE_URL
@@ -261,7 +261,7 @@ spec:
       targetPort: 7476
       name: qui-ui
     - port: 8000
-      targetPort: 8000
+      targetPort: 17871
       name: metrics
 
 
