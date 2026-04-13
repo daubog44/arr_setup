@@ -349,7 +349,7 @@ def maybe_resolve_local_path(token: str, cwd: Path) -> Path | None:
 
 
 def convert_wsl_tool_arg(token: str, cwd: Path, env: dict[str, str]) -> str:
-    for prefix in ("--kubeconfig=", "--cert="):
+    for prefix in ("--kubeconfig=", "--cert=", "--patch-file=", "--filename=", "--ca-file=", "--key="):
         if token.startswith(prefix):
             resolved = maybe_resolve_local_path(token[len(prefix) :], cwd)
             if resolved is not None:
