@@ -36,6 +36,9 @@ global:
     version: "v1.34.5+k3s1"
     autoUpgrade:
       enabled: false
+  cloudflared:
+    autoUpdate:
+      enabled: true
   images:
     gluetun:
       repository: qmcgaw/gluetun
