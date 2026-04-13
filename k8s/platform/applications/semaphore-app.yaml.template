@@ -36,6 +36,8 @@ spec:
           username: semaphore
           existingSecret: semaphore-db-secret
           passwordKey: POSTGRES_PASSWORD
+          options:
+            sslmode: disable
 
         postgresql:
           enabled: true
