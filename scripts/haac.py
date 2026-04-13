@@ -57,6 +57,8 @@ HELM_VERSION = "4.1.3"
 KUBECTL_VERSION = "1.35.3"
 TASK_VERSION = "3.49.1"
 SYSTEM_UPGRADE_CONTROLLER_VERSION = "v0.19.0"
+LEGACY_PROXMOX_DOWNLOAD_FILE_ADDRESS = "proxmox_virtual_environment_download_file.debian_container_template"
+PROXMOX_DOWNLOAD_FILE_ADDRESS = "proxmox_download_file.debian_container_template"
 
 
 class HaaCError(RuntimeError):
@@ -2727,9 +2729,60 @@ def tofu_cli_env() -> dict[str, str]:
     return mapped
 
 
+def tofu_state_addresses(tofu_dir: Path, env: dict[str, str], tofu_binary: str) -> set[str]:
+    completed = subprocess.run(
+        [tofu_binary, f"-chdir={tofu_dir}", "state", "list"],
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return set()
+    return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
+
+
+def tofu_state_resource_id(tofu_dir: Path, env: dict[str, str], tofu_binary: str, address: str) -> str:
+    completed = subprocess.run(
+        [tofu_binary, f"-chdir={tofu_dir}", "state", "show", address],
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise HaaCError(f"Unable to inspect legacy OpenTofu state for {address}")
+    match = re.search(r'^\s*id\s*=\s*"?(?P<id>[^"\r\n]+)"?\s*$', completed.stdout, re.MULTILINE)
+    if not match:
+        raise HaaCError(f"Unable to extract resource id from legacy OpenTofu state for {address}")
+    return match.group("id")
+
+
+def migrate_legacy_proxmox_download_file_state(tofu_dir: Path, env: dict[str, str], tofu_binary: str) -> None:
+    addresses = tofu_state_addresses(tofu_dir, env, tofu_binary)
+    if LEGACY_PROXMOX_DOWNLOAD_FILE_ADDRESS not in addresses:
+        return
+
+    if PROXMOX_DOWNLOAD_FILE_ADDRESS not in addresses:
+        resource_id = tofu_state_resource_id(tofu_dir, env, tofu_binary, LEGACY_PROXMOX_DOWNLOAD_FILE_ADDRESS)
+        print(
+            "Migrating legacy Proxmox download-file state to "
+            f"{PROXMOX_DOWNLOAD_FILE_ADDRESS} before plan/apply..."
+        )
+        run([tofu_binary, f"-chdir={tofu_dir}", "import", PROXMOX_DOWNLOAD_FILE_ADDRESS, resource_id], env=env)
+
+    print(f"Removing legacy OpenTofu state entry {LEGACY_PROXMOX_DOWNLOAD_FILE_ADDRESS}...")
+    run([tofu_binary, f"-chdir={tofu_dir}", "state", "rm", LEGACY_PROXMOX_DOWNLOAD_FILE_ADDRESS], env=env)
+
+
 def run_tofu_command(tofu_dir: Path, arguments: list[str]) -> None:
     tofu_binary = resolved_binary("tofu")
-    run([tofu_binary, f"-chdir={tofu_dir}", *arguments], env=tofu_cli_env())
+    env = tofu_cli_env()
+    if arguments and arguments[0] in {"plan", "apply"}:
+        migrate_legacy_proxmox_download_file_state(tofu_dir, env, tofu_binary)
+    run([tofu_binary, f"-chdir={tofu_dir}", *arguments], env=env)
 
 
 def cmd_default_gateway(_: argparse.Namespace) -> None:

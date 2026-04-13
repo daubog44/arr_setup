@@ -107,7 +107,7 @@ tasks:
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -refresh=false -auto-approve'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
 
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.
