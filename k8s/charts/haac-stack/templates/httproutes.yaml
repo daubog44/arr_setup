@@ -9,7 +9,9 @@ metadata:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   parentRefs:
-    - name: "{{ $.Values.gateway.name }}"
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: "{{ $.Values.gateway.name }}"
       namespace: "{{ $.Release.Namespace }}"
   hostnames:
     - >-
@@ -20,8 +22,11 @@ spec:
             type: PathPrefix
             value: /
       backendRefs:
-        - name: "{{ $conf.service }}"
+        - group: ""
+          kind: Service
+          name: "{{ $conf.service }}"
           port: {{ $conf.port }}
+          weight: 1
 # {{- if or $conf.auth_enabled $conf.extra_middlewares }}
       filters:
         - type: ExtensionRef
