@@ -2168,24 +2168,35 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
     accepted_statuses = {200, 201, 202, 204, 301, 302, 307, 308, 401}
     results: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
+    last_status_by_url: dict[str, int] = {endpoint["url"]: 0 for endpoint in endpoints}
+    success_by_url: dict[str, bool] = {endpoint["url"]: False for endpoint in endpoints}
+
+    for attempt in range(retries):
+        pending = 0
+        for endpoint in endpoints:
+            url = endpoint["url"]
+            if success_by_url[url]:
+                continue
+            status = probe_web_status(url)
+            last_status_by_url[url] = status
+            if status in accepted_statuses:
+                success_by_url[url] = True
+            else:
+                pending += 1
+        if pending == 0:
+            break
+        if attempt < retries - 1:
+            time.sleep(sleep_seconds)
 
     for endpoint in endpoints:
         url = endpoint["url"]
-        success = False
-        last_status = 0
-        for _ in range(retries):
-            status = probe_web_status(url)
-            last_status = status
-            if status in accepted_statuses:
-                success = True
-                break
-            time.sleep(sleep_seconds)
+        success = success_by_url[url]
         result = {
             "service": endpoint["name"],
             "namespace": endpoint["namespace"],
             "url": url,
             "auth": endpoint["auth"],
-            "status": str(last_status),
+            "status": str(last_status_by_url[url]),
             "verification": "reachable" if success else "failed",
         }
         results.append(result)
@@ -2336,6 +2347,36 @@ def sync_cloudflare() -> None:
             if not created.get("success"):
                 raise HaaCError(f"Failed to create DNS record {record_name}: {created}")
     print(f"[ok] Cloudflare DNS reconciled: {domain_name}, *.{domain_name} -> {expected_target}")
+
+
+def restart_cloudflared_rollout(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "rollout",
+                "restart",
+                "deployment/cloudflared",
+                "-n",
+                "cloudflared",
+            ]
+        )
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "rollout",
+                "status",
+                "deployment/cloudflared",
+                "-n",
+                "cloudflared",
+                "--timeout=300s",
+            ]
+        )
+        print("[ok] Cloudflared connector rollout completed")
 
 
 def get_pod_name(kubectl: str, kubeconfig: Path, namespace: str, selector: str) -> str:
@@ -3216,8 +3257,10 @@ def cmd_verify_web(args: argparse.Namespace) -> None:
     verify_web(args.domain)
 
 
-def cmd_sync_cloudflare(_: argparse.Namespace) -> None:
+def cmd_sync_cloudflare(args: argparse.Namespace) -> None:
     sync_cloudflare()
+    if args.master_ip and args.proxmox_host and args.kubeconfig and args.kubectl:
+        restart_cloudflared_rollout(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
 def cmd_configure_apps(args: argparse.Namespace) -> None:
@@ -3385,6 +3428,10 @@ def build_parser() -> argparse.ArgumentParser:
     command.set_defaults(func=cmd_verify_web)
 
     command = subparsers.add_parser("sync-cloudflare")
+    command.add_argument("--master-ip")
+    command.add_argument("--proxmox-host")
+    command.add_argument("--kubeconfig")
+    command.add_argument("--kubectl")
     command.set_defaults(func=cmd_sync_cloudflare)
 
     command = subparsers.add_parser("configure-apps")
