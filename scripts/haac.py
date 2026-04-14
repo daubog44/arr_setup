@@ -22,6 +22,8 @@ import zipfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
+from haaclib import endpoints as endpointlib
+from haaclib import gitops as gitopslib
 from haaclib.authelia import resolve_admin_password_hash
 from haaclib.redaction import redact_sensitive_text, secret_values_from_env
 from haaclib.sshconfig import ensure_known_hosts_file, resolve_known_hosts_path, resolve_ssh_host_key_mode
@@ -688,32 +690,17 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
     env_exports["HAAC_SSH_PRIVATE_KEY_PATH"] = ssh_key_wsl
     env_exports["HAAC_SSH_KNOWN_HOSTS_PATH"] = known_hosts_wsl
     env_exports["HAAC_SSH_HOST_KEY_CHECKING"] = ssh_host_key_checking_mode(env)
+    env_exports["HAAC_PROXMOX_ACCESS_HOST"] = proxmox_access_host(env)
 
-    fd, temp_env_path = tempfile.mkstemp(prefix="haac-ansible-", suffix=".env")
-    os.close(fd)
-    temp_env_file = Path(temp_env_path)
-    temp_env_file.write_text(
-        "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env_exports.items()),
-        encoding="utf-8",
-        newline="\n",
-    )
-    temp_env_file_wsl = to_posix_wsl_path(temp_env_file, env)
     args = " ".join(shlex.quote(arg) for arg in extra_args)
+    env_script = "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env_exports.items())
     command = (
-        f"set -a && . {shlex.quote(temp_env_file_wsl)} && set +a && "
+        "set -a && . /dev/stdin && set +a && "
         f"cd {shlex.quote(repo_wsl)} && "
         f"mkdir -p {shlex.quote(kube_dir_wsl)} && "
         f"ansible-playbook {args} -i {shlex.quote(inventory_wsl)} {shlex.quote(playbook_wsl)}"
     ).strip()
-    try:
-        run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
-    finally:
-        for _ in range(10):
-            try:
-                temp_env_file.unlink(missing_ok=True)
-                break
-            except PermissionError:
-                time.sleep(0.2)
+    run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)), input_text=env_script)
 
 
 def allocate_local_port() -> int:
@@ -817,29 +804,6 @@ def cluster_session(proxmox_host: str, master_ip: str, kubeconfig: Path, kubectl
             shutil.rmtree(session_dir, ignore_errors=True)
 
 
-def render_env_placeholders(content: str, env: dict[str, str]) -> str:
-    def replace(match: re.Match[str]) -> str:
-        key = match.group(1)
-        return env.get(key, match.group(0))
-
-    return re.sub(r"\$\{([A-Z0-9_]+)\}", replace, content)
-
-
-def render_values_file(env: dict[str, str]) -> None:
-    content = VALUES_TEMPLATE.read_text(encoding="utf-8")
-    VALUES_OUTPUT.write_text(render_env_placeholders(content, env), encoding="utf-8")
-
-
-def gitops_template_path(output_path: Path) -> Path:
-    return output_path.with_name(f"{output_path.name}.template")
-
-
-def falco_enabled(env: dict[str, str]) -> bool:
-    if "HAAC_ENABLE_FALCO" in env:
-        return parse_bool(env["HAAC_ENABLE_FALCO"])
-    return not parse_bool(env.get("LXC_UNPRIVILEGED", "true"))
-
-
 def cleanup_disabled_falco(kubectl: str, kubeconfig: Path) -> None:
     run(
         [
@@ -877,20 +841,32 @@ def cleanup_disabled_falco(kubectl: str, kubeconfig: Path) -> None:
 
 
 def cleanup_disabled_platform_apps(kubectl: str, kubeconfig: Path, env: dict[str, str]) -> None:
-    if not falco_enabled(env):
+    if not gitopslib.falco_enabled(env):
         cleanup_disabled_falco(kubectl, kubeconfig)
 
 
+def render_env_placeholders(content: str, env: dict[str, str]) -> str:
+    return gitopslib.render_env_placeholders(content, env)
+
+
+def render_values_file(env: dict[str, str]) -> None:
+    gitopslib.render_values_file(VALUES_TEMPLATE, VALUES_OUTPUT, env)
+
+
+def gitops_template_path(output_path: Path) -> Path:
+    return gitopslib.gitops_template_path(output_path)
+
+
 def render_gitops_manifests(env: dict[str, str]) -> None:
-    for output_path in GITOPS_RENDERED_OUTPUTS:
-        template_path = gitops_template_path(output_path)
-        if not template_path.exists():
-            raise HaaCError(f"Missing GitOps manifest template: {template_path}")
-        if output_path == FALCO_APP_OUTPUT and not falco_enabled(env):
-            output_path.write_text(DISABLED_GITOPS_LIST, encoding="utf-8")
-            continue
-        content = render_env_placeholders(template_path.read_text(encoding="utf-8"), env)
-        output_path.write_text(content, encoding="utf-8")
+    try:
+        gitopslib.render_gitops_manifests(
+            env=env,
+            outputs=GITOPS_RENDERED_OUTPUTS,
+            falco_output=FALCO_APP_OUTPUT,
+            disabled_gitops_list=DISABLED_GITOPS_LIST,
+        )
+    except RuntimeError as exc:
+        raise HaaCError(str(exc)) from exc
 
 
 def tool_version(env: dict[str, str], env_key: str, default: str) -> str:
@@ -1615,20 +1591,20 @@ def sync_repo(push_all: bool) -> None:
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
 
+    local_head = git_head("HEAD")
+    remote_head = git_head(remote_ref)
     dirty_paths = git_dirty_paths()
-    if dirty_paths and not push_all:
-        local_head = git_head("HEAD")
-        remote_head = git_head(remote_ref)
+    if not push_all:
         if local_head != remote_head:
-            dirty_preview = ", ".join(dirty_paths[:5])
-            if len(dirty_paths) > 5:
-                dirty_preview += ", ..."
             raise HaaCError(
-                "PUSH_ALL=false refuses to checkpoint unrelated local work while the GitOps branch is behind origin.\n"
-                f"Dirty paths: {dirty_preview}\n"
-                "Commit or stash those edits, or rerun with PUSH_ALL=true if you intentionally want an automatic checkpoint."
+                "PUSH_ALL=false keeps `task up` out of Git merge policy. "
+                f"Local HEAD does not match {remote_ref}. "
+                "Pull/rebase explicitly first, or rerun with PUSH_ALL=true if you intentionally want Codex to checkpoint and merge for you."
             )
-        print("[warn] Preserving local uncommitted work because PUSH_ALL=false and the GitOps branch is already current.")
+        if dirty_paths:
+            print("[warn] Preserving local uncommitted work because PUSH_ALL=false and the GitOps branch is already current.")
+        else:
+            print(f"[ok] GitOps branch already matches {remote_ref}; no local merge needed.")
         return
 
     if push_all:
@@ -2049,114 +2025,15 @@ def parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def endpoint_specs_source_path() -> Path:
-    if VALUES_OUTPUT.exists():
-        return VALUES_OUTPUT
-    if VALUES_TEMPLATE.exists():
-        return VALUES_TEMPLATE
-    raise HaaCError("Missing values source of truth for public endpoint verification")
-
-
 def load_endpoint_specs(domain_name: str) -> list[dict[str, str]]:
-    source_path = endpoint_specs_source_path()
-    lines = source_path.read_text(encoding="utf-8").splitlines()
-    in_ingresses = False
-    current_name = ""
-    current: dict[str, str] = {}
-    endpoints: list[dict[str, str]] = []
-
-    def flush_current() -> None:
-        nonlocal current_name, current
-        if not current_name or "subdomain" not in current:
-            current_name = ""
-            current = {}
-            return
-        endpoints.append(
-            {
-                "name": current_name,
-                "subdomain": current["subdomain"],
-                "namespace": current.get("namespace", ""),
-                "service": current.get("service", ""),
-                "auth": "oidc" if parse_bool(current.get("auth_enabled", "false")) else "public",
-                "url": f"https://{current['subdomain']}.{domain_name}",
-            }
-        )
-        current_name = ""
-        current = {}
-
-    for raw_line in lines:
-        stripped = raw_line.strip()
-        if not in_ingresses:
-            if stripped == "ingresses:":
-                in_ingresses = True
-            continue
-
-        if re.match(r"^\S", raw_line):
-            break
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        entry_match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", raw_line)
-        if entry_match:
-            flush_current()
-            current_name = entry_match.group(1)
-            current = {}
-            continue
-
-        prop_match = re.match(r"^    ([A-Za-z0-9_]+):\s*(.*)$", raw_line)
-        if prop_match and current_name:
-            key, value = prop_match.groups()
-            cleaned = value.strip().strip('"').strip("'")
-            if cleaned:
-                current[key] = cleaned
-
-    flush_current()
-    if not endpoints:
-        raise HaaCError(f"No ingress endpoints were found in {source_path}")
-    return endpoints
-
-
-class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def http_error_301(self, req, fp, code, msg, headers):
-        return fp
-
-    def http_error_302(self, req, fp, code, msg, headers):
-        return fp
-
-    def http_error_303(self, req, fp, code, msg, headers):
-        return fp
-
-    def http_error_307(self, req, fp, code, msg, headers):
-        return fp
-
-    def http_error_308(self, req, fp, code, msg, headers):
-        return fp
+    try:
+        return endpointlib.load_endpoint_specs(VALUES_OUTPUT, VALUES_TEMPLATE, domain_name)
+    except RuntimeError as exc:
+        raise HaaCError(str(exc)) from exc
 
 
 def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
-    opener = urllib.request.build_opener(NoRedirectHandler)
-    request = urllib.request.Request(
-        url,
-        method="GET",
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/135.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        },
-    )
-    try:
-        with opener.open(request, timeout=timeout_seconds) as response:
-            return int(getattr(response, "status", response.getcode()))
-    except urllib.error.HTTPError as error:
-        return int(error.code)
-    except Exception:
-        return 0
+    return endpointlib.probe_web_status(url, timeout_seconds)
 
 
 def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> None:
@@ -3214,6 +3091,7 @@ def cmd_run_ansible(args: argparse.Namespace) -> None:
     env["HAAC_SSH_PRIVATE_KEY_PATH"] = str(SSH_PRIVATE_KEY_PATH)
     env["HAAC_SSH_KNOWN_HOSTS_PATH"] = str(known_hosts_path(env))
     env["HAAC_SSH_HOST_KEY_CHECKING"] = ssh_host_key_checking_mode(env)
+    env["HAAC_PROXMOX_ACCESS_HOST"] = proxmox_access_host(env)
     ensure_parent(local_kubeconfig_path())
     run(["ansible-playbook", *extra_args, "-i", str(inventory), str(playbook)], env=env)
 

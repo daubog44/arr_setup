@@ -1,0 +1,55 @@
+{{- $ingresses := .Values.ingresses | default dict -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-config
+  namespace: mgmt
+data:
+  settings.yaml: |
+    title: "Nucleo Autogenerativo"
+    theme: dark
+    proxy: true
+    layout:
+      Media:
+        style: row
+        columns: 4
+      Management:
+        style: row
+        columns: 3
+  services.yaml: |
+    - Media:
+{{- range $name := keys $ingresses | sortAlpha }}
+{{- $conf := index $ingresses $name }}
+{{- if eq ($conf.homepage_group | default "") "Media" }}
+        - {{ default $name $conf.homepage_name | quote }}:
+            icon: {{ default "globe.png" $conf.homepage_icon | quote }}
+            href: {{ printf "https://%s.%s" $conf.subdomain $.Values.global.domainName | quote }}
+            description: {{ default "" $conf.homepage_description | quote }}
+{{- end }}
+{{- end }}
+    - Management:
+{{- range $name := keys $ingresses | sortAlpha }}
+{{- $conf := index $ingresses $name }}
+{{- if eq ($conf.homepage_group | default "") "Management" }}
+        - {{ default $name $conf.homepage_name | quote }}:
+            icon: {{ default "globe.png" $conf.homepage_icon | quote }}
+            href: {{ printf "https://%s.%s" $conf.subdomain $.Values.global.domainName | quote }}
+            description: {{ default "" $conf.homepage_description | quote }}
+{{- end }}
+{{- end }}
+  widgets.yaml: |
+    - greeting:
+        text: "Benvenuto nel Nucleo Autogenerativo"
+    - datetime:
+        format:
+          date: long
+          time: short
+  bookmarks.yaml: |
+    - Infrastructure:
+        - Proxmox:
+            - href: "https://192.168.0.211:8006"
+              icon: proxmox.png
+        - GitHub:
+            - href: "https://github.com"
+              icon: github.png
