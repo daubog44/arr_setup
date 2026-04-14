@@ -626,16 +626,12 @@ def ensure_wsl_ssh_keypair(env: dict[str, str]) -> str:
 
     home_dir = wsl_home_dir(env)
     private_key_wsl = f"{home_dir}/.ssh/haac_ed25519"
-    private_key = SSH_PRIVATE_KEY_PATH.read_text(encoding="utf-8")
-    public_key = SSH_PUBLIC_KEY_PATH.read_text(encoding="utf-8")
+    private_key_source_wsl = to_posix_wsl_path(SSH_PRIVATE_KEY_PATH, env)
+    public_key_source_wsl = to_posix_wsl_path(SSH_PUBLIC_KEY_PATH, env)
     command = (
         "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        "cat > ~/.ssh/haac_ed25519 <<'EOF_PRIVATE'\n"
-        f"{private_key}"
-        "\nEOF_PRIVATE\n"
-        "cat > ~/.ssh/haac_ed25519.pub <<'EOF_PUBLIC'\n"
-        f"{public_key}"
-        "\nEOF_PUBLIC\n"
+        f"cp {shlex.quote(private_key_source_wsl)} ~/.ssh/haac_ed25519 && "
+        f"cp {shlex.quote(public_key_source_wsl)} ~/.ssh/haac_ed25519.pub && "
         "chmod 600 ~/.ssh/haac_ed25519 && chmod 644 ~/.ssh/haac_ed25519.pub"
     )
     run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
@@ -646,10 +642,10 @@ def ensure_wsl_known_hosts(env: dict[str, str]) -> str:
     local_known_hosts = known_hosts_path(env)
     home_dir = wsl_home_dir(env)
     known_hosts_wsl = f"{home_dir}/.ssh/haac_known_hosts"
-    encoded_known_hosts = base64.b64encode(local_known_hosts.read_bytes()).decode("ascii")
+    local_known_hosts_wsl = to_posix_wsl_path(local_known_hosts, env)
     command = (
         "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        "printf '%s' '" + encoded_known_hosts + "' | base64 -d > ~/.ssh/haac_known_hosts && "
+        f"cp {shlex.quote(local_known_hosts_wsl)} ~/.ssh/haac_known_hosts && "
         "chmod 600 ~/.ssh/haac_known_hosts"
     )
     run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
