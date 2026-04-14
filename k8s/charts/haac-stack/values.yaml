@@ -142,75 +142,137 @@ ingresses:
     port: 9091
     namespace: mgmt
     auth_enabled: false
+    homepage_group: Management
+    homepage_name: Authelia
+    homepage_icon: authelia.png
+    homepage_description: Identity Provider
   homepage:
     subdomain: home
     service: homepage
     port: 80
     namespace: mgmt
     auth_enabled: false
+    homepage_group: Management
+    homepage_name: Homepage
+    homepage_icon: homepage.png
+    homepage_description: Homelab Dashboard
   headlamp:
     subdomain: headlamp
     service: headlamp
     port: 80
     namespace: mgmt
     auth_enabled: true
+    homepage_group: Management
+    homepage_name: Headlamp
+    homepage_icon: headlamp.png
+    homepage_description: K8s Dashboard
   ntfy:
     subdomain: ntfy
     service: ntfy
     port: 80
     namespace: mgmt
     auth_enabled: false
+    homepage_group: Management
+    homepage_name: Ntfy
+    homepage_icon: ntfy.png
+    homepage_description: Push Notifications
+  semaphore:
+    subdomain: ansible
+    service: semaphore
+    port: 3000
+    namespace: mgmt
+    auth_enabled: false
+    homepage_group: Management
+    homepage_name: Semaphore
+    homepage_icon: ansible.png
+    homepage_description: Ansible Dashboard
   jellyfin:
     subdomain: jellyfin
     service: jellyfin
     port: 80
     namespace: media
     auth_enabled: false
+    homepage_group: Media
+    homepage_name: Jellyfin
+    homepage_icon: jellyfin.png
+    homepage_description: Media Server
   radarr:
     subdomain: radarr
     service: radarr
     port: 80
     namespace: media
     auth_enabled: false
+    homepage_group: Media
+    homepage_name: Radarr
+    homepage_icon: radarr.png
+    homepage_description: Movies
   sonarr:
     subdomain: sonarr
     service: sonarr
     port: 80
     namespace: media
     auth_enabled: false
+    homepage_group: Media
+    homepage_name: Sonarr
+    homepage_icon: sonarr.png
+    homepage_description: TV Shows
   prowlarr:
     subdomain: prowlarr
     service: prowlarr
     port: 80
     namespace: media
     auth_enabled: false
+    homepage_group: Media
+    homepage_name: Prowlarr
+    homepage_icon: prowlarr.png
+    homepage_description: Indexer Manager
   autobrr:
     subdomain: autobrr
     service: autobrr
     port: 80
     namespace: media
     auth_enabled: false
+    homepage_group: Media
+    homepage_name: Autobrr
+    homepage_icon: autobrr.png
+    homepage_description: RSS/IRC Downloader
   qbittorrent:
     subdomain: qui
     service: qbittorrent
     port: 80
     namespace: media
     auth_enabled: true
+    homepage_group: Media
+    homepage_name: qBittorrent
+    homepage_icon: qbittorrent.png
+    homepage_description: Torrent Client
   argocd:
     subdomain: argocd
     service: argocd-server
     port: 80
     namespace: argocd
     auth_enabled: false
+    homepage_group: Management
+    homepage_name: ArgoCD
+    homepage_icon: argocd.png
+    homepage_description: GitOps CI/CD
   grafana:
     subdomain: grafana
     service: kube-prometheus-stack-grafana
     port: 80
     namespace: monitoring
     auth_enabled: false
+    homepage_group: Management
+    homepage_name: Grafana
+    homepage_icon: grafana.png
+    homepage_description: Observability Metrics
   longhorn:
     subdomain: longhorn
     service: longhorn-frontend
     port: 80
     namespace: longhorn-system
     auth_enabled: true
+    homepage_group: Management
+    homepage_name: Longhorn
+    homepage_icon: longhorn.png
+    homepage_description: Distributed Storage
