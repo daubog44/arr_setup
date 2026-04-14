@@ -426,23 +426,25 @@ def run(
     check: bool = True,
     capture_output: bool = False,
     input_text: str | None = None,
+    input_bytes: bytes | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = wrap_wsl_tool_command(command, cwd, env)
     working_env = env or merged_env()
+    text_mode = input_bytes is None
     completed = subprocess.run(
         command,
         cwd=str(cwd),
         env=env,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        input=input_text,
+        text=text_mode,
+        encoding="utf-8" if text_mode else None,
+        errors="replace" if text_mode else None,
+        input=input_text if text_mode else input_bytes,
         capture_output=capture_output,
         check=False,
     )
     if check and completed.returncode != 0:
-        stderr = completed.stderr.strip() if completed.stderr else ""
-        stdout = completed.stdout.strip() if completed.stdout else ""
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip() if input_bytes is not None and completed.stderr else completed.stderr.strip() if completed.stderr else ""
+        stdout = completed.stdout.decode("utf-8", errors="replace").strip() if input_bytes is not None and completed.stdout else completed.stdout.strip() if completed.stdout else ""
         detail = stderr or stdout or f"exit code {completed.returncode}"
         raise HaaCError(f"Command failed: {redact_text(command_label(command), working_env)}\n{redact_text(detail, working_env)}")
     return completed
@@ -693,14 +695,16 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
     env_exports["HAAC_PROXMOX_ACCESS_HOST"] = proxmox_access_host(env)
 
     args = " ".join(shlex.quote(arg) for arg in extra_args)
-    env_script = "".join(f"export {key}={shlex.quote(value)}\n" for key, value in env_exports.items())
-    command = (
-        "set -a && . /dev/stdin && set +a && "
-        f"cd {shlex.quote(repo_wsl)} && "
-        f"mkdir -p {shlex.quote(kube_dir_wsl)} && "
-        f"ansible-playbook {args} -i {shlex.quote(inventory_wsl)} {shlex.quote(playbook_wsl)}"
-    ).strip()
-    run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)), input_text=env_script)
+    script_lines = [f"export {key}={shlex.quote(value)}" for key, value in env_exports.items()]
+    script_lines.extend(
+        [
+            f"cd {shlex.quote(repo_wsl)}",
+            f"mkdir -p {shlex.quote(kube_dir_wsl)}",
+            f"ansible-playbook {args} -i {shlex.quote(inventory_wsl)} {shlex.quote(playbook_wsl)}",
+        ]
+    )
+    script_bytes = ("\n".join(script_lines) + "\n").encode("utf-8")
+    run(wsl_command("bash", "-se", distro=wsl_distro(env)), input_bytes=script_bytes)
 
 
 def allocate_local_port() -> int:
