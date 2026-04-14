@@ -120,6 +120,47 @@ tasks:
       - task: wait-for-argocd-sync
       - task: sync-cloudflare
 
+  reconcile:sealed-secrets:
+    desc: "Regenerate Sealed Secrets from `.env`, publish only the GitOps outputs, and wait for the cluster to reconcile them."
+    cmds:
+      - task: generate-secrets
+      - task: push-changes
+        vars:
+          PUSH_ALL: "{{.PUSH_ALL}}"
+      - task: wait-for-argocd-sync
+
+  reconcile:argocd:
+    desc: "Push the current GitOps state, re-apply the remote ArgoCD bootstrap overlay, and wait for root/platform/workloads to reconcile."
+    cmds:
+      - task: push-changes
+        vars:
+          PUSH_ALL: "{{.PUSH_ALL}}"
+      - task: deploy-argocd
+      - task: wait-for-argocd-sync
+
+  reconcile:gitops:
+    desc: "Reconcile the full remote GitOps layer without reprovisioning infra: secrets, ArgoCD bootstrap, workloads, Cloudflare, and public URLs."
+    cmds:
+      - task: generate-secrets
+      - task: push-changes
+        vars:
+          PUSH_ALL: "{{.PUSH_ALL}}"
+      - task: deploy-argocd
+      - task: wait-for-argocd-sync
+      - task: sync-cloudflare
+      - task: verify-endpoints
+
+  reconcile:infra:
+    desc: "Reconcile remote infra and node configuration without re-running the full final verification path."
+    env:
+      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      NAS_PATH: "{{.NAS_PATH_VALUE}}"
+    cmds:
+      - task: preflight
+      - task: provision-infra
+      - task: configure-os
+
   verify-all:
     desc: Verify cluster health, then print the final public URL summary and fail if any endpoint is still unreachable.
     cmds:
