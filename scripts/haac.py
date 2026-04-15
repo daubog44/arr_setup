@@ -485,6 +485,18 @@ def git_has_remote(remote_name: str = "origin") -> bool:
     return completed.returncode == 0
 
 
+def git_ref_state(local_ref: str, remote_ref: str) -> str:
+    if git_head(local_ref) == git_head(remote_ref):
+        return "equal"
+    local_has_remote = run(["git", "merge-base", "--is-ancestor", remote_ref, local_ref], check=False).returncode == 0
+    remote_has_local = run(["git", "merge-base", "--is-ancestor", local_ref, remote_ref], check=False).returncode == 0
+    if local_has_remote and not remote_has_local:
+        return "ahead"
+    if remote_has_local and not local_has_remote:
+        return "behind"
+    return "diverged"
+
+
 def ensure_tcp_endpoint(
     host: str,
     port: int,
@@ -1595,17 +1607,18 @@ def sync_repo(push_all: bool) -> None:
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
 
-    local_head = git_head("HEAD")
-    remote_head = git_head(remote_ref)
     dirty_paths = git_dirty_paths()
     if not push_all:
-        if local_head != remote_head:
+        ref_state = git_ref_state("HEAD", remote_ref)
+        if ref_state in {"behind", "diverged"}:
             raise HaaCError(
                 "PUSH_ALL=false keeps `task up` out of Git merge policy. "
-                f"Local HEAD does not match {remote_ref}. "
+                f"Local HEAD is {ref_state} relative to {remote_ref}. "
                 "Pull/rebase explicitly first, or rerun with PUSH_ALL=true if you intentionally want Codex to checkpoint and merge for you."
             )
-        if dirty_paths:
+        if ref_state == "ahead":
+            print(f"[ok] Local branch is ahead of {remote_ref}; no merge is required for safe default bootstrap.")
+        elif dirty_paths:
             print("[warn] Preserving local uncommitted work because PUSH_ALL=false and the GitOps branch is already current.")
         else:
             print(f"[ok] GitOps branch already matches {remote_ref}; no local merge needed.")
@@ -1638,7 +1651,7 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
         merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
         require_success(merge, f"Git merge failed for {remote_ref}")
         print(f"[ok] GitOps repo synchronized with {remote_ref}")
-    elif git_head("HEAD") != git_head(remote_ref):
+    elif git_ref_state("HEAD", remote_ref) in {"behind", "diverged"}:
         raise HaaCError(
             "GitOps publication requires the local branch to match origin when PUSH_ALL=false. "
             "Run `task sync` first with a clean worktree or rerun with PUSH_ALL=true."

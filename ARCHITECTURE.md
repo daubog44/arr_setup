@@ -160,7 +160,7 @@ The required order is:
 
 `.env` is the input source of truth for both bootstrap prerequisites and public routing. The final public URL report is derived from the Helm ingress definitions in `k8s/charts/haac-stack/config-templates/values.yaml.template` and the generated `values.yaml`, not from a duplicated hardcoded list.
 
-That ingress catalog is now also the Homepage source of truth. Homepage links and public endpoint verification are generated from the same declared route set, so unsupported wildcard hosts are not treated as product URLs. If Cloudflare forwards an unpublished subdomain to Traefik, the resulting `404` is expected behavior rather than a bootstrap failure.
+That ingress catalog is now also the Homepage source of truth. Homepage links, public endpoint verification, and `HTTPRoute` generation are all derived from the same declared route set, and the default posture for official UI routes is Authelia forward-auth unless a route is explicitly marked public. Unsupported wildcard hosts are still not treated as product URLs; if Cloudflare forwards an unpublished subdomain to Traefik, the resulting `404` is expected behavior rather than a bootstrap failure.
 
 `.env` is also the source of truth for the local Authelia admin password. `AUTHELIA_ADMIN_PASSWORD_HASH` is now a derived compatibility value: if the explicit password is present and the stored hash does not match, hydration regenerates the hash before sealing the Authelia config.
 
