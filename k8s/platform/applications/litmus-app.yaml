@@ -16,7 +16,6 @@ spec:
       values: |
         portal:
           server:
-            # Litmus is exposed via IngressRoute in extraManifests (litmus-ingress.yaml)
             service:
               type: ClusterIP
         

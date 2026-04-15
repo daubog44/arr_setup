@@ -1,4 +1,5 @@
 # {{- range $name, $conf := .Values.ingresses }}
+# {{- if (default true $conf.enabled) }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -48,6 +49,7 @@ spec:
             group: traefik.io
             kind: Middleware
             name: "{{ . }}"
+# {{- end }}
 # {{- end }}
 # {{- end }}
 # {{- end }}

@@ -28,13 +28,18 @@ def load_endpoint_specs(values_output: Path, values_template: Path, domain_name:
             current_name = ""
             current = {}
             return
+        enabled = current.get("enabled", "true").strip().lower() not in {"0", "false", "no", "off"}
+        if not enabled:
+            current_name = ""
+            current = {}
+            return
         endpoints.append(
             {
                 "name": current_name,
                 "subdomain": current["subdomain"],
                 "namespace": current.get("namespace", ""),
                 "service": current.get("service", ""),
-                "auth": "oidc" if current.get("auth_enabled", "").strip().lower() in {"1", "true", "yes", "on"} else "public",
+                "auth": "protected" if current.get("auth_enabled", "").strip().lower() in {"1", "true", "yes", "on"} else "public",
                 "url": f"https://{current['subdomain']}.{domain_name}",
             }
         )

@@ -45,8 +45,6 @@ spec:
           enabled: true
           webui:
             enabled: true
-            # We don't expose it to the internet by default, accessible via port-forward or internal network
-            # To expose, we would add an IngressRoute in extraManifests
           config:
             # Route Falco alerts directly to Ntfy
             ntfy:

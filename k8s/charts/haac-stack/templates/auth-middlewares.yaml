@@ -1,6 +1,6 @@
 {{- $authNamespaces := dict -}}
 {{- range $name, $conf := .Values.ingresses }}
-{{- if $conf.auth_enabled }}
+{{- if and (default true $conf.enabled) $conf.auth_enabled }}
 {{- $namespace := $conf.namespace | default $.Release.Namespace -}}
 {{- $_ := set $authNamespaces $namespace true -}}
 {{- end }}
