@@ -40,7 +40,7 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "54f07fea77d257fd5f0f56f4856baa4b0d691695dad5ee46c0ff38f8912435f3"
+    autheliaConfigChecksum: "6a7136f375cd74ea190c9d0b3b6f5aee67dc1e7a62fc1a6323e0cb5a5b702379"
   images:
     gluetun:
       repository: qmcgaw/gluetun

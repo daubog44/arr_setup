@@ -1,0 +1,1 @@
+- generic [ref=e2]: "failed to get token: oauth2: \"invalid_client\" \"Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method). The request was determined to be using 'token_endpoint_auth_method' method 'client_secret_post', however the OAuth 2.0 client registration does not allow this method.\""
