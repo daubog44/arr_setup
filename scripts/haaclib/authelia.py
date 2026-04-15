@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 
@@ -20,19 +21,22 @@ def _crypt_verify(password: str, existing_hash: str) -> bool:
 def _run_wsl_crypt(password: str, existing_hash: str | None, distro: str) -> str | bool:
     check_mode = "verify" if existing_hash else "hash"
     code = (
-        "import crypt, sys\n"
-        "mode = sys.argv[1]\n"
-        "password = sys.argv[2]\n"
-        "existing = sys.argv[3] if len(sys.argv) > 3 else ''\n"
+        "import crypt, json, sys\n"
+        "payload = json.load(sys.stdin)\n"
+        "mode = payload['mode']\n"
+        "password = payload['password']\n"
+        "existing = payload.get('existing', '')\n"
         "if mode == 'verify':\n"
         "    raise SystemExit(0 if crypt.crypt(password, existing) == existing else 1)\n"
         "print(crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512)))\n"
     )
-    command = ["wsl", "-d", distro, "--", "python3", "-c", code, check_mode, password]
+    command = ["wsl", "-d", distro, "--", "python3", "-c", code]
+    payload = {"mode": check_mode, "password": password}
     if existing_hash:
-        command.append(existing_hash)
+        payload["existing"] = existing_hash
     completed = subprocess.run(
         command,
+        input=json.dumps(payload),
         text=True,
         encoding="utf-8",
         errors="replace",

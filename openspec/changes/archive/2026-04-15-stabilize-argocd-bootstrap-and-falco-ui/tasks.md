@@ -1,0 +1,5 @@
+- [x] 1. Align the active change text with the already-convergent namespaced ArgoCD bootstrap and keep the legacy cleanup bounded.
+- [x] 2. Make the Falco public surface healthy on unprivileged Proxmox LXC by keeping runtime sensor scheduling opt-in and the Web UI protected by Authelia.
+- [x] 3. Make the Falcosidekick UI stateless and resilient across reconcile by recreating legacy Redis resources before sync.
+- [x] 4. Align stable OpenSpec archival/spec wording with the archived state.
+- [x] 5. Validate with `helm template`, `task reconcile:argocd`, `task verify-cluster`, and `task verify-endpoints`.

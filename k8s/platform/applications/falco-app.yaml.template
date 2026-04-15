@@ -17,6 +17,7 @@ spec:
         # Keep the Falco UI published, but make runtime sensor scheduling explicit opt-in.
         # Unprivileged Proxmox LXC guests cannot host a stable syscall probe by default,
         # so only nodes labeled haac.io/falco-runtime=true will run the DaemonSet.
+        # Those labels are repo-managed through WORKER_NODES_JSON -> labels in .env.
         driver:
           enabled: true
           kind: modern_ebpf

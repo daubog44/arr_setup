@@ -1,0 +1,6 @@
+- [x] 1. Rationalize the remaining source-of-truth and publication boundaries around `task up`, rendered GitOps outputs, and root-app repo metadata.
+- [x] 2. Continue splitting `scripts/haac.py` into focused modules under `scripts/haaclib/` without changing the operator contract.
+- [x] 3. Harden the WSL/SSH/secret handoff path so bootstrap trust and log-redaction remain explicit and reviewable.
+- [x] 4. Keep the official UI catalog, Homepage aliases, and Authelia protection model consistent for all published apps.
+- [x] 5. Tighten the autonomous loop contract so apply, discovery, review, and closeout do not leave stale OpenSpec debt behind.
+- [x] 6. Validate with `python scripts/haac.py check-env`, `python scripts/haac.py doctor`, `helm template`, `task -n up`, live reconcile or `task up` when available, and browser-level verification when a working Playwright runtime is available.

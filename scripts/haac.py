@@ -24,6 +24,7 @@ from pathlib import Path, PurePosixPath
 
 from haaclib import endpoints as endpointlib
 from haaclib import gitops as gitopslib
+from haaclib import secrets as secretlib
 from haaclib.authelia import resolve_admin_password_hash
 from haaclib.redaction import redact_sensitive_text, secret_values_from_env
 from haaclib.sshconfig import ensure_known_hosts_file, resolve_known_hosts_path, resolve_ssh_host_key_mode
@@ -668,6 +669,18 @@ def ensure_wsl_known_hosts(env: dict[str, str]) -> str:
     return known_hosts_wsl
 
 
+def sync_wsl_known_hosts_back(env: dict[str, str], known_hosts_wsl: str) -> None:
+    local_known_hosts = known_hosts_path(env)
+    ensure_parent(local_known_hosts)
+    local_known_hosts_wsl = to_posix_wsl_path(local_known_hosts, env)
+    command = (
+        "if [ -f {src} ]; then "
+        "cp {src} {dst} && chmod 600 {dst}; "
+        "fi"
+    ).format(src=shlex.quote(known_hosts_wsl), dst=shlex.quote(local_known_hosts_wsl))
+    run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)), check=False)
+
+
 def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env: dict[str, str]) -> None:
     if shutil.which("wsl") is None:
         raise HaaCError(
@@ -716,7 +729,10 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
         ]
     )
     script_bytes = ("\n".join(script_lines) + "\n").encode("utf-8")
-    run(wsl_command("bash", "-se", distro=wsl_distro(env)), input_bytes=script_bytes)
+    try:
+        run(wsl_command("bash", "-se", distro=wsl_distro(env)), input_bytes=script_bytes)
+    finally:
+        sync_wsl_known_hosts_back(env, known_hosts_wsl)
 
 
 def allocate_local_port() -> int:
@@ -1194,20 +1210,14 @@ def fetch_or_reuse_public_cert(kubeseal: str, kubeconfig: Path) -> Path:
 
 
 def create_secret_yaml(
-    kubectl: str,
+    _kubectl: str,
     name: str,
     namespace: str,
     *,
     literals: dict[str, str] | None = None,
     files: dict[str, Path] | None = None,
 ) -> str:
-    command = [kubectl, "create", "secret", "generic", name, "-n", namespace]
-    for key, value in (literals or {}).items():
-        command.append(f"--from-literal={key}={value}")
-    for key, value in (files or {}).items():
-        command.append(f"--from-file={key}={value}")
-    command.extend(["--dry-run=client", "-o", "yaml"])
-    return run_stdout(command)
+    return secretlib.render_secret_manifest(name, namespace, literals=literals, files=files)
 
 
 def seal_yaml(kubeseal: str, cert: Path, yaml_text: str) -> str:
@@ -1217,7 +1227,7 @@ def seal_yaml(kubeseal: str, cert: Path, yaml_text: str) -> str:
             "--format=yaml",
             f"--cert={cert}",
             "--scope",
-            "cluster-wide",
+            "strict",
         ],
         input_text=yaml_text,
     )
@@ -1742,7 +1752,7 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
         merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
         require_success(merge, f"Git merge failed for {remote_ref}")
         print(f"[ok] GitOps repo synchronized with {remote_ref}")
-    elif git_ref_state("HEAD", remote_ref) in {"behind", "diverged"}:
+    elif git_ref_state("HEAD", remote_ref) in {"ahead", "behind", "diverged"}:
         raise HaaCError(
             "GitOps publication requires the local branch to match origin when PUSH_ALL=false. "
             "Run `task sync` first with a clean worktree or rerun with PUSH_ALL=true."
@@ -2199,10 +2209,11 @@ def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
 
 def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> None:
     endpoints = load_endpoint_specs(domain_name)
-    accepted_statuses = {200, 201, 202, 204, 301, 302, 307, 308, 401}
     results: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
+    auth_url = f"https://auth.{domain_name}"
     last_status_by_url: dict[str, int] = {endpoint["url"]: 0 for endpoint in endpoints}
+    last_location_by_url: dict[str, str] = {endpoint["url"]: "" for endpoint in endpoints}
     success_by_url: dict[str, bool] = {endpoint["url"]: False for endpoint in endpoints}
 
     for attempt in range(retries):
@@ -2211,9 +2222,11 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
             url = endpoint["url"]
             if success_by_url[url]:
                 continue
-            status = probe_web_status(url)
+            response = endpointlib.probe_web_response(url)
+            status = int(response["status"])
             last_status_by_url[url] = status
-            if status in accepted_statuses:
+            last_location_by_url[url] = str(response.get("location", "") or "")
+            if endpointlib.endpoint_verification_success(endpoint, response, auth_url):
                 success_by_url[url] = True
             else:
                 pending += 1
@@ -2231,6 +2244,7 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
             "url": url,
             "auth": endpoint["auth"],
             "status": str(last_status_by_url[url]),
+            "location": last_location_by_url[url],
             "verification": "reachable" if success else "failed",
         }
         results.append(result)
@@ -2258,7 +2272,8 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
     if failures:
         print("Failed endpoints:")
         for result in failures:
-            print(f"- {result['service']} ({result['status']}): {result['url']}")
+            location_suffix = f" -> {result['location']}" if result["location"] else ""
+            print(f"- {result['service']} ({result['status']}){location_suffix}: {result['url']}")
     print()
     print(json.dumps({"result": overall, "reachable": reachable, "total": len(results), "endpoints": results}, indent=2))
     if failures:

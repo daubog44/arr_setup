@@ -4,6 +4,7 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def endpoint_specs_source_path(values_output: Path, values_template: Path) -> Path:
@@ -95,7 +96,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return fp
 
 
-def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
+def probe_web_response(url: str, timeout_seconds: int = 10) -> dict[str, str | int]:
     opener = urllib.request.build_opener(NoRedirectHandler)
     request = urllib.request.Request(
         url,
@@ -114,8 +115,36 @@ def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
     )
     try:
         with opener.open(request, timeout=timeout_seconds) as response:
-            return int(getattr(response, "status", response.getcode()))
+            return {
+                "status": int(getattr(response, "status", response.getcode())),
+                "location": response.headers.get("Location", ""),
+            }
     except urllib.error.HTTPError as error:
-        return int(error.code)
+        return {
+            "status": int(error.code),
+            "location": error.headers.get("Location", ""),
+        }
     except Exception:
-        return 0
+        return {"status": 0, "location": ""}
+
+
+def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
+    return int(probe_web_response(url, timeout_seconds)["status"])
+
+
+def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, str | int], auth_url: str) -> bool:
+    status = int(response["status"])
+    location = str(response.get("location", "") or "")
+    if endpoint["auth"] == "public":
+        return status in {200, 201, 202, 204}
+
+    if status == 401:
+        return True
+    if status not in {301, 302, 303, 307, 308}:
+        return False
+    if not location:
+        return False
+    parsed = urlparse(location)
+    if not parsed.netloc:
+        return location.startswith("/") or location.startswith("?")
+    return parsed.netloc == urlparse(auth_url).netloc

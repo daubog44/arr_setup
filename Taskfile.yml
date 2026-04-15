@@ -130,13 +130,15 @@ tasks:
       - task: wait-for-argocd-sync
 
   reconcile:argocd:
-    desc: "Push the current GitOps state, re-apply the remote ArgoCD bootstrap overlay, and wait for root/platform/workloads to reconcile."
+    desc: "Push GitOps state, re-apply the remote ArgoCD bootstrap overlay, reconcile Cloudflare edge state, and verify public URLs."
     cmds:
       - task: push-changes
         vars:
           PUSH_ALL: "{{.PUSH_ALL}}"
       - task: deploy-argocd
       - task: wait-for-argocd-sync
+      - task: sync-cloudflare
+      - task: verify-endpoints
 
   reconcile:gitops:
     desc: "Reconcile the full remote GitOps layer without reprovisioning infra: secrets, ArgoCD bootstrap, workloads, Cloudflare, and public URLs."

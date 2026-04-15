@@ -108,14 +108,22 @@ spec:
 
               wait_http() {
                 url="$1"
-                for _ in $(seq 1 60); do
+                attempts="${2:-0}"
+                count=0
+                while true; do
                   if curl_common -fsS "$url" >/dev/null 2>&1; then
                     return 0
                   fi
+                  count=$((count + 1))
+                  if [ "$attempts" -gt 0 ] && [ "$count" -ge "$attempts" ]; then
+                    echo "Timed out waiting for $url" >&2
+                    return 1
+                  fi
+                  if [ $((count % 12)) -eq 0 ]; then
+                    echo "Still waiting for $url..." >&2
+                  fi
                   sleep 5
                 done
-                echo "Timed out waiting for $url" >&2
-                return 1
               }
 
               qbit_login_ok() {
