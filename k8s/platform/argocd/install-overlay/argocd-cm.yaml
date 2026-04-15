@@ -15,6 +15,6 @@ data:
     name: Authelia
     issuer: https://auth.nucleoautogenerativo.it
     clientID: argocd
-    clientSecret: $argocd-sso-secret:clientSecret
+    clientSecret: $oidc.authelia.clientSecret
     requestedScopes: ["openid", "profile", "email", "groups"]
     requestedIDTokenClaims: {"groups": {"essential": true}}

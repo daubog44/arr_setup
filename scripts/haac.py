@@ -54,6 +54,7 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "workloads" / "applications" / "haac-stack.yaml",
     K8S_DIR / "platform" / "argocd" / "argocd-app.yaml",
     K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-cm.yaml",
+    K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-secret-patch.yaml",
     K8S_DIR / "platform" / "applications" / "falco-app.yaml",
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
     K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
@@ -1361,20 +1362,6 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
                 "admin-user": "admin",
                 "admin-password": env["QUI_PASSWORD"],
             },
-            None,
-        ),
-        (
-            "argocd-sso-secret",
-            "argocd",
-            SECRETS_DIR / "argocd-sso-sealed-secret.yaml",
-            {"clientSecret": env["ARGOCD_OIDC_SECRET"]},
-            None,
-        ),
-        (
-            "argocd-oidc-secret",
-            "argocd",
-            SECRETS_DIR / "argocd-oidc-sealed-secret.yaml",
-            {"client_secret": env["ARGOCD_OIDC_SECRET"]},
             None,
         ),
         (

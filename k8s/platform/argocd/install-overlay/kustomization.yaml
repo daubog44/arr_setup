@@ -11,6 +11,11 @@ patches:
     path: argocd-cm.yaml
   - target:
       version: v1
+      kind: Secret
+      name: argocd-secret
+    path: argocd-secret-patch.yaml
+  - target:
+      version: v1
       kind: ConfigMap
       name: argocd-rbac-cm
     path: argocd-rbac-cm.yaml
