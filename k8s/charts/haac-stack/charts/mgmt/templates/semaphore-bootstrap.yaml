@@ -80,11 +80,16 @@ spec:
 
               HDR='-H "Content-Type: application/json"'
 
-              # Check if project already exists to make this idempotent
+              # Reconcile the managed project idempotently by recreating it if it already exists.
+              # This keeps the managed inventory/key/repository model converged after auth and trust-model changes.
               EXISTING=$(curl -sf -b /tmp/cookies.txt "$BASE/api/projects")
               if echo "$EXISTING" | grep -q "HaaC Maintenance"; then
-                echo "Project already exists, skipping bootstrap."
-                exit 0
+                EXISTING_PROJECT_ID=$(echo "$EXISTING" | tr '{' '\n' | grep '"name":"HaaC Maintenance"' | sed 's/.*"id":\([0-9]*\).*/\1/' | head -n 1)
+                if [ -n "$EXISTING_PROJECT_ID" ]; then
+                  echo "Managed Semaphore project already exists. Recreating project $EXISTING_PROJECT_ID to converge bootstrap-owned resources."
+                  curl -sf -b /tmp/cookies.txt -X DELETE "$BASE/api/project/$EXISTING_PROJECT_ID" > /dev/null
+                  sleep 3
+                fi
               fi
 
               # 1. Create project

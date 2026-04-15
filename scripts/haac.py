@@ -3253,12 +3253,12 @@ def tofu_tf_vars(env: dict[str, str]) -> dict[str, str]:
         "nas_share_name": "NAS_SHARE_NAME",
         "storage_uid": "STORAGE_UID",
         "storage_gid": "STORAGE_GID",
-        "maintenance_ssh_user": "HAAC_MAINTENANCE_USER",
     }
     mapped = {f"TF_VAR_{tf_var}": env.get(env_key, "") for tf_var, env_key in direct_env_map.items()}
     mapped["TF_VAR_proxmox_access_host"] = proxmox_access_host(env)
     mapped["TF_VAR_lxc_gateway"] = resolve_default_gateway(env)
     mapped["TF_VAR_python_executable"] = env.get("PYTHON_CMD", "python")
+    mapped["TF_VAR_maintenance_ssh_user"] = maintenance_user(env)
     return mapped
 
 
