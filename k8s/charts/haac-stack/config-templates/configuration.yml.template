@@ -51,7 +51,7 @@ identity_providers:
         public: false
         authorization_policy: one_factor
         redirect_uris:
-          - https://headlamp.${DOMAIN_NAME}/oidc/callback
+          - https://headlamp.${DOMAIN_NAME}/oidc-callback
         scopes:
           - openid
           - profile
@@ -64,7 +64,7 @@ identity_providers:
         public: false
         authorization_policy: one_factor
         redirect_uris:
-          - https://ansible.${DOMAIN_NAME}/api/auth/oidc/redirect
+          - https://ansible.${DOMAIN_NAME}/api/auth/oidc/authelia/redirect
         scopes:
           - openid
           - profile

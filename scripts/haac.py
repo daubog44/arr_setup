@@ -1399,6 +1399,28 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
+            "semaphore-oidc-secret",
+            "mgmt",
+            SECRETS_DIR / "semaphore-oidc-sealed-secret.yaml",
+            {
+                "SEMAPHORE_OIDC_PROVIDERS": json.dumps(
+                    {
+                        "authelia": {
+                            "display_name": "Authelia",
+                            "provider_url": f"https://auth.{env['DOMAIN_NAME']}",
+                            "redirect_url": f"https://ansible.{env['DOMAIN_NAME']}/api/auth/oidc/authelia/redirect",
+                            "client_id": "semaphore",
+                            "client_secret": env["SEMAPHORE_OIDC_SECRET"],
+                            "username_claim": "preferred_username",
+                            "name_claim": "name",
+                            "email_claim": "email",
+                        }
+                    }
+                )
+            },
+            None,
+        ),
+        (
             "semaphore-general",
             "mgmt",
             SECRETS_DIR / "semaphore-general-sealed-secret.yaml",

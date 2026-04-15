@@ -142,7 +142,7 @@ ingresses:
     service: authelia
     port: 9091
     namespace: mgmt
-    auth_enabled: false
+    auth_strategy: public
     homepage_group: Management
     homepage_name: Authelia
     homepage_icon: authelia.png
@@ -153,7 +153,7 @@ ingresses:
     service: homepage
     port: 80
     namespace: mgmt
-    auth_enabled: true
+    auth_strategy: edge_forward_auth
     homepage_group: Management
     homepage_name: Homepage
     homepage_icon: homepage.png
@@ -164,7 +164,7 @@ ingresses:
     service: headlamp
     port: 80
     namespace: mgmt
-    auth_enabled: true
+    auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: Headlamp
     homepage_icon: headlamp.png
@@ -175,7 +175,7 @@ ingresses:
     service: ntfy
     port: 80
     namespace: mgmt
-    auth_enabled: true
+    auth_strategy: edge_forward_auth
     homepage_group: Management
     homepage_name: Ntfy
     homepage_icon: ntfy.png
@@ -186,7 +186,7 @@ ingresses:
     service: semaphore
     port: 3000
     namespace: mgmt
-    auth_enabled: true
+    auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: Semaphore
     homepage_icon: ansible.png
@@ -197,7 +197,7 @@ ingresses:
     service: jellyfin
     port: 80
     namespace: media
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Media
     homepage_name: Jellyfin
     homepage_icon: jellyfin.png
@@ -208,7 +208,7 @@ ingresses:
     service: radarr
     port: 80
     namespace: media
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Media
     homepage_name: Radarr
     homepage_icon: radarr.png
@@ -219,7 +219,7 @@ ingresses:
     service: sonarr
     port: 80
     namespace: media
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Media
     homepage_name: Sonarr
     homepage_icon: sonarr.png
@@ -230,7 +230,7 @@ ingresses:
     service: prowlarr
     port: 80
     namespace: media
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Media
     homepage_name: Prowlarr
     homepage_icon: prowlarr.png
@@ -241,7 +241,7 @@ ingresses:
     service: autobrr
     port: 80
     namespace: media
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Media
     homepage_name: Autobrr
     homepage_icon: autobrr.png
@@ -252,7 +252,7 @@ ingresses:
     service: qbittorrent
     port: 80
     namespace: media
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Media
     homepage_name: qBittorrent
     homepage_icon: qbittorrent.png
@@ -263,7 +263,7 @@ ingresses:
     service: argocd-server
     port: 80
     namespace: argocd
-    auth_enabled: true
+    auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: ArgoCD
     homepage_icon: argocd.png
@@ -274,7 +274,7 @@ ingresses:
     service: kube-prometheus-stack-grafana
     port: 80
     namespace: monitoring
-    auth_enabled: true
+    auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: Grafana
     homepage_icon: grafana.png
@@ -285,7 +285,7 @@ ingresses:
     service: longhorn-frontend
     port: 80
     namespace: longhorn-system
-    auth_enabled: true
+    auth_strategy: app_native
     homepage_group: Management
     homepage_name: Longhorn
     homepage_icon: longhorn.png
@@ -296,7 +296,7 @@ ingresses:
     service: litmus-frontend-service
     port: 9091
     namespace: chaos
-    auth_enabled: true
+    auth_strategy: edge_forward_auth
     homepage_group: Chaos
     homepage_name: Litmus
     homepage_icon: litmuschaos.png
@@ -311,7 +311,7 @@ ingresses:
     service: falco-falcosidekick-ui
     port: 2802
     namespace: security
-    auth_enabled: true
+    auth_strategy: edge_forward_auth
     homepage_group: Security
     homepage_name: Falco
     homepage_icon: falco.png

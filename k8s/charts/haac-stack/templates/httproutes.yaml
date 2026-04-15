@@ -1,5 +1,11 @@
 # {{- range $name, $conf := .Values.ingresses }}
 # {{- if (default true $conf.enabled) }}
+{{- $authStrategy := "public" -}}
+{{- if hasKey $conf "auth_strategy" -}}
+{{- $authStrategy = ($conf.auth_strategy | toString) -}}
+{{- else if and (hasKey $conf "auth_enabled") $conf.auth_enabled -}}
+{{- $authStrategy = "edge_forward_auth" -}}
+{{- end -}}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -28,14 +34,14 @@ spec:
           name: "{{ $conf.service }}"
           port: {{ $conf.port }}
           weight: 1
-# {{- if or $conf.auth_enabled $conf.extra_middlewares }}
+# {{- if or (ne $authStrategy "public") $conf.extra_middlewares }}
       filters:
         - type: ExtensionRef
           extensionRef:
             group: traefik.io
             kind: Middleware
             name: "force-https"
-# {{- if $conf.auth_enabled }}
+# {{- if eq $authStrategy "edge_forward_auth" }}
         - type: ExtensionRef
           extensionRef:
             group: traefik.io

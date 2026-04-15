@@ -40,7 +40,11 @@ def load_endpoint_specs(values_output: Path, values_template: Path, domain_name:
                 "subdomain": current["subdomain"],
                 "namespace": current.get("namespace", ""),
                 "service": current.get("service", ""),
-                "auth": "protected" if current.get("auth_enabled", "").strip().lower() in {"1", "true", "yes", "on"} else "public",
+                "auth": current.get("auth_strategy", "").strip() or (
+                    "edge_forward_auth"
+                    if current.get("auth_enabled", "").strip().lower() in {"1", "true", "yes", "on"}
+                    else "public"
+                ),
                 "url": f"https://{current['subdomain']}.{domain_name}",
             }
         )
@@ -135,16 +139,47 @@ def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
 def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, str | int], auth_url: str) -> bool:
     status = int(response["status"])
     location = str(response.get("location", "") or "")
-    if endpoint["auth"] == "public":
+    auth_strategy = endpoint["auth"]
+    if auth_strategy == "public":
         return status in {200, 201, 202, 204}
 
-    if status == 401:
-        return True
-    if status not in {301, 302, 303, 307, 308}:
-        return False
-    if not location:
-        return False
-    parsed = urlparse(location)
-    if not parsed.netloc:
-        return location.startswith("/") or location.startswith("?")
-    return parsed.netloc == urlparse(auth_url).netloc
+    if auth_strategy == "edge_forward_auth":
+        if status == 401:
+            return True
+        if status not in {301, 302, 303, 307, 308}:
+            return False
+        if not location:
+            return False
+        parsed = urlparse(location)
+        if not parsed.netloc:
+            return location.startswith("/") or location.startswith("?")
+        return parsed.netloc == urlparse(auth_url).netloc
+
+    if auth_strategy == "native_oidc":
+        if status in {200, 201, 202, 204, 401}:
+            return True
+        if status not in {301, 302, 303, 307, 308}:
+            return False
+        if not location:
+            return False
+        parsed = urlparse(location)
+        if not parsed.netloc:
+            return location.startswith("/") or location.startswith("?")
+        return parsed.netloc in {
+            urlparse(auth_url).netloc,
+            urlparse(endpoint["url"]).netloc,
+        }
+
+    if auth_strategy == "app_native":
+        if status in {200, 201, 202, 204, 401}:
+            return True
+        if status not in {301, 302, 303, 307, 308}:
+            return False
+        if not location:
+            return False
+        parsed = urlparse(location)
+        if not parsed.netloc:
+            return location.startswith("/") or location.startswith("?")
+        return parsed.netloc == urlparse(endpoint["url"]).netloc
+
+    return False

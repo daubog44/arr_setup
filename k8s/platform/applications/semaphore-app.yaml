@@ -59,6 +59,9 @@ spec:
         secrets:
           existingSecret: semaphore-general
 
+        general:
+          host: https://ansible.nucleoautogenerativo.it
+
         admin:
           create: true
           existingSecret: semaphore-db-secret
@@ -69,6 +72,11 @@ spec:
 
         oidc:
           enable: false
+
+        extraEnvSecrets:
+          SEMAPHORE_OIDC_PROVIDERS:
+            secret: semaphore-oidc-secret
+            key: SEMAPHORE_OIDC_PROVIDERS
 
         ingress:
           enabled: false

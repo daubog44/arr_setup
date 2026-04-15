@@ -1,0 +1,6 @@
+- [ ] 1. Replace ingress `auth_enabled` with explicit `auth_strategy` values and update renderers that consume the catalog.
+- [ ] 2. Update HTTPRoute and Traefik middleware rendering so only `edge_forward_auth` routes receive Authelia forward-auth.
+- [ ] 3. Fix Headlamp native OIDC registration and enable Semaphore native OIDC with the correct Authelia redirect path.
+- [ ] 4. Update endpoint verification to validate by declared auth strategy instead of the old protected/public boolean.
+- [ ] 5. Validate with `openspec validate converge-public-auth-surface`, `helm template haac-stack k8s/charts/haac-stack`, `kubectl kustomize k8s/bootstrap/root`, `kubectl kustomize k8s/platform`, `kubectl kustomize k8s/workloads`, and `task -n up`.
+- [ ] 6. Verify the public UI surface with browser-level checks, using Playwright MCP when available or the repo-local Playwright CLI fallback when it is not.

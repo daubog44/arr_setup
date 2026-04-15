@@ -1,11 +1,21 @@
-{{- $authNamespaces := dict -}}
+{{- $routeNamespaces := dict -}}
+{{- $autheliaNamespaces := dict -}}
 {{- range $name, $conf := .Values.ingresses }}
-{{- if and (default true $conf.enabled) $conf.auth_enabled }}
+{{- if (default true $conf.enabled) }}
 {{- $namespace := $conf.namespace | default $.Release.Namespace -}}
-{{- $_ := set $authNamespaces $namespace true -}}
+{{- $authStrategy := "public" -}}
+{{- if hasKey $conf "auth_strategy" -}}
+{{- $authStrategy = ($conf.auth_strategy | toString) -}}
+{{- else if and (hasKey $conf "auth_enabled") $conf.auth_enabled -}}
+{{- $authStrategy = "edge_forward_auth" -}}
+{{- end -}}
+{{- $_ := set $routeNamespaces $namespace true -}}
+{{- if eq $authStrategy "edge_forward_auth" }}
+{{- $_ := set $autheliaNamespaces $namespace true -}}
 {{- end }}
 {{- end }}
-{{- range $namespace, $_ := $authNamespaces }}
+{{- end }}
+{{- range $namespace, $_ := $routeNamespaces }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -16,6 +26,7 @@ spec:
   headers:
     customRequestHeaders:
       X-Forwarded-Proto: "https"
+{{- if hasKey $autheliaNamespaces $namespace }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -31,4 +42,5 @@ spec:
       - Remote-Groups
       - Remote-Name
       - Remote-Email
+{{- end }}
 {{- end }}
