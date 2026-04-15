@@ -2354,7 +2354,9 @@ def sync_cloudflare() -> None:
     if not current_config.get("success"):
         raise HaaCError(f"Failed to retrieve Cloudflare tunnel configuration: {current_config}")
 
-    ingress = current_config["result"]["config"].get("ingress", [])
+    config_result = current_config.get("result") or {}
+    current_config_payload = config_result.get("config") or {}
+    ingress = current_config_payload.get("ingress", [])
     domain_name = env["DOMAIN_NAME"]
     filtered = [
         item
@@ -2377,7 +2379,7 @@ def sync_cloudflare() -> None:
             {"service": "http_status:404"},
         ]
     )
-    update_payload = {"config": {**current_config["result"]["config"], "ingress": filtered}}
+    update_payload = {"config": {**current_config_payload, "ingress": filtered}}
     updated = cloudflare_request("PUT", config_url, env["CLOUDFLARE_API_TOKEN"], update_payload)
     if not updated.get("success"):
         raise HaaCError(f"Failed to update Cloudflare tunnel configuration: {updated}")

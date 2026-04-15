@@ -32,7 +32,6 @@ spec:
           name: "{{ $conf.service }}"
           port: {{ $conf.port }}
           weight: 1
-{{- if or (ne $authStrategy "public") $conf.extra_middlewares }}
       filters:
         - type: ExtensionRef
           extensionRef:
@@ -52,7 +51,6 @@ spec:
             group: traefik.io
             kind: Middleware
             name: "{{ . }}"
-{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

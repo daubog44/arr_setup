@@ -49,6 +49,7 @@ identity_providers:
         client_name: Headlamp
         client_secret: "${HEADLAMP_OIDC_HASH}"
         public: false
+        token_endpoint_auth_method: client_secret_basic
         authorization_policy: one_factor
         redirect_uris:
           - https://headlamp.${DOMAIN_NAME}/oidc-callback
