@@ -21,6 +21,7 @@ Published app UIs MUST be protected according to an explicit per-route auth stra
 - **WHEN** browser-level verification runs for a `native_oidc` route
 - **THEN** verification MUST prove the OIDC flow completes to the application landing page after Authelia authentication
 - **AND** a bare `302` redirect MUST NOT be considered sufficient proof of correctness
+- **AND** the registered OIDC client MUST allow the token endpoint auth method used by the deployed application build
 
 #### Scenario: In-cluster native OIDC is not treated as supported without a converged browser flow
 

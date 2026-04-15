@@ -72,7 +72,7 @@ spec:
           emailKey: ADMIN_EMAIL
 
         oidc:
-          enable: false
+          enable: true
 
         extraEnvSecrets:
           SEMAPHORE_OIDC_PROVIDERS:

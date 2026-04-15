@@ -59,8 +59,15 @@ Routes are expected to answer directly without authentication middleware.
 
 ### Semaphore
 
-- enable native OIDC in the Helm application values
-- use the provider-scoped Authelia redirect URI `/api/auth/oidc/authelia/redirect`
+- keep the provider-scoped Authelia redirect URI `/api/auth/oidc/authelia/redirect`
+- browser verification must prove the route lands on the Semaphore UI with `login_with_password=false`
+- repo config must not reintroduce a second edge gate for the route
+
+### ArgoCD
+
+- keep the built-in OIDC flow
+- register the Authelia client with the token endpoint auth method that the deployed ArgoCD build actually uses
+- remove duplicate legacy ArgoCD OIDC secret paths so one repo-managed secret contract remains
 
 ## Verification
 
@@ -71,7 +78,8 @@ The change is only done when:
 - `task -n up` passes
 - `verify-web` reflects the declared auth strategies
 - browser checks confirm:
-  - Headlamp native OIDC completes without the current redirect mismatch
+  - Headlamp presents one Authelia edge gate and no second broken internal login path
+  - ArgoCD native OIDC completes without the current token endpoint auth-method mismatch
   - Semaphore native OIDC completes
   - Homepage, Litmus, and Falco show one Authelia gate
   - app-native routes do not get an Authelia redirect

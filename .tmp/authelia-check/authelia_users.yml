@@ -1,0 +1,8 @@
+users:
+  admin:
+    displayname: "Administrator"
+    password: "$6$pLd9HMZ9ml8kZXLi$Ktny6XHZ7cWx4pWtabqXJG4v50xBJLXXYll.zx5p5.jDB/bAySegoWlw2/W5SPLPh6UQeKMubW9RVPASyrgaP/"
+    email: "admin@nucleoautogenerativo.it"
+    groups:
+      - admins
+      - dev

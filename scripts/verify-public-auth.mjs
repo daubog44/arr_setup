@@ -6,6 +6,14 @@ const repoRoot = process.cwd();
 const envPath = path.join(repoRoot, ".env");
 const captureDir = path.join(repoRoot, ".tmp", "playwright-captures");
 fs.mkdirSync(captureDir, { recursive: true });
+const valuesTemplatePath = path.join(
+  repoRoot,
+  "k8s",
+  "charts",
+  "haac-stack",
+  "config-templates",
+  "values.yaml.template",
+);
 
 function loadEnv(filePath) {
   const content = fs.readFileSync(filePath, "utf8");
@@ -22,6 +30,130 @@ function loadEnv(filePath) {
   }
   return env;
 }
+
+function loadIngressCatalog(filePath, domainName) {
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  let inIngresses = false;
+  let currentName = "";
+  let current = {};
+  const endpoints = [];
+
+  const flush = () => {
+    if (!currentName || !current.subdomain || !current.auth_strategy) {
+      currentName = "";
+      current = {};
+      return;
+    }
+    const enabled = !["0", "false", "no", "off"].includes(String(current.enabled ?? "true").toLowerCase());
+    if (enabled) {
+      endpoints.push({
+        name: currentName,
+        subdomain: current.subdomain,
+        namespace: current.namespace || "",
+        service: current.service || "",
+        auth: current.auth_strategy,
+        url: `https://${current.subdomain}.${domainName}`,
+      });
+    }
+    currentName = "";
+    current = {};
+  };
+
+  for (const rawLine of lines) {
+    const stripped = rawLine.trim();
+    if (!inIngresses) {
+      if (stripped === "ingresses:") {
+        inIngresses = true;
+      }
+      continue;
+    }
+    if (/^\S/.test(rawLine)) {
+      break;
+    }
+    if (!stripped || stripped.startsWith("#")) {
+      continue;
+    }
+    const entryMatch = rawLine.match(/^  ([A-Za-z0-9_-]+):\s*$/);
+    if (entryMatch) {
+      flush();
+      currentName = entryMatch[1];
+      current = {};
+      continue;
+    }
+    const propMatch = rawLine.match(/^    ([A-Za-z0-9_]+):\s*(.*)$/);
+    if (propMatch && currentName) {
+      const [, key, value] = propMatch;
+      const cleaned = value.trim().replace(/^['"]|['"]$/g, "");
+      if (cleaned) {
+        current[key] = cleaned;
+      }
+    }
+  }
+
+  flush();
+  return endpoints;
+}
+
+const routeChecks = {
+  homepage: { expectedText: "ChaosTest" },
+  headlamp: { type: "headlamp" },
+  ntfy: {},
+  litmus: {},
+  falco: {},
+  longhorn: {},
+  argocd: {
+    type: "native_oidc",
+    async preAuthAction(currentPage) {
+      const oidcButton = currentPage.locator('text="Log in via Authelia"');
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (await oidcButton.count()) {
+          await oidcButton.first().waitFor({ state: "visible", timeout: 30000 });
+          await oidcButton.first().click();
+          return;
+        }
+        await currentPage.waitForTimeout(1000);
+      }
+      throw new Error("ArgoCD OIDC login button did not appear");
+    },
+    async waitForSuccess(currentPage, env) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await currentPage.waitForTimeout(1000);
+        const currentUrl = currentPage.url();
+        const parsed = new URL(currentUrl);
+        if (
+          parsed.host === `argocd.${env.DOMAIN_NAME}` &&
+          !parsed.pathname.startsWith("/auth/callback")
+        ) {
+          break;
+        }
+        const body = await currentPage.textContent("body").catch(() => "");
+        if (String(body).includes("failed to get token")) {
+          throw new Error(`ArgoCD callback failed: ${body}`);
+        }
+      }
+      await currentPage.waitForSelector('text=/Applications|New App|Settings/', { timeout: 30000 });
+    },
+  },
+  grafana: {
+    type: "native_oidc",
+    async preAuthAction() {},
+    async waitForSuccess(currentPage) {
+      await currentPage.waitForSelector('text=/Home|Dashboards|Welcome to Grafana/', { timeout: 30000 });
+    },
+  },
+  semaphore: {
+    type: "native_oidc",
+    async preAuthAction(currentPage) {
+      const oidcButton = currentPage.locator('text="Authelia"');
+      if (await oidcButton.count()) {
+        await oidcButton.first().click();
+      }
+    },
+    async waitForSuccess(currentPage) {
+      await currentPage.waitForSelector('text=/Projects|Task Templates|Dashboard/', { timeout: 30000 });
+    },
+  },
+};
 
 async function maybeAutheliaLogin(page, env) {
   const authHost = `auth.${env.DOMAIN_NAME}`;
@@ -99,23 +231,22 @@ async function verifyHeadlamp(page, env) {
   }
 }
 
-async function verifyNativeOidc(page, env, subdomain, screenshotName, options = {}) {
-  const expectedHost = `${subdomain}.${env.DOMAIN_NAME}`;
+async function verifyNativeOidc(page, env, endpoint, screenshotName, options = {}) {
+  const expectedHost = `${endpoint.subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}${options.pathSuffix || ""}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   if (options.preAuthAction) {
-    await options.preAuthAction(page, env);
+    await options.preAuthAction(page, env, endpoint);
   }
   await ensureHost(page, expectedHost, env);
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(3000);
-  if (options.expectSelector) {
-    await page.waitForSelector(options.expectSelector, { timeout: 30000 });
+  if (options.waitForSuccess) {
+    await options.waitForSuccess(page, env, endpoint);
   }
   await screenshot(page, screenshotName);
 }
 
-async function verifyAppNative(page, env, subdomain, screenshotName) {
-  const expectedHost = `${subdomain}.${env.DOMAIN_NAME}`;
+async function verifyAppNative(page, env, endpoint, screenshotName) {
+  const expectedHost = `${endpoint.subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
   const currentHost = new URL(page.url()).host;
@@ -133,43 +264,30 @@ async function run() {
   if (!env.AUTHELIA_ADMIN_PASSWORD) {
     throw new Error("AUTHELIA_ADMIN_PASSWORD is required in .env for browser auth verification");
   }
+  const ingressCatalog = loadIngressCatalog(valuesTemplatePath, env.DOMAIN_NAME);
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
 
   try {
-    await verifyEdgeRoute(page, env, "home", "homepage", "ChaosTest");
-    await verifyEdgeRoute(page, env, "litmus", "litmus");
-    await verifyEdgeRoute(page, env, "falco", "falco");
-    await verifyEdgeRoute(page, env, "longhorn", "longhorn");
-    await verifyHeadlamp(page, env);
-    await verifyNativeOidc(page, env, "argocd", "argocd", {
-      expectSelector: 'text="Settings"',
-      preAuthAction: async currentPage => {
-        const oidcButton = currentPage.locator('text="Log in via Authelia"');
-        if (await oidcButton.count()) {
-          await oidcButton.first().waitFor({ state: "visible", timeout: 30000 });
-          await oidcButton.first().click();
-        }
-      },
-    });
-    await verifyNativeOidc(page, env, "grafana", "grafana", {
-      expectSelector: 'text="Home"',
-      preAuthAction: async currentPage => {
-        await maybeAutheliaLogin(currentPage, env);
-      },
-    });
-    await verifyNativeOidc(page, env, "ansible", "semaphore", {
-      expectSelector: 'text="Projects"',
-      preAuthAction: async currentPage => {
-        const oidcButton = currentPage.locator('text="Authelia"');
-        if (await oidcButton.count()) {
-          await oidcButton.first().click();
-        }
-      },
-    });
-    await verifyAppNative(page, env, "jellyfin", "jellyfin");
-    await verifyAppNative(page, env, "radarr", "radarr");
+    for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "edge_forward_auth")) {
+      const routeConfig = routeChecks[endpoint.name] || {};
+      if (routeConfig.type === "headlamp") {
+        await verifyHeadlamp(page, env);
+        continue;
+      }
+      await verifyEdgeRoute(page, env, endpoint.subdomain, endpoint.name, routeConfig.expectedText ?? null);
+    }
+    for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "native_oidc")) {
+      const routeConfig = routeChecks[endpoint.name];
+      if (!routeConfig) {
+        throw new Error(`No browser verification contract defined for native_oidc route ${endpoint.name}`);
+      }
+      await verifyNativeOidc(page, env, endpoint, endpoint.name, routeConfig);
+    }
+    for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "app_native")) {
+      await verifyAppNative(page, env, endpoint, endpoint.name);
+    }
     console.log(JSON.stringify({ result: "ok", captureDir }, null, 2));
   } finally {
     await context.close();

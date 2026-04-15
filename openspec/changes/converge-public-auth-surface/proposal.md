@@ -12,8 +12,9 @@ The public UI surface is reachable again, but the auth contract is still inconsi
 
 - replace `auth_enabled` with an explicit `auth_strategy` in the ingress catalog
 - define one supported public auth matrix for official UIs
-- fix the Headlamp Authelia redirect URI mismatch and preserve native OIDC
-- enable native OIDC for Semaphore with the correct Authelia provider redirect path
+- keep Headlamp behind a single shared Authelia edge gate because the in-cluster native OIDC flow does not converge to a usable main UI
+- enable and verify the working native OIDC contract for Semaphore with the correct Authelia provider redirect path
+- align ArgoCD's Authelia client registration to the token endpoint auth method actually used by the deployed ArgoCD build
 - keep edge forward-auth only for apps that do not have a mature native OIDC path in this repo
 - keep Longhorn behind edge forward-auth until a repo-backed native auth path exists
 - remove route-level forward-auth from native-OIDC and app-native routes to avoid double login
@@ -23,8 +24,9 @@ The public UI surface is reachable again, but the auth contract is still inconsi
 
 ## Expected Outcome
 
-- Headlamp login completes without the current Authelia `invalid_request` failure
+- Headlamp remains behind a single Authelia edge gate without a second broken app-level login step
 - Semaphore login completes through Authelia OIDC rather than through a second edge gate
+- ArgoCD login completes through Authelia OIDC without the current token endpoint auth-method mismatch
 - app-native routes present only the app's own login instead of an extra Authelia redirect
 - edge-auth routes keep a single shared Authelia gate
 - Homepage, HTTPRoutes, and URL verification remain derived from the same ingress catalog
