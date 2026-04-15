@@ -1281,6 +1281,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "PROTONVPN_SERVER_COUNTRIES",
             "NTFY_TOPIC",
             "ARGOCD_OIDC_SECRET",
+            "HEADLAMP_OIDC_SECRET",
             "QUI_PASSWORD",
             "GRAFANA_OIDC_SECRET",
             "SEMAPHORE_DB_PASSWORD",
@@ -1367,6 +1368,13 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "argocd",
             SECRETS_DIR / "argocd-oidc-sealed-secret.yaml",
             {"client_secret": env["ARGOCD_OIDC_SECRET"]},
+            None,
+        ),
+        (
+            "headlamp-oidc-secret",
+            "mgmt",
+            SECRETS_DIR / "headlamp-oidc-sealed-secret.yaml",
+            {"clientSecret": env["HEADLAMP_OIDC_SECRET"]},
             None,
         ),
         (
