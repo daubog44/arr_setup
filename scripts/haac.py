@@ -1905,6 +1905,18 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
                 "--kubeconfig",
                 str(session_kubeconfig),
                 "rollout",
+                "restart",
+                "deployment/argocd-server",
+                "-n",
+                "argocd",
+            ]
+        )
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "rollout",
                 "status",
                 "deployment/argocd-server",
                 "-n",
