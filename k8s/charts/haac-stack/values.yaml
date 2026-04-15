@@ -39,6 +39,8 @@ global:
   cloudflared:
     autoUpdate:
       enabled: true
+  auth:
+    autheliaConfigChecksum: "1eca615aa1f7f5d50665f8e4a3e9cfc53743319fbc48e34089d7c70eaa5cfb71"
   images:
     gluetun:
       repository: qmcgaw/gluetun

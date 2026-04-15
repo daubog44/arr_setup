@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import platform
@@ -1300,6 +1301,13 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix="haac-secrets-"))
     authelia_configuration, authelia_users = render_authelia(temp_dir, env)
+    env["AUTHELIA_CONFIG_CHECKSUM"] = hashlib.sha256(
+        (
+            authelia_configuration.read_text(encoding="utf-8")
+            + "\n---\n"
+            + authelia_users.read_text(encoding="utf-8")
+        ).encode("utf-8")
+    ).hexdigest()
 
     secrets = [
         (

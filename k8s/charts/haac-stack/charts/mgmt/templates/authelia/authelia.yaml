@@ -31,6 +31,8 @@ spec:
     metadata:
       labels:
         app: authelia
+      annotations:
+        checksum/authelia-config: {{ .Values.global.auth.autheliaConfigChecksum | quote }}
     spec:
       enableServiceLinks: false
       securityContext:
