@@ -22,6 +22,12 @@ Published app UIs MUST be protected according to an explicit per-route auth stra
 - **THEN** verification MUST prove the OIDC flow completes to the application landing page after Authelia authentication
 - **AND** a bare `302` redirect MUST NOT be considered sufficient proof of correctness
 
+#### Scenario: In-cluster native OIDC is not treated as supported without a converged browser flow
+
+- **WHEN** an in-cluster control-plane UI advertises native OIDC but the browser flow still lands on the local login screen or unauthorized cluster state after the upstream identity step
+- **THEN** the route MUST NOT remain declared as `native_oidc`
+- **AND** the route MUST fall back to `edge_forward_auth` or another strategy that produces a single working login gate
+
 #### Scenario: Browser verification runs for an app-native route
 
 - **WHEN** browser-level verification runs for an `app_native` route

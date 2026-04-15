@@ -40,7 +40,7 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "1eca615aa1f7f5d50665f8e4a3e9cfc53743319fbc48e34089d7c70eaa5cfb71"
+    autheliaConfigChecksum: "c51df03a2ec5bf4b339f83353584008e782173ea8d2296afb87991ce3fce8d38"
   images:
     gluetun:
       repository: qmcgaw/gluetun
@@ -166,7 +166,7 @@ ingresses:
     service: headlamp
     port: 80
     namespace: mgmt
-    auth_strategy: native_oidc
+    auth_strategy: edge_forward_auth
     homepage_group: Management
     homepage_name: Headlamp
     homepage_icon: headlamp.png

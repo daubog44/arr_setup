@@ -22,12 +22,6 @@ spec:
         - name: headlamp
           image: >-
             {{ .Values.global.images.headlamp.repository }}:{{ .Values.global.images.headlamp.tag }}
-          env:
-            - name: HEADLAMP_CONFIG_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: headlamp-oidc-secret
-                  key: clientSecret
           ports:
             - containerPort: 4466
           livenessProbe:
@@ -45,10 +39,6 @@ spec:
             periodSeconds: 10
           args:
             - "-in-cluster"
-            - "-oidc-client-id=headlamp"
-            - "-oidc-idp-issuer-url=https://auth.{{ .Values.global.domainName }}"
-            - "-oidc-callback-url=https://headlamp.{{ .Values.global.domainName }}/oidc-callback"
-            - "-oidc-scopes=openid,profile,groups,email"
 ---
 apiVersion: v1
 kind: Service

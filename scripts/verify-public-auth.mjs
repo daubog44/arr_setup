@@ -25,31 +25,36 @@ function loadEnv(filePath) {
 
 async function maybeAutheliaLogin(page, env) {
   const authHost = `auth.${env.DOMAIN_NAME}`;
-  await page.waitForLoadState("domcontentloaded");
-  if (new URL(page.url()).host !== authHost) {
-    return;
-  }
-  const username = page.locator('#username-textfield, input[autocomplete="username"]').first();
-  const password = page.locator('#password-textfield, input[autocomplete="current-password"]').first();
-  const signIn = page.locator('#sign-in-button, button[type="submit"], input[type="submit"]').first();
-  const consentButton = page.locator('#openid-consent-accept').first();
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if ((await username.count()) || (await consentButton.count())) {
-      break;
+  for (let step = 0; step < 4; step += 1) {
+    await page.waitForLoadState("domcontentloaded");
+    if (new URL(page.url()).host !== authHost) {
+      return;
     }
-    await page.waitForTimeout(500);
-  }
-  if (await username.count()) {
-    await username.waitFor({ state: "visible", timeout: 30000 });
-    await username.fill("admin");
-    await password.fill(env.AUTHELIA_ADMIN_PASSWORD);
-    await signIn.click();
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-  }
-  if (await consentButton.count()) {
-    await consentButton.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-    await consentButton.click();
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    const username = page.locator('#username-textfield, input[autocomplete="username"]').first();
+    const password = page.locator('#password-textfield, input[autocomplete="current-password"]').first();
+    const signIn = page.locator('#sign-in-button, button[type="submit"], input[type="submit"]').first();
+    const consentButton = page.locator('#openid-consent-accept').first();
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if ((await username.count()) || (await consentButton.count())) {
+        break;
+      }
+      await page.waitForTimeout(500);
+    }
+    if (await username.count()) {
+      await username.waitFor({ state: "visible", timeout: 30000 });
+      await username.fill("admin");
+      await password.fill(env.AUTHELIA_ADMIN_PASSWORD);
+      await signIn.click();
+      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+      continue;
+    }
+    if (await consentButton.count()) {
+      await consentButton.waitFor({ state: "visible", timeout: 30000 });
+      await consentButton.click();
+      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+      continue;
+    }
+    await page.waitForTimeout(1000);
   }
 }
 
@@ -81,30 +86,17 @@ async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedTex
 
 async function verifyHeadlamp(page, env) {
   const expectedHost = `headlamp.${env.DOMAIN_NAME}`;
-  await page.goto(`https://${expectedHost}/c/main`, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.locator('text="Sign In"').first().waitFor({ state: "visible", timeout: 30000 });
-  const popupPromise = page.waitForEvent("popup", { timeout: 30000 });
-  await page.locator('text="Sign In"').first().click();
-  const popup = await popupPromise;
-  await popup.waitForLoadState("domcontentloaded");
-  await maybeAutheliaLogin(popup, env);
-  await popup.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-  await popup.waitForTimeout(3000);
-  const popupBody = await popup.textContent("body").catch(() => "");
-  if (popup.url().includes("invalid_request") || popup.url().includes("invalid_client") || String(popupBody).includes("invalid_client")) {
-    await screenshot(page, "headlamp-main-failed");
-    await screenshot(popup, "headlamp-popup-failed");
-    throw new Error(`Headlamp popup failed: ${popup.url()} :: ${String(popupBody).slice(0, 500)}`);
-  }
-  await page.waitForTimeout(3000);
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+  await verifyEdgeRoute(page, env, "headlamp", "headlamp");
   await ensureHost(page, expectedHost, env);
-  const body = await page.textContent("body");
-  if (String(body).includes("Authentication") && String(body).includes("Sign In")) {
+  const body = await page.textContent("body").catch(() => "");
+  if (String(body).includes("Use A Token")) {
     await screenshot(page, "headlamp-main-still-login");
-    throw new Error("Headlamp remained on the internal login screen after OIDC callback");
+    throw new Error("Headlamp still presented the internal login UI behind edge auth");
   }
-  await screenshot(page, "headlamp");
+  if (String(body).includes("Unauthorized")) {
+    await screenshot(page, "headlamp-main-unauthorized");
+    throw new Error("Headlamp rendered an unauthorized cluster state after edge auth");
+  }
 }
 
 async function verifyNativeOidc(page, env, subdomain, screenshotName, options = {}) {

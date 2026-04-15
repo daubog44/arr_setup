@@ -26,8 +26,8 @@ The declared strategy becomes the single route-auth source of truth for:
 ## Auth matrix
 
 - `public`: Authelia only
-- `edge_forward_auth`: Homepage, Ntfy, Litmus, Falco, Longhorn
-- `native_oidc`: Headlamp, Semaphore, Grafana, ArgoCD
+- `edge_forward_auth`: Homepage, Headlamp, Ntfy, Litmus, Falco, Longhorn
+- `native_oidc`: Semaphore, Grafana, ArgoCD
 - `app_native`: Jellyfin, Radarr, Sonarr, Prowlarr, Autobrr, qBittorrent/QUI
 
 ## Route behavior
@@ -53,9 +53,9 @@ Routes are expected to answer directly without authentication middleware.
 
 ### Headlamp
 
-- keep native OIDC in the deployment
-- update the Authelia client redirect URI from `/oidc/callback` to `/oidc-callback`
-- reduce the in-cluster RBAC blast radius from `cluster-admin` to a read-only cluster role suitable for the dashboard
+- do not keep native OIDC enabled in the deployment for the current in-cluster mode
+- protect the UI with shared Authelia forward-auth and keep Headlamp on the standard in-cluster service-account path
+- rationale: current upstream in-cluster OIDC flow reaches callback and issues a session cookie, but the main UI remains on `/c/main/login` with repeated unauthorized cluster requests, which does not satisfy the browser-verifiable auth contract
 
 ### Semaphore
 
