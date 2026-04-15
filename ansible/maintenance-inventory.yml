@@ -14,7 +14,7 @@ all:
       hosts:
         pve:
           ansible_host: "{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
-          ansible_user: haac-maint
+          ansible_user: 
           ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
           ansible_ssh_common_args: >-
             -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
@@ -24,40 +24,40 @@ all:
     k3s_master:
       hosts:
         192.168.0.211:
-          ansible_user: haac-maint
+          ansible_user: 
           ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
           ansible_ssh_common_args: >-
             -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
             -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
             -o IdentitiesOnly=yes
             -o IdentityFile={{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}
-            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p haac-maint@{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p @{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
           lxc_vmid: "100"
           proxmox_host: "pve"
     k3s_workers:
       hosts:
         192.168.0.212:
-          ansible_user: haac-maint
+          ansible_user: 
           ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
           ansible_ssh_common_args: >-
             -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
             -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
             -o IdentitiesOnly=yes
             -o IdentityFile={{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}
-            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p haac-maint@{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p @{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
           lxc_vmid: "102"
           worker_name: "worker1"
           proxmox_host: "pve"
           node_labels: {}
         192.168.0.213:
-          ansible_user: haac-maint
+          ansible_user: 
           ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
           ansible_ssh_common_args: >-
             -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
             -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
             -o IdentitiesOnly=yes
             -o IdentityFile={{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}
-            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p haac-maint@{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p @{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('100.94.77.28', true) }}"
           lxc_vmid: "101"
           worker_name: "worker2"
           proxmox_host: "pve"
