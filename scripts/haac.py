@@ -1886,10 +1886,12 @@ def cleanup_legacy_default_argocd_install(kubectl: str, kubeconfig: Path) -> Non
 def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     render_gitops_manifests(env)
+    overlay_env = dict(env)
+    overlay_env["ARGOCD_OIDC_SECRET_B64"] = base64.b64encode(env["ARGOCD_OIDC_SECRET"].encode("utf-8")).decode("ascii")
     runtime_overlay = gitopslib.stage_template_tree(
         source_dir=ARGOCD_INSTALL_OVERLAY_DIR,
         runtime_dir=TMP_DIR / "argocd-install-overlay",
-        env=env,
+        env=overlay_env,
     )
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         run(
