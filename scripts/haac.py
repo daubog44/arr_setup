@@ -1378,7 +1378,6 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             SECRETS_DIR / "semaphore-sealed-secret.yaml",
             {
                 "POSTGRES_PASSWORD": env["SEMAPHORE_DB_PASSWORD"],
-                "OIDC_SECRET": env["SEMAPHORE_OIDC_SECRET"],
                 "ADMIN_PASSWORD": env["SEMAPHORE_ADMIN_PASSWORD"],
                 "ADMIN_USERNAME": env.get("SEMAPHORE_ADMIN_USERNAME", "admin"),
                 "ADMIN_EMAIL": env.get("SEMAPHORE_ADMIN_EMAIL", "admin@localhost"),
