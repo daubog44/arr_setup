@@ -861,6 +861,71 @@ def cleanup_disabled_platform_apps(kubectl: str, kubeconfig: Path, env: dict[str
         cleanup_disabled_falco(kubectl, kubeconfig)
 
 
+def cleanup_falco_legacy_ui_storage(kubectl: str, kubeconfig: Path, env: dict[str, str]) -> None:
+    if not gitopslib.falco_enabled(env):
+        return
+    if not FALCO_APP_OUTPUT.exists():
+        return
+
+    falco_config = FALCO_APP_OUTPUT.read_text(encoding="utf-8")
+    if "storageEnabled: false" not in falco_config:
+        return
+
+    existing = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "get",
+            "pvc,pod",
+            "-n",
+            "security",
+            "-o",
+            "name",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if existing.returncode != 0:
+        return
+
+    stale_resources: list[str] = []
+    for resource_name in (existing.stdout or "").splitlines():
+        resource_name = resource_name.strip()
+        if not resource_name:
+            continue
+        kind, _, name = resource_name.partition("/")
+        if kind == "persistentvolumeclaim" and name.startswith("falco-falcosidekick-ui-redis-data-"):
+            stale_resources.append(resource_name)
+            continue
+        if kind == "pod" and (
+            name.startswith("falco-falcosidekick-ui-redis-")
+            or name.startswith("falco-falcosidekick-ui-")
+        ):
+            stale_resources.append(resource_name)
+
+    if not stale_resources:
+        return
+
+    deleted = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "delete",
+            "-n",
+            "security",
+            "--ignore-not-found=true",
+            "--wait=false",
+            *stale_resources,
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if deleted.returncode == 0:
+        print("[ok] Removed legacy Falco UI storage drift resources to converge on stateless Web UI")
+
+
 def render_env_placeholders(content: str, env: dict[str, str]) -> str:
     return gitopslib.render_env_placeholders(content, env)
 
@@ -1805,6 +1870,7 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=root_app)
         cleanup_disabled_platform_apps(kubectl, session_kubeconfig, env)
+        cleanup_falco_legacy_ui_storage(kubectl, session_kubeconfig, env)
 
 
 def seed_argocd_bootstrap_patch(kubectl: str, kubeconfig: Path, timeout_seconds: int = 120) -> None:

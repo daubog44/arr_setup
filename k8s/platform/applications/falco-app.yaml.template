@@ -48,6 +48,7 @@ spec:
             enabled: true
             disableauth: true
             redis:
+              enabled: true
               storageEnabled: false
           config:
             # Route Falco alerts directly to Ntfy

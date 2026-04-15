@@ -1,13 +1,3 @@
-{{- $ingresses := .Values.ingresses | default dict -}}
-{{- $groups := dict -}}
-{{- range $name := keys $ingresses | sortAlpha }}
-{{- $conf := index $ingresses $name }}
-{{- if (default true $conf.enabled) }}
-{{- $group := default "Management" $conf.homepage_group }}
-{{- $existing := get $groups $group | default (list) }}
-{{- $_ := set $groups $group (append $existing (dict "name" $name "conf" $conf)) }}
-{{- end }}
-{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -16,39 +6,10 @@ metadata:
   namespace: mgmt
 data:
   settings.yaml: |
-    title: "Nucleo Autogenerativo"
-    theme: dark
-    proxy: true
-    layout:
-{{- range $group := keys $groups | sortAlpha }}
-      {{ $group }}:
-        style: row
-        columns: 3
-{{- end }}
+{{ include "haac-stack.homepage.settings" . | indent 4 }}
   services.yaml: |
-{{- range $group := keys $groups | sortAlpha }}
-    - {{ $group }}:
-{{- range $entry := get $groups $group }}
-{{- $name := $entry.name }}
-{{- $conf := $entry.conf }}
-        - {{ default $name $conf.homepage_name | quote }}:
-            icon: {{ default "globe.png" $conf.homepage_icon | quote }}
-            href: {{ printf "https://%s.%s" $conf.subdomain $.Values.global.domainName | quote }}
-            description: {{ default "" $conf.homepage_description | quote }}
-{{- end }}
-{{- end }}
+{{ include "haac-stack.homepage.services" . | indent 4 }}
   widgets.yaml: |
-    - greeting:
-        text: "Benvenuto nel Nucleo Autogenerativo"
-    - datetime:
-        format:
-          date: long
-          time: short
+{{ include "haac-stack.homepage.widgets" . | indent 4 }}
   bookmarks.yaml: |
-    - Infrastructure:
-        - Proxmox:
-            - href: "https://192.168.0.211:8006"
-              icon: proxmox.png
-        - GitHub:
-            - href: "https://github.com"
-              icon: github.png
+{{ include "haac-stack.homepage.bookmarks" . | indent 4 }}
