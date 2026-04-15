@@ -42,10 +42,19 @@ spec:
               value: "{{ .Values.global.gitops.repoUrl }}"
             - name: REPO_REVISION
               value: "{{ .Values.global.gitops.repoRevision }}"
+            - name: MAINTENANCE_INVENTORY_PATH
+              value: "/opt/ansible/maintenance-inventory.yml"
+            - name: MAINTENANCE_SSH_KEY_PATH
+              value: "/etc/ansible-ssh/maintenance_ed25519"
           volumeMounts:
-            - name: ssh-key
+            - name: maintenance-ssh-key
               mountPath: /etc/ansible-ssh
               readOnly: true
+{{- if or (hasPrefix "git@" .Values.global.gitops.repoUrl) (hasPrefix "ssh://" .Values.global.gitops.repoUrl) }}
+            - name: repo-deploy-key
+              mountPath: /etc/repo-ssh
+              readOnly: true
+{{- end }}
           command:
             - /bin/sh
             - -c
@@ -85,33 +94,41 @@ spec:
               PROJECT_ID=$(echo "$PROJECT" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created project ID: $PROJECT_ID"
 
-              # 2. Create SSH Key from mounted secret
-              SSH_KEY_CONTENT=$(cat /etc/ansible-ssh/id_ed25519 | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+              # 2. Create maintenance SSH key from mounted secret
               KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"HaaC SSH Key\",\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$(cat /etc/ansible-ssh/id_ed25519 | base64 | tr -d '\n')\"}}")
+                -d "{\"name\":\"HaaC Maintenance SSH Key\",\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$(cat $MAINTENANCE_SSH_KEY_PATH | base64 | tr -d '\n')\"}}")
               KEY_ID=$(echo "$KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created SSH key ID: $KEY_ID"
+              echo "Created maintenance SSH key ID: $KEY_ID"
 
               # 3. Create Git repository
+{{- if or (hasPrefix "git@" .Values.global.gitops.repoUrl) (hasPrefix "ssh://" .Values.global.gitops.repoUrl) }}
+              REPO_KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\":\"HaaC Repo Deploy Key\",\"type\":\"ssh\",\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$(cat /etc/repo-ssh/repo_deploy_ed25519 | base64 | tr -d '\n')\"}}")
+              REPO_KEY_ID=$(echo "$REPO_KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
+              REPO_PAYLOAD="{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\",\"ssh_key_id\":$REPO_KEY_ID}"
+{{- else }}
+              REPO_PAYLOAD="{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\"}"
+{{- end }}
               REPO=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/repositories" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\",\"ssh_key_id\":$KEY_ID}")
+                -d "$REPO_PAYLOAD")
               REPO_ID=$(echo "$REPO" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created repository ID: $REPO_ID"
 
-              # 4. Create inventory — uses ConfigMap mounted at /opt/ansible/inventory.yml
+              # 4. Create inventory — uses ConfigMap mounted at /opt/ansible/maintenance-inventory.yml
               # This file auto-updates when Terraform regenerates inventory + Taskfile updates the ConfigMap
               INV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/inventory" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"/opt/ansible/inventory.yml\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}")
+                -d "{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"$MAINTENANCE_INVENTORY_PATH\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}")
               INV_ID=$(echo "$INV" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created inventory ID: $INV_ID"
 
               # 5. Create environment (accept new SSH host keys instead of disabling trust)
               ENV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/environment" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"True\\\",\\\"HAAC_SSH_HOST_KEY_CHECKING\\\":\\\"accept-new\\\",\\\"HAAC_SSH_PRIVATE_KEY_PATH\\\":\\\"/etc/ansible-ssh/id_ed25519\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}")
+                -d "{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"True\\\",\\\"HAAC_SSH_HOST_KEY_CHECKING\\\":\\\"accept-new\\\",\\\"HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH\\\":\\\"$MAINTENANCE_SSH_KEY_PATH\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}")
               ENV_ID=$(echo "$ENV" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created environment ID: $ENV_ID"
 
@@ -150,6 +167,11 @@ spec:
 
               echo "✅ Semaphore bootstrap complete!"
       volumes:
-        - name: ssh-key
+        - name: maintenance-ssh-key
           secret:
-            secretName: haac-ssh-key
+            secretName: haac-maintenance-ssh-key
+{{- if or (hasPrefix "git@" .Values.global.gitops.repoUrl) (hasPrefix "ssh://" .Values.global.gitops.repoUrl) }}
+        - name: repo-deploy-key
+          secret:
+            secretName: haac-repo-deploy-key
+{{- end }}

@@ -41,6 +41,8 @@ SSH_PRIVATE_KEY_PATH = SSH_DIR / "haac_ed25519"
 SSH_PUBLIC_KEY_PATH = SSH_DIR / "haac_ed25519.pub"
 SEMAPHORE_SSH_PRIVATE_KEY_PATH = SSH_DIR / "haac_semaphore_ed25519"
 SEMAPHORE_SSH_PUBLIC_KEY_PATH = SSH_DIR / "haac_semaphore_ed25519.pub"
+REPO_DEPLOY_SSH_PRIVATE_KEY_PATH = SSH_DIR / "haac_repo_deploy_ed25519"
+REPO_DEPLOY_SSH_PUBLIC_KEY_PATH = SSH_DIR / "haac_repo_deploy_ed25519.pub"
 ENV_FILE = ROOT / ".env"
 PUB_CERT_PATH = SCRIPTS_DIR / "pub-sealed-secrets.pem"
 SECRETS_DIR = K8S_DIR / "charts" / "haac-stack" / "templates" / "secrets"
@@ -48,6 +50,8 @@ VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "valu
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
+SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
+SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "argocd-apps.yaml",
     K8S_DIR / "bootstrap" / "root" / "applications" / "platform-root.yaml",
@@ -139,6 +143,15 @@ def proxmox_node_name(env: dict[str, str]) -> str:
 def proxmox_access_host(env: dict[str, str]) -> str:
     access_host = env.get("PROXMOX_ACCESS_HOST", "").strip()
     return access_host or proxmox_node_name(env)
+
+
+def maintenance_user(env: dict[str, str]) -> str:
+    return env.get("HAAC_MAINTENANCE_USER", "haac-maint").strip() or "haac-maint"
+
+
+def repo_url_requires_ssh_auth(repo_url: str) -> bool:
+    lowered = repo_url.strip().lower()
+    return lowered.startswith("git@") or lowered.startswith("ssh://")
 
 
 def local_kubeconfig_path() -> Path:
@@ -1263,6 +1276,7 @@ def upload_inventory_configmap(kubectl: str, kubeconfig: Path) -> None:
             "-n",
             "mgmt",
             f"--from-file=inventory.yml={ROOT / 'ansible' / 'inventory.yml'}",
+            f"--from-file=maintenance-inventory.yml={ROOT / 'ansible' / 'maintenance-inventory.yml'}",
             "--dry-run=client",
             "-o",
             "yaml",
@@ -1422,21 +1436,43 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
     ]
 
     ensure_semaphore_ssh_keypair()
-    ssh_key = SEMAPHORE_SSH_PRIVATE_KEY_PATH
-    if ssh_key.exists():
+    ensure_repo_deploy_ssh_keypair()
+    maintenance_ssh_key = SEMAPHORE_SSH_PRIVATE_KEY_PATH
+    if maintenance_ssh_key.exists():
         secrets.append(
             (
-                "haac-ssh-key",
+                "haac-maintenance-ssh-key",
                 "mgmt",
-                SECRETS_DIR / "haac-ssh-sealed-secret.yaml",
+                SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT,
                 None,
-                {"id_ed25519": ssh_key},
+                {"maintenance_ed25519": maintenance_ssh_key},
             )
         )
+
+    repo_url = env["GITOPS_REPO_URL"]
+    if repo_url_requires_ssh_auth(repo_url):
+        repo_deploy_key = REPO_DEPLOY_SSH_PRIVATE_KEY_PATH
+        if repo_deploy_key.exists():
+            secrets.append(
+                (
+                    "haac-repo-deploy-key",
+                    "mgmt",
+                    SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT,
+                    None,
+                    {"repo_deploy_ed25519": repo_deploy_key},
+                )
+            )
 
     for name, namespace, output_path, literals, files in secrets:
         secret_yaml = create_secret_yaml(kubectl, name, namespace, literals=literals, files=files)
         output_path.write_text(seal_yaml(kubeseal, cert, secret_yaml), encoding="utf-8")
+
+    for legacy_path in (
+        SECRETS_DIR / "haac-ssh-sealed-secret.yaml",
+        SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT if not repo_url_requires_ssh_auth(repo_url) else None,
+    ):
+        if legacy_path:
+            legacy_path.unlink(missing_ok=True)
 
     argocd_oidc_secret_yaml = create_secret_yaml(
         kubectl,
@@ -2895,11 +2931,33 @@ def ensure_semaphore_ssh_keypair() -> None:
     )
 
 
+def ensure_repo_deploy_ssh_keypair() -> None:
+    if REPO_DEPLOY_SSH_PRIVATE_KEY_PATH.exists() and REPO_DEPLOY_SSH_PUBLIC_KEY_PATH.exists():
+        return
+    if shutil.which("ssh-keygen") is None:
+        raise HaaCError("ssh-keygen is required to create the repository deploy SSH keypair.")
+    SSH_DIR.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-f",
+            str(REPO_DEPLOY_SSH_PRIVATE_KEY_PATH),
+            "-N",
+            "",
+            "-C",
+            "haac-repo-deploy@local",
+        ]
+    )
+
+
 def doctor() -> None:
     env = merged_env()
     failures: list[str] = []
     ensure_repo_ssh_keypair()
     ensure_semaphore_ssh_keypair()
+    ensure_repo_deploy_ssh_keypair()
     known_hosts_path(env)
     checks = [
         ("python", "python"),
@@ -2935,10 +2993,16 @@ def doctor() -> None:
         failures.append("repo-ssh-keypair")
 
     if SEMAPHORE_SSH_PRIVATE_KEY_PATH.exists() and SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
-        print(f"[ok] semaphore ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
+        print(f"[ok] semaphore maintenance ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
     else:
-        print(f"[missing] semaphore ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
+        print(f"[missing] semaphore maintenance ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
         failures.append("semaphore-ssh-keypair")
+
+    if REPO_DEPLOY_SSH_PRIVATE_KEY_PATH.exists() and REPO_DEPLOY_SSH_PUBLIC_KEY_PATH.exists():
+        print(f"[ok] repo deploy ssh keypair: {REPO_DEPLOY_SSH_PRIVATE_KEY_PATH}")
+    else:
+        print(f"[missing] repo deploy ssh keypair: {REPO_DEPLOY_SSH_PRIVATE_KEY_PATH}")
+        failures.append("repo-deploy-ssh-keypair")
 
     print(f"[ok] known_hosts path: {known_hosts_path(env)}")
 
@@ -3070,6 +3134,7 @@ def install_tools() -> None:
 
     ensure_repo_ssh_keypair()
     ensure_semaphore_ssh_keypair()
+    ensure_repo_deploy_ssh_keypair()
 
     if is_windows():
         install_wsl_tools()
@@ -3188,6 +3253,7 @@ def tofu_tf_vars(env: dict[str, str]) -> dict[str, str]:
         "nas_share_name": "NAS_SHARE_NAME",
         "storage_uid": "STORAGE_UID",
         "storage_gid": "STORAGE_GID",
+        "maintenance_ssh_user": "HAAC_MAINTENANCE_USER",
     }
     mapped = {f"TF_VAR_{tf_var}": env.get(env_key, "") for tf_var, env_key in direct_env_map.items()}
     mapped["TF_VAR_proxmox_access_host"] = proxmox_access_host(env)

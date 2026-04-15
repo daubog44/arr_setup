@@ -96,6 +96,26 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/../ansible/inventory.yml"
 }
 
+resource "local_file" "ansible_maintenance_inventory" {
+  content = templatefile("${path.module}/maintenance_inventory.tftpl", {
+    proxmox_hosts       = distinct(concat([var.master_target_node], [for k, v in var.worker_nodes : v.target_node]))
+    proxmox_access_host = var.proxmox_access_host != "" ? var.proxmox_access_host : var.master_target_node
+    maintenance_ssh_user = var.maintenance_ssh_user
+    master_ip           = var.k3s_master_ip != "" && var.k3s_master_ip != "dhcp" ? element(split("/", var.k3s_master_ip), 0) : try(element(split("/", lookup(module.k3s_master.ipv4, "eth0", "")), 0), "")
+    master_vmid         = module.k3s_master.vm_id
+    master_target_node  = var.master_target_node
+    workers             = module.k3s_workers
+    worker_configs      = var.worker_nodes
+    nas_address         = var.nas_address
+    host_nas_path       = var.host_nas_path
+    nas_share_name      = var.nas_share_name
+    storage_uid         = var.storage_uid
+    storage_gid         = var.storage_gid
+  })
+
+  filename = "${path.module}/../ansible/maintenance-inventory.yml"
+}
+
 resource "proxmox_virtual_environment_dns" "proxmox_dns" {
   node_name = var.master_target_node
   domain    = var.domain_name

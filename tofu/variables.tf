@@ -10,6 +10,12 @@ variable "proxmox_access_host" {
   default     = ""
 }
 
+variable "maintenance_ssh_user" {
+  description = "Dedicated least-privilege SSH user used by Semaphore-driven maintenance automation."
+  type        = string
+  default     = "haac-maint"
+}
+
 variable "lxc_password" {
   description = "Root password for the LXC containers"
   type        = string

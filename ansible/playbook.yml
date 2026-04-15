@@ -1,6 +1,11 @@
 - name: Proxmox Shared Storage Setup
   hosts: proxmox_host
   gather_facts: false
+  vars:
+    operator_bootstrap_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') | trim }}"
+    semaphore_maintenance_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_semaphore_ed25519.pub') | trim }}"
+    repo_deploy_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_repo_deploy_ed25519.pub') | trim }}"
+    maintenance_user: "{{ lookup('env', 'HAAC_MAINTENANCE_USER') | default('haac-maint', true) }}"
   tasks:
     - name: Ensure Proxmox is reachable
       ansible.builtin.wait_for_connection:
@@ -14,15 +19,73 @@
         group: root
         mode: '0700'
 
-    - name: Authorize the operator and automation SSH keys on Proxmox root for ProxyJump access
+    - name: Authorize the operator bootstrap SSH key on Proxmox root for ProxyJump access
       ansible.builtin.lineinfile:
         path: /root/.ssh/authorized_keys
-        line: "{{ lookup('file', item) }}"
+        line: "{{ operator_bootstrap_pubkey }}"
         create: true
         owner: root
         group: root
         mode: '0600'
-      loop: "{{ query('fileglob', playbook_dir ~ '/../.ssh/haac*.pub') }}"
+
+    - name: Remove maintenance and repo deploy keys from Proxmox root authorization
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ item }}"
+        state: absent
+        create: true
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - "{{ semaphore_maintenance_pubkey }}"
+        - "{{ repo_deploy_pubkey }}"
+
+    - name: Ensure sudo is installed on Proxmox for maintenance delegation
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
+    - name: Ensure maintenance user exists on Proxmox
+      ansible.builtin.user:
+        name: "{{ maintenance_user }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Ensure maintenance SSH directory exists on Proxmox
+      ansible.builtin.file:
+        path: "/home/{{ maintenance_user }}/.ssh"
+        state: directory
+        owner: "{{ maintenance_user }}"
+        group: "{{ maintenance_user }}"
+        mode: '0700'
+
+    - name: Authorize the Semaphore maintenance key for the Proxmox maintenance user
+      ansible.builtin.lineinfile:
+        path: "/home/{{ maintenance_user }}/.ssh/authorized_keys"
+        line: "{{ semaphore_maintenance_pubkey }}"
+        create: true
+        owner: "{{ maintenance_user }}"
+        group: "{{ maintenance_user }}"
+        mode: '0600'
+
+    - name: Install bounded Proxmox maintenance wrapper
+      ansible.builtin.copy:
+        src: files/haac-proxmox-maintenance.sh
+        dest: /usr/local/sbin/haac-proxmox-maintenance
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Restrict maintenance sudo on Proxmox to the bounded wrapper
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ maintenance_user }}-haac"
+        content: |
+          {{ maintenance_user }} ALL=(root) NOPASSWD: /usr/local/sbin/haac-proxmox-maintenance
+        owner: root
+        group: root
+        mode: '0440'
 
     - name: Disable Proxmox Enterprise repository (requires paid subscription)
       ansible.builtin.replace:
@@ -313,6 +376,10 @@
 - name: LXC Node Hardware Mapping & eBPF Setup
   hosts: k3s_master, k3s_workers
   gather_facts: false
+  vars:
+    operator_bootstrap_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') | trim }}"
+    semaphore_maintenance_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_semaphore_ed25519.pub') | trim }}"
+    repo_deploy_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_repo_deploy_ed25519.pub') | trim }}"
   tasks:
     - name: Get Video and Render GIDs
       ansible.builtin.shell: |
@@ -477,9 +544,9 @@
       when: lxc_conf.changed
       delegate_to: "{{ proxmox_host }}"
 
-    - name: Ensure operator and automation SSH public keys are installed and persist in guest root account
+    - name: Ensure the operator bootstrap SSH public key is installed in guest root
       ansible.builtin.shell: |
-        pubkey="$(printf '%s' '{{ lookup('file', item) | trim | b64encode }}' | base64 -d)"
+        pubkey="$(printf '%s' '{{ operator_bootstrap_pubkey | b64encode }}' | base64 -d)"
         pct exec {{ lxc_vmid }} -- sh -lc "install -d -m 700 /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys || printf '%s\n' \"\$pubkey\" >> /root/.ssh/authorized_keys"
         pct exec {{ lxc_vmid }} -- sh -lc "grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys"
       register: guest_ssh_key_ready
@@ -488,12 +555,25 @@
       delay: 3
       changed_when: false
       delegate_to: "{{ proxmox_host }}"
-      loop: "{{ query('fileglob', playbook_dir ~ '/../.ssh/haac*.pub') }}"
+
+    - name: Remove maintenance and repo deploy keys from guest root authorization
+      ansible.builtin.shell: |
+        pubkey="$(printf '%s' '{{ item | b64encode }}' | base64 -d)"
+        pct exec {{ lxc_vmid }} -- sh -lc "touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && grep -qxF \"\$pubkey\" /root/.ssh/authorized_keys && grep -vxF \"\$pubkey\" /root/.ssh/authorized_keys > /root/.ssh/authorized_keys.tmp && mv /root/.ssh/authorized_keys.tmp /root/.ssh/authorized_keys || true"
+      delegate_to: "{{ proxmox_host }}"
+      changed_when: false
+      loop:
+        - "{{ semaphore_maintenance_pubkey }}"
+        - "{{ repo_deploy_pubkey }}"
 
 
 - name: Automate OS Baseline and Dependencies (All K3s Nodes)
   hosts: k3s_master, k3s_workers
   gather_facts: false
+  vars:
+    maintenance_user: "{{ lookup('env', 'HAAC_MAINTENANCE_USER') | default('haac-maint', true) }}"
+    semaphore_maintenance_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_semaphore_ed25519.pub') | trim }}"
+    repo_deploy_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_repo_deploy_ed25519.pub') | trim }}"
 
   tasks:
     - name: Wait for system to become reachable
@@ -503,6 +583,72 @@
 
     - name: Gather facts for the first time
       ansible.builtin.setup:
+
+    - name: Ensure sudo is installed on K3s nodes for maintenance delegation
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+
+    - name: Ensure maintenance user exists on K3s nodes
+      ansible.builtin.user:
+        name: "{{ maintenance_user }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Ensure maintenance SSH directory exists on K3s nodes
+      ansible.builtin.file:
+        path: "/home/{{ maintenance_user }}/.ssh"
+        state: directory
+        owner: "{{ maintenance_user }}"
+        group: "{{ maintenance_user }}"
+        mode: '0700'
+
+    - name: Authorize the Semaphore maintenance key on K3s nodes
+      ansible.builtin.lineinfile:
+        path: "/home/{{ maintenance_user }}/.ssh/authorized_keys"
+        line: "{{ semaphore_maintenance_pubkey }}"
+        create: true
+        owner: "{{ maintenance_user }}"
+        group: "{{ maintenance_user }}"
+        mode: '0600'
+
+    - name: Remove the maintenance key from guest root authorization
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ semaphore_maintenance_pubkey }}"
+        state: absent
+        create: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Remove the repo deploy key from guest root authorization
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ repo_deploy_pubkey }}"
+        state: absent
+        create: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Install bounded K3s node maintenance wrapper
+      ansible.builtin.copy:
+        src: files/haac-k3s-maintenance.sh
+        dest: /usr/local/sbin/haac-k3s-maintenance
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Restrict maintenance sudo on K3s nodes to the bounded wrapper
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ maintenance_user }}-haac"
+        content: |
+          {{ maintenance_user }} ALL=(root) NOPASSWD: /usr/local/sbin/haac-k3s-maintenance
+        owner: root
+        group: root
+        mode: '0440'
 
     - name: Debug - Check DNS resolution
       ansible.builtin.command: getent hosts google.com

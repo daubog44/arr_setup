@@ -1,0 +1,55 @@
+all:
+  vars:
+    nas_address: ${nas_address}
+    host_nas_path: ${host_nas_path}
+    nas_share_name: "{{ lookup('env', 'NAS_SHARE_NAME') | default('${nas_share_name}', true) }}"
+    storage_uid: "{{ lookup('env', 'STORAGE_UID') | default('13000', true) }}"
+    storage_gid: "{{ lookup('env', 'STORAGE_GID') | default('13000', true) }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    ansible_become_flags: "-n"
+  children:
+
+    proxmox_host:
+      hosts:
+%{ for host in proxmox_hosts ~}
+        ${host}:
+          ansible_host: "{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('${host == master_target_node ? proxmox_access_host : host}', true) }}"
+          ansible_user: ${maintenance_ssh_user}
+          ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
+            -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
+            -o IdentitiesOnly=yes
+            -o IdentityFile={{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}
+%{ endfor ~}
+    k3s_master:
+      hosts:
+        ${master_ip}:
+          ansible_user: ${maintenance_ssh_user}
+          ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
+            -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
+            -o IdentitiesOnly=yes
+            -o IdentityFile={{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p ${maintenance_ssh_user}@{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('${proxmox_access_host}', true) }}"
+          lxc_vmid: "${master_vmid}"
+          proxmox_host: "${master_target_node}"
+    k3s_workers:
+      hosts:
+%{ for name, worker in workers ~}
+        ${try(element(split("/", worker_configs[name].ip), 0), "")}:
+          ansible_user: ${maintenance_ssh_user}
+          ansible_ssh_private_key_file: "{{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}"
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }}
+            -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }}
+            -o IdentitiesOnly=yes
+            -o IdentityFile={{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }}
+            -o ProxyCommand="ssh -o StrictHostKeyChecking={{ lookup('env', 'HAAC_SSH_HOST_KEY_CHECKING') | default('accept-new', true) }} -o UserKnownHostsFile={{ lookup('env', 'HAAC_SSH_KNOWN_HOSTS_PATH') | default('/root/.ssh/known_hosts', true) }} -o IdentitiesOnly=yes -i {{ lookup('env', 'HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH') | default('../.ssh/haac_semaphore_ed25519', true) }} -W %h:%p ${maintenance_ssh_user}@{{ lookup('env', 'HAAC_PROXMOX_ACCESS_HOST') | default('${worker_configs[name].target_node == master_target_node ? proxmox_access_host : worker_configs[name].target_node}', true) }}"
+          lxc_vmid: "${worker.vm_id}"
+          worker_name: "${name}"
+          proxmox_host: "${worker_configs[name].target_node}"
+          node_labels: ${jsonencode(worker_configs[name].labels)}
+%{ endfor ~}

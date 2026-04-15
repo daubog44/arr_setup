@@ -1,0 +1,6 @@
+- [ ] 1. Add the OpenSpec delta spec for Semaphore infrastructure maintenance auth and document the dedicated maintenance principal plus credential-role split.
+- [ ] 2. Replace wildcard `haac*.pub` root authorization in the bootstrap playbook with explicit operator-root and maintenance-user authorization, including root-key cleanup.
+- [ ] 3. Add the dedicated maintenance principal, wrapper commands, and constrained sudoers policy on Proxmox and guest nodes.
+- [ ] 4. Split the bootstrap and maintenance inventories so Semaphore uses the maintenance inventory with `become`, while `task up` keeps the bootstrap inventory.
+- [ ] 5. Split repo and maintenance SSH credentials in `scripts/haac.py`, secret generation, and Semaphore bootstrap so infrastructure access never shares a key with repository access.
+- [ ] 6. Validate with `openspec validate least-privilege-semaphore-infra-auth`, `helm template haac-stack k8s/charts/haac-stack`, `kubectl kustomize k8s/bootstrap/root`, `kubectl kustomize k8s/platform`, `kubectl kustomize k8s/workloads`, and `task -n up`.
