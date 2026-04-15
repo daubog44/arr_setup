@@ -68,6 +68,7 @@ Routes are expected to answer directly without authentication middleware.
 - keep the built-in OIDC flow
 - register the Authelia client with the token endpoint auth method that the deployed ArgoCD build actually uses
 - remove duplicate legacy ArgoCD OIDC secret paths so one repo-managed secret contract remains
+- keep each native-OIDC client on one plaintext secret source of truth inside the sealed Authelia config secret rather than a manual secret/hash pair in `.env`
 
 ## Verification
 

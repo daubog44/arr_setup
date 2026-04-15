@@ -145,12 +145,20 @@ const routeChecks = {
     type: "native_oidc",
     async preAuthAction(currentPage) {
       const oidcButton = currentPage.locator('text="Authelia"');
-      if (await oidcButton.count()) {
-        await oidcButton.first().click();
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (await oidcButton.count()) {
+          await oidcButton.first().waitFor({ state: "visible", timeout: 30000 });
+          await oidcButton.first().click();
+          return;
+        }
+        await currentPage.waitForTimeout(1000);
       }
+      throw new Error("Semaphore Authelia button did not appear");
     },
     async waitForSuccess(currentPage) {
-      await currentPage.waitForSelector('text=/Projects|Task Templates|Dashboard/', { timeout: 30000 });
+      await currentPage.waitForSelector('text=/Projects|Task Templates|Dashboard|New Project|Create Demo Project/', {
+        timeout: 30000,
+      });
     },
   },
 };
