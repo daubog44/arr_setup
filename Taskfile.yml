@@ -217,6 +217,11 @@ tasks:
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" verify-web --domain "{{.DOMAIN_NAME_VALUE}}"'
 
+  verify-browser-auth:
+    desc: Run browser-level auth verification for the official public UI surface using the repo-local Playwright verifier.
+    cmds:
+      - 'node "scripts/verify-public-auth.mjs"'
+
   sync-cloudflare:
     desc: Reconcile Cloudflare Tunnel ingress rules and the required DNS records.
     deps: [check-env]

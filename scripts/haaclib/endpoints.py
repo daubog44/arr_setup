@@ -7,6 +7,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+VALID_AUTH_STRATEGIES = {"public", "edge_forward_auth", "native_oidc", "app_native"}
+
 
 def endpoint_specs_source_path(values_output: Path, values_template: Path) -> Path:
     if values_output.exists():
@@ -30,6 +32,11 @@ def load_endpoint_specs(values_output: Path, values_template: Path, domain_name:
             current_name = ""
             current = {}
             return
+        auth_strategy = current.get("auth_strategy", "").strip()
+        if not auth_strategy:
+            raise RuntimeError(f"Ingress {current_name} in {source_path} is missing required auth_strategy")
+        if auth_strategy not in VALID_AUTH_STRATEGIES:
+            raise RuntimeError(f"Ingress {current_name} in {source_path} has invalid auth_strategy {auth_strategy!r}")
         enabled = current.get("enabled", "true").strip().lower() not in {"0", "false", "no", "off"}
         if not enabled:
             current_name = ""
@@ -41,7 +48,7 @@ def load_endpoint_specs(values_output: Path, values_template: Path, domain_name:
                 "subdomain": current["subdomain"],
                 "namespace": current.get("namespace", ""),
                 "service": current.get("service", ""),
-                "auth": current.get("auth_strategy", "").strip() or "public",
+                "auth": auth_strategy,
                 "url": f"https://{current['subdomain']}.{domain_name}",
             }
         )
@@ -141,6 +148,8 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
     status = int(response["status"])
     location = str(response.get("location", "") or "")
     auth_strategy = endpoint["auth"]
+    if auth_strategy not in VALID_AUTH_STRATEGIES:
+        return False
     if auth_strategy == "public":
         return status in {200, 201, 202, 204}
 

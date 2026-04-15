@@ -28,6 +28,19 @@
 {{- toYaml $groups -}}
 {{- end }}
 
+{{- define "haac-stack.ingress.authStrategy" -}}
+{{- $name := .name -}}
+{{- $conf := .conf -}}
+{{- if not (hasKey $conf "auth_strategy") -}}
+{{- fail (printf "Ingress %s must define auth_strategy" $name) -}}
+{{- end -}}
+{{- $authStrategy := ($conf.auth_strategy | toString) -}}
+{{- if not (has $authStrategy (list "public" "edge_forward_auth" "native_oidc" "app_native")) -}}
+{{- fail (printf "Ingress %s has invalid auth_strategy %q" $name $authStrategy) -}}
+{{- end -}}
+{{- $authStrategy -}}
+{{- end }}
+
 {{- define "haac-stack.homepage.settings" -}}
 title: "Nucleo Autogenerativo"
 theme: dark

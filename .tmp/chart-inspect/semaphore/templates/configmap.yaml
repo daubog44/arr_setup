@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+
+metadata:
+  name: {{ include "semaphoreui.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semaphoreui.labels" . | nindent 4 }}
+{{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 4 }}
+{{- end }}
+{{- if  .Values.annotations }}
+  annotations:
+    {{- toYaml .Values.annotations | nindent 4 }}
+{{- end }}
+
+data:
+  config.json: |
+    {
+      {{- $first := true }}
+
+      {{- if .Values.ldap.enable }}
+        "ldap_mappings": {
+          "dn": "{{ .Values.ldap.mappings.dn }}",
+          "mail": "{{ .Values.ldap.mappings.mail }}",
+          "uid": "{{ .Values.ldap.mappings.uid }}",
+          "cn": "{{ .Values.ldap.mappings.cn }}"
+        }
+        {{- $first = false }}
+      {{- end }}
+
+      {{- if .Values.oidc.enable }}
+        {{- if not $first }},{{ end }}
+        {{- $providers := dict }}
+        {{- range $provider, $values := .Values.oidc.providers }}
+          {{- $config := dict }}
+          {{- range $val := keys $values }}
+            {{- $_ := set $config ($val | snakecase) (get $values $val) }}
+          {{- end }}
+          {{- $_ := set $providers $provider $config }}
+        {{- end }}
+        "oidc_providers": {{ $providers | toJson }}
+        {{- $first = false }}
+      {{- end }}
+
+      {{- if .Values.config.forwarded_env_vars }}
+        {{- if not $first }},{{ end }}
+        "forwarded_env_vars": [
+          {{- range $index, $val := .Values.config.forwarded_env_vars }}
+            {{- if $index }}, {{ end }}"{{ $val }}"
+          {{- end }}]
+      {{- end }}
+    }
+
+  {{- if .Values.general.additionalPythonPackages }}
+  requirements.txt: |
+    {{- range .Values.general.additionalPythonPackages }}
+    {{ . }}
+    {{- end }}
+  {{- end }}

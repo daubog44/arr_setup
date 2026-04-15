@@ -3,10 +3,7 @@
 {{- range $name, $conf := .Values.ingresses }}
 {{- if (default true $conf.enabled) }}
 {{- $namespace := $conf.namespace | default $.Release.Namespace -}}
-{{- $authStrategy := "public" -}}
-{{- if hasKey $conf "auth_strategy" -}}
-{{- $authStrategy = ($conf.auth_strategy | toString) -}}
-{{- end -}}
+{{- $authStrategy := (include "haac-stack.ingress.authStrategy" (dict "name" $name "conf" $conf) | trim) -}}
 {{- $_ := set $routeNamespaces $namespace true -}}
 {{- if eq $authStrategy "edge_forward_auth" }}
 {{- $_ := set $autheliaNamespaces $namespace true -}}

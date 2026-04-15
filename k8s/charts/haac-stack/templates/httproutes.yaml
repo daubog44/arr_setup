@@ -1,9 +1,6 @@
 {{- range $name, $conf := .Values.ingresses }}
 {{- if (default true $conf.enabled) }}
-{{- $authStrategy := "public" -}}
-{{- if hasKey $conf "auth_strategy" -}}
-{{- $authStrategy = ($conf.auth_strategy | toString) -}}
-{{- end }}
+{{- $authStrategy := (include "haac-stack.ingress.authStrategy" (dict "name" $name "conf" $conf) | trim) -}}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -51,6 +48,6 @@ spec:
             group: traefik.io
             kind: Middleware
             name: "{{ . }}"
-{{- end }}
-{{- end }}
+{{ end }}
+{{ end }}
 {{- end }}

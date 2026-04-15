@@ -24,16 +24,18 @@ Opt-in platform features MUST NOT create dead official URLs when disabled.
 - **AND** Homepage MUST NOT render a Falco link
 - **AND** endpoint verification MUST NOT report Falco as a required URL
 
-### Requirement: Official app UIs are protected by Authelia
+### Requirement: Official app UIs use an explicit auth strategy
 
-Published app UIs MUST be protected through the shared Authelia forward-auth path unless the route is explicitly marked public.
+Published app UIs MUST declare an explicit per-route auth strategy in the public UI catalog.
 
 #### Scenario: Protected route is rendered
 
-- **WHEN** an official UI route is not explicitly public
-- **THEN** the rendered HTTPRoute MUST include the Authelia forward-auth middleware chain
-- **AND** the operator-facing endpoint report MUST identify that route as protected rather than public
-- **AND** protected-route verification MUST fail if the route responds directly with a success code instead of an auth redirect or equivalent auth challenge
+- **WHEN** an official UI route is rendered from the ingress catalog
+- **THEN** it MUST declare one of `public`, `edge_forward_auth`, `native_oidc`, or `app_native`
+- **AND** `edge_forward_auth` routes MUST include the shared Authelia forward-auth middleware chain
+- **AND** `native_oidc` routes MUST NOT include the shared Authelia forward-auth middleware chain
+- **AND** `app_native` routes MUST NOT include the shared Authelia forward-auth middleware chain
+- **AND** rendering MUST fail if the route omits or invalidly sets `auth_strategy`
 
 ### Requirement: Falco and Litmus are first-class official UIs when enabled
 
@@ -48,10 +50,10 @@ The operator-visible UI catalog MUST include Falco and Litmus when those UIs are
 - **AND** runtime sensor scheduling MUST remain explicit opt-in on compatible nodes instead of assuming every unprivileged LXC worker can host the probe
 - **AND** the compatible-node opt-in MUST be expressible from repo-managed operator inputs rather than as an undocumented manual cluster label
 
-#### Scenario: Official protected UI uses shared auth
+#### Scenario: Edge-auth UI uses shared auth
 
-- **WHEN** Falco, Litmus, Semaphore, Homepage, or other official app UIs are published
-- **THEN** those routes MUST be protected through the shared Authelia forward-auth chain unless explicitly declared public
+- **WHEN** Falco, Litmus, Homepage, Longhorn, or another official `edge_forward_auth` UI is published
+- **THEN** that route MUST be protected through the shared Authelia forward-auth chain
 
 ### Requirement: Official UI verification matches the catalog
 
@@ -61,4 +63,4 @@ Endpoint verification MUST evaluate exactly the official published UI surface.
 
 - **WHEN** the operator runs endpoint verification or reaches the final `task up` URL summary
 - **THEN** the verification list MUST include every enabled official UI route and no unsupported wildcard hosts
-- **AND** each result MUST report the URL, service, namespace, and auth posture
+- **AND** each result MUST report the URL, service, namespace, and declared auth strategy
