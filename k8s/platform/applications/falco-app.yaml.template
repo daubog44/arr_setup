@@ -15,13 +15,14 @@ spec:
     helm:
       values: |
         # Falco remains opt-in for this homelab because unprivileged Proxmox LXC guests
-        # do not provide a reliable probe-build path by default. When explicitly enabled,
-        # keep Falco on the classic eBPF probe and avoid the failing modern ring-buffer
-        # path.
+        # are sensitive to old probe-build paths. When explicitly enabled, keep Falco on
+        # the chart-supported modern eBPF path and avoid a Redis PVC for the Web UI.
         driver:
           enabled: true
-          kind: ebpf
-        # LXC still needs an explicit privileged Falco container for the probe setup.
+          kind: modern_ebpf
+        modernEbpf:
+          leastPrivileged: false
+          sysfsMount: true
         containerSecurityContext:
           privileged: true
           allowPrivilegeEscalation: true
@@ -45,6 +46,8 @@ spec:
           enabled: true
           webui:
             enabled: true
+            redis:
+              storageEnabled: false
           config:
             # Route Falco alerts directly to Ntfy
             ntfy:

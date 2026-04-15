@@ -35,15 +35,18 @@ The system MUST expose the phase structure of the bootstrap pipeline so operator
 - **THEN** the bootstrap MUST fail with controller-specific deployment, pod, log, and recent event diagnostics instead of only a generic rollout timeout
 
 ### Requirement: Public service URL reporting
+
 The system MUST produce a final public endpoint report for the services exposed through the homelab ingress and Cloudflare path.
 
 #### Scenario: Successful endpoint summary
+
 - **WHEN** bootstrap succeeds
-- **THEN** the final output MUST include the list of visitable public URLs with service name, namespace, auth expectation, and verification status
+- **THEN** the final output MUST include the list of enabled official UI URLs with service name, namespace, auth expectation, and verification status
 
 #### Scenario: Endpoint source of truth
+
 - **WHEN** the system builds the public endpoint report
-- **THEN** it MUST derive URLs from one configured source of truth rather than maintaining an unrelated duplicated list
+- **THEN** it MUST derive URLs from the official public UI catalog rather than maintaining an unrelated duplicated list
 
 ### Requirement: Endpoint verification gating
 The system MUST verify public URLs only after the prerequisites for exposure are satisfied.
@@ -57,11 +60,13 @@ The system MUST verify public URLs only after the prerequisites for exposure are
 - **THEN** the bootstrap output MUST identify which endpoints failed and preserve the status of the endpoints that passed
 
 ### Requirement: Browser-level endpoint verification
+
 The system MUST support browser-level verification of the final public URLs in addition to HTTP-level reachability checks when the operator workflow is being validated through the autonomous loop.
 
 #### Scenario: Public URL verification through the loop
+
 - **WHEN** the autonomous loop validates the final public endpoint report
-- **THEN** it MUST use Playwright MCP to navigate the emitted URLs when Playwright MCP is available and report whether each URL is actually navigable or redirected to the expected auth flow
+- **THEN** it MUST navigate the enabled official UI URLs rather than arbitrary wildcard hosts
 
 ### Requirement: Preflight input validation
 The system MUST validate the minimum local and environment prerequisites needed to start the bootstrap safely, including the workstation-reachable Proxmox access host used for API and SSH operations.

@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Completed or superseded bootstrap changes move out of the active change set
+### Requirement: Completed changes move out of the active change set
 
 The repository MUST archive bootstrap changes that are no longer the live source of pending work once their accepted requirements are represented in stable specs.
 

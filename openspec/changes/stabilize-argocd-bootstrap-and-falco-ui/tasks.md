@@ -1,0 +1,5 @@
+- [x] 1. Make the repo-local ArgoCD install overlay namespace-safe for first bootstrap
+- [x] 2. Remove the legacy ArgoCD install from `default` during bootstrap reconciliation
+- [x] 3. Switch Falco to an LXC-compatible chart profile and remove the failing Redis PVC dependency for the Web UI
+- [ ] 4. Reconcile GitOps and verify ArgoCD/Falco/Homepage routes live
+- [x] 5. Replace the archived stable-spec `Purpose` placeholders with real text
