@@ -6,6 +6,7 @@ const repoRoot = process.cwd();
 const envPath = path.join(repoRoot, ".env");
 const captureDir = path.join(repoRoot, ".tmp", "playwright-captures");
 fs.mkdirSync(captureDir, { recursive: true });
+const valuesOutputPath = path.join(repoRoot, "k8s", "charts", "haac-stack", "values.yaml");
 const valuesTemplatePath = path.join(
   repoRoot,
   "k8s",
@@ -31,8 +32,19 @@ function loadEnv(filePath) {
   return env;
 }
 
-function loadIngressCatalog(filePath, domainName) {
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+function renderEnvPlaceholders(content, env) {
+  return content.replace(/\$\{([A-Z0-9_]+)\}/g, (_, key) => env[key] ?? "");
+}
+
+function loadCatalogContent(env) {
+  if (fs.existsSync(valuesOutputPath)) {
+    return fs.readFileSync(valuesOutputPath, "utf8");
+  }
+  return renderEnvPlaceholders(fs.readFileSync(valuesTemplatePath, "utf8"), env);
+}
+
+function loadIngressCatalog(content, domainName) {
+  const lines = content.split(/\r?\n/);
   let inIngresses = false;
   let currentName = "";
   let current = {};
@@ -101,6 +113,12 @@ const routeChecks = {
   litmus: {},
   falco: {},
   longhorn: {},
+  jellyfin: { appNativeSelector: 'text=/Jellyfin|Sign In|Username|Password/' },
+  radarr: { appNativeSelector: 'text=/Radarr|Login|Username|Password/' },
+  sonarr: { appNativeSelector: 'text=/Sonarr|Login|Username|Password/' },
+  prowlarr: { appNativeSelector: 'text=/Prowlarr|Login|Username|Password/' },
+  autobrr: { appNativeSelector: 'text=/autobrr|Login|Username|Password/i' },
+  qbittorrent: { appNativeSelector: 'text=/qBittorrent|Username|Password|Web UI/' },
   argocd: {
     type: "native_oidc",
     async preAuthAction(currentPage) {
@@ -253,7 +271,7 @@ async function verifyNativeOidc(page, env, endpoint, screenshotName, options = {
   await screenshot(page, screenshotName);
 }
 
-async function verifyAppNative(page, env, endpoint, screenshotName) {
+async function verifyAppNative(page, env, endpoint, screenshotName, options = {}) {
   const expectedHost = `${endpoint.subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
@@ -264,6 +282,17 @@ async function verifyAppNative(page, env, endpoint, screenshotName) {
   if (currentHost === `auth.${env.DOMAIN_NAME}`) {
     throw new Error(`App-native route ${expectedHost} redirected to Authelia`);
   }
+  const body = String((await page.textContent("body").catch(() => "")) || "");
+  for (const marker of ["404 page not found", "Bad Gateway", "502", "Application is not available", "Internal Server Error"]) {
+    if (body.includes(marker)) {
+      throw new Error(`App-native route ${expectedHost} rendered an error page: ${marker}`);
+    }
+  }
+  if (options.appNativeSelector) {
+    await page.waitForSelector(options.appNativeSelector, { timeout: 30000 });
+  } else if (!body.trim()) {
+    throw new Error(`App-native route ${expectedHost} rendered an empty body`);
+  }
   await screenshot(page, screenshotName);
 }
 
@@ -272,7 +301,7 @@ async function run() {
   if (!env.AUTHELIA_ADMIN_PASSWORD) {
     throw new Error("AUTHELIA_ADMIN_PASSWORD is required in .env for browser auth verification");
   }
-  const ingressCatalog = loadIngressCatalog(valuesTemplatePath, env.DOMAIN_NAME);
+  const ingressCatalog = loadIngressCatalog(loadCatalogContent(env), env.DOMAIN_NAME);
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -294,7 +323,8 @@ async function run() {
       await verifyNativeOidc(page, env, endpoint, endpoint.name, routeConfig);
     }
     for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "app_native")) {
-      await verifyAppNative(page, env, endpoint, endpoint.name);
+      const routeConfig = routeChecks[endpoint.name] || {};
+      await verifyAppNative(page, env, endpoint, endpoint.name, routeConfig);
     }
     console.log(JSON.stringify({ result: "ok", captureDir }, null, 2));
   } finally {

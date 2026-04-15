@@ -147,6 +147,7 @@ def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
 def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, str | int], auth_url: str) -> bool:
     status = int(response["status"])
     location = str(response.get("location", "") or "")
+    body = str(response.get("body", "") or "")
     auth_strategy = endpoint["auth"]
     if auth_strategy not in VALID_AUTH_STRATEGIES:
         return False
@@ -168,19 +169,25 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
     if auth_strategy == "native_oidc":
         if endpoint["name"] == "semaphore":
             return semaphore_login_metadata_success(endpoint["url"])
-        if status in {200, 201, 202, 204, 401}:
-            return True
-        if status not in {301, 302, 303, 307, 308}:
-            return False
-        if not location:
-            return False
-        parsed = urlparse(location)
-        if not parsed.netloc:
-            return not parsed.scheme
-        return parsed.netloc in {
-            urlparse(auth_url).netloc,
-            urlparse(endpoint["url"]).netloc,
-        }
+        if endpoint["name"] == "argocd":
+            if status == 200:
+                return "Log in via Authelia" in body
+            if status not in {301, 302, 303, 307, 308} or not location:
+                return False
+            parsed = urlparse(location)
+            if not parsed.netloc:
+                return location.startswith("/login")
+            return parsed.netloc == urlparse(endpoint["url"]).netloc and parsed.path.startswith("/login")
+        if endpoint["name"] == "grafana":
+            if status == 200:
+                return any(marker in body for marker in ("Welcome to Grafana", "Sign in to Grafana", "Grafana"))
+            if status not in {301, 302, 303, 307, 308} or not location:
+                return False
+            parsed = urlparse(location)
+            if not parsed.netloc:
+                return location.startswith("/login")
+            return parsed.netloc == urlparse(endpoint["url"]).netloc and parsed.path.startswith("/login")
+        return False
 
     if auth_strategy == "app_native":
         if status in {200, 201, 202, 204, 401}:
