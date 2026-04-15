@@ -14,9 +14,9 @@ spec:
     targetRevision: "8.0.1"
     helm:
       values: |
-        # Falco remains opt-in for this homelab because unprivileged Proxmox LXC guests
-        # are sensitive to old probe-build paths. When explicitly enabled, keep Falco on
-        # the chart-supported modern eBPF path and avoid a Redis PVC for the Web UI.
+        # Keep the Falco UI published, but make runtime sensor scheduling explicit opt-in.
+        # Unprivileged Proxmox LXC guests cannot host a stable syscall probe by default,
+        # so only nodes labeled haac.io/falco-runtime=true will run the DaemonSet.
         driver:
           enabled: true
           kind: modern_ebpf
@@ -26,6 +26,8 @@ spec:
         containerSecurityContext:
           privileged: true
           allowPrivilegeEscalation: true
+        nodeSelector:
+          haac.io/falco-runtime: "true"
 
         # Collect metrics for kube-prometheus-stack
         metrics:

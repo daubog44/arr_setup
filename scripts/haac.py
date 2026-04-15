@@ -926,6 +926,29 @@ def cleanup_falco_legacy_ui_storage(kubectl: str, kubeconfig: Path, env: dict[st
         capture_output=True,
     )
     if deleted.returncode == 0:
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            remaining = run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(kubeconfig),
+                    "get",
+                    "statefulset,pvc,pod",
+                    "-n",
+                    "security",
+                    "-o",
+                    "name",
+                ],
+                check=False,
+                capture_output=True,
+            )
+            if remaining.returncode != 0:
+                break
+            live_resources = {line.strip() for line in (remaining.stdout or "").splitlines() if line.strip()}
+            if not any(resource in live_resources for resource in stale_resources):
+                break
+            time.sleep(3)
         print("[ok] Removed legacy Falco UI Redis resources to converge on the stateless Web UI profile")
 
 

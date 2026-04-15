@@ -301,6 +301,10 @@ ingresses:
     homepage_name: Litmus
     homepage_icon: litmuschaos.png
     homepage_description: Chaos Center
+    homepage_aliases:
+      - name: ChaosTest
+        icon: litmuschaos.png
+        description: Chaos Workflow UI
   falco:
     enabled: true
     subdomain: falco
@@ -314,12 +318,6 @@ ingresses:
     homepage_description: Runtime Security
 
 homepage:
-  extraLinks:
-    Chaos:
-      - name: ChaosTest
-        href: "https://litmus.nucleoautogenerativo.it"
-        icon: litmuschaos.png
-        description: Chaos Workflow UI
   bookmarks:
     Infrastructure:
       - name: Proxmox

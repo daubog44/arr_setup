@@ -5,30 +5,25 @@
 {{- $conf := index $ingresses $name }}
 {{- if (default true $conf.enabled) }}
 {{- $group := default "Management" $conf.homepage_group }}
+{{- $href := printf "https://%s.%s" $conf.subdomain $.Values.global.domainName }}
 {{- $entry := dict
       "name" (default $name $conf.homepage_name)
       "icon" (default "globe.png" $conf.homepage_icon)
-      "href" (printf "https://%s.%s" $conf.subdomain $.Values.global.domainName)
+      "href" $href
       "description" (default "" $conf.homepage_description)
 }}
 {{- $existing := get $groups $group | default (list) }}
-{{- $_ := set $groups $group (append $existing $entry) }}
-{{- end }}
-{{- end }}
-{{- $homepage := index .Values "homepage" | default dict }}
-{{- $extraGroups := index $homepage "extraLinks" | default dict }}
-{{- range $group := keys $extraGroups | sortAlpha }}
-{{- $existing := get $groups $group | default (list) }}
-{{- range $entry := get $extraGroups $group }}
-{{- $merged := dict
-      "name" (default "External" $entry.name)
-      "icon" (default "globe.png" $entry.icon)
-      "href" (default "#" $entry.href)
-      "description" (default "" $entry.description)
-}}
-{{- $existing = append $existing $merged }}
+{{- $existing = append $existing $entry }}
+{{- range $alias := ($conf.homepage_aliases | default (list)) }}
+{{- $existing = append $existing (dict
+      "name" (default "External" $alias.name)
+      "icon" (default (default "globe.png" $conf.homepage_icon) $alias.icon)
+      "href" (default $href $alias.href)
+      "description" (default (default "" $conf.homepage_description) $alias.description)
+) }}
 {{- end }}
 {{- $_ := set $groups $group $existing }}
+{{- end }}
 {{- end }}
 {{- toYaml $groups -}}
 {{- end }}

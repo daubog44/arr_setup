@@ -2,7 +2,7 @@
 
 ## ArgoCD bootstrap
 
-The repo already vendors the initial ArgoCD manifests. The fix is to make that bootstrap overlay explicitly namespace-scoped and to add one cleanup pass for legacy `argocd-*` resources previously created in `default`.
+The repo already vendors the initial ArgoCD manifests and the current source already converges on `argocd`. The remaining work is to keep the legacy cleanup bounded and to stop the active change text from describing a duplicate-bootstrap problem that no longer exists in source.
 
 The cleanup is bounded:
 
@@ -12,11 +12,18 @@ The cleanup is bounded:
 
 ## Falco
 
-The current LXC environment cannot sustain the legacy `ebpf` probe build path. The Falco chart already supports `modern_ebpf`, which avoids the failing driver-loader build path.
+The current LXC environment cannot sustain a reliable Falco runtime syscall probe by default. `modern_ebpf` avoids the old driver-loader build path, but unprivileged Proxmox LXC guests still cannot host the runtime sensor unless an operator explicitly labels a compatible node.
 
 The Falcosidekick UI should not depend on a Redis PVC in this homelab. Disabling UI Redis persistence makes the UI stateless and avoids Longhorn readiness blocking the official route.
 
 Because the route is already protected by Authelia forward-auth, the UI's own basic auth can be disabled.
+
+The robust default is:
+
+- keep the Falco public route and Homepage entry
+- keep the Falcosidekick UI plus Redis ephemeral and reconcile-safe
+- require an explicit compatible-node label before the runtime DaemonSet schedules anywhere
+- treat runtime sensor enablement as a separate host-compatibility decision, not a default bootstrap assumption
 
 ## Verification
 
