@@ -11,7 +11,7 @@ spec:
     repoURL: https://falcosecurity.github.io/charts
     chart: falco
     # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
-    targetRevision: "8.0.1"
+    targetRevision: "8.0.2"
     helm:
       values: |
         # Falco remains opt-in for this homelab because unprivileged Proxmox LXC guests
