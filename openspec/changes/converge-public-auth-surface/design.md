@@ -26,9 +26,9 @@ The declared strategy becomes the single route-auth source of truth for:
 ## Auth matrix
 
 - `public`: Authelia only
-- `edge_forward_auth`: Homepage, Ntfy, Litmus, Falco
+- `edge_forward_auth`: Homepage, Ntfy, Litmus, Falco, Longhorn
 - `native_oidc`: Headlamp, Semaphore, Grafana, ArgoCD
-- `app_native`: Jellyfin, Radarr, Sonarr, Prowlarr, Autobrr, qBittorrent/QUI, Longhorn
+- `app_native`: Jellyfin, Radarr, Sonarr, Prowlarr, Autobrr, qBittorrent/QUI
 
 ## Route behavior
 
@@ -39,6 +39,7 @@ Routes keep the Traefik `authelia` middleware and are considered successful when
 ### native_oidc
 
 Routes must not receive the Traefik `authelia` middleware. Browser verification must prove that the app's own OIDC login flow completes after the Authelia identity step.
+Where the upstream application supports it, repo-side config must suppress the redundant local login UI.
 
 ### app_native
 
@@ -54,6 +55,7 @@ Routes are expected to answer directly without authentication middleware.
 
 - keep native OIDC in the deployment
 - update the Authelia client redirect URI from `/oidc/callback` to `/oidc-callback`
+- reduce the in-cluster RBAC blast radius from `cluster-admin` to a read-only cluster role suitable for the dashboard
 
 ### Semaphore
 

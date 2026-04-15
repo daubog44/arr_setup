@@ -61,6 +61,7 @@ spec:
 
         general:
           host: https://ansible.${DOMAIN_NAME}
+          passwordLoginDisable: true
 
         admin:
           create: true

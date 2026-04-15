@@ -53,6 +53,11 @@ spec:
           grafana.ini:
             server:
               root_url: "https://grafana.nucleoautogenerativo.it"
+            auth:
+              disable_login_form: true
+              oauth_auto_login: true
+            auth.basic:
+              enabled: false
             auth.generic_oauth:
               enabled: true
               name: Authelia

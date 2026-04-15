@@ -13,6 +13,7 @@ Published app UIs MUST be protected according to an explicit per-route auth stra
 - **AND** `edge_forward_auth` routes MUST include the shared Authelia forward-auth middleware chain
 - **AND** `native_oidc` routes MUST NOT include the shared Authelia forward-auth middleware chain
 - **AND** `app_native` routes MUST NOT include the shared Authelia forward-auth middleware chain
+- **AND** the declared strategy MUST come from `auth_strategy`, not from the legacy `auth_enabled` boolean
 - **AND** the operator-facing endpoint report MUST identify the declared auth strategy rather than only `public` or `protected`
 
 #### Scenario: Browser verification runs for a native-OIDC route
@@ -26,6 +27,12 @@ Published app UIs MUST be protected according to an explicit per-route auth stra
 - **WHEN** browser-level verification runs for an `app_native` route
 - **THEN** the application MUST present its own login UI or authenticated landing page
 - **AND** the route MUST NOT be considered correct if it redirects through the shared Authelia forward-auth chain
+
+#### Scenario: Control-plane native OIDC suppresses redundant local login UI
+
+- **WHEN** repo-side config supports disabling the redundant local login UI for a `native_oidc` control-plane app
+- **THEN** that local login UI MUST be disabled
+- **AND** Semaphore verification MUST fail if `/api/auth/login` still reports `login_with_password=true`
 
 ### Requirement: Official UI verification matches the catalog
 

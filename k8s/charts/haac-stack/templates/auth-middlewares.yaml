@@ -6,8 +6,6 @@
 {{- $authStrategy := "public" -}}
 {{- if hasKey $conf "auth_strategy" -}}
 {{- $authStrategy = ($conf.auth_strategy | toString) -}}
-{{- else if and (hasKey $conf "auth_enabled") $conf.auth_enabled -}}
-{{- $authStrategy = "edge_forward_auth" -}}
 {{- end -}}
 {{- $_ := set $routeNamespaces $namespace true -}}
 {{- if eq $authStrategy "edge_forward_auth" }}
@@ -36,7 +34,7 @@ metadata:
 spec:
   forwardAuth:
     address: http://authelia.mgmt.svc.cluster.local:9091/api/authz/forward-auth?strategy=header
-    trustForwardHeader: true
+    trustForwardHeader: false
     authResponseHeaders:
       - Remote-User
       - Remote-Groups

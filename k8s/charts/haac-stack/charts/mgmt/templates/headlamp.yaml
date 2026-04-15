@@ -17,7 +17,7 @@ spec:
       labels:
         app.kubernetes.io/name: headlamp
     spec:
-      serviceAccountName: headlamp-admin
+      serviceAccountName: headlamp-viewer
       containers:
         - name: headlamp
           image: >-
@@ -67,27 +67,27 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: headlamp-admin
+  name: headlamp-viewer
   namespace: mgmt
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: headlamp-admin-token
+  name: headlamp-viewer-token
   namespace: mgmt
   annotations:
-    kubernetes.io/service-account.name: headlamp-admin
+    kubernetes.io/service-account.name: headlamp-viewer
 type: kubernetes.io/service-account-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: headlamp-admin
+  name: headlamp-viewer
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: view
 subjects:
   - kind: ServiceAccount
-    name: headlamp-admin
+    name: headlamp-viewer
     namespace: mgmt

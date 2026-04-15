@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import urllib.error
 import urllib.request
@@ -40,11 +41,7 @@ def load_endpoint_specs(values_output: Path, values_template: Path, domain_name:
                 "subdomain": current["subdomain"],
                 "namespace": current.get("namespace", ""),
                 "service": current.get("service", ""),
-                "auth": current.get("auth_strategy", "").strip() or (
-                    "edge_forward_auth"
-                    if current.get("auth_enabled", "").strip().lower() in {"1", "true", "yes", "on"}
-                    else "public"
-                ),
+                "auth": current.get("auth_strategy", "").strip() or "public",
                 "url": f"https://{current['subdomain']}.{domain_name}",
             }
         )
@@ -119,17 +116,21 @@ def probe_web_response(url: str, timeout_seconds: int = 10) -> dict[str, str | i
     )
     try:
         with opener.open(request, timeout=timeout_seconds) as response:
+            body = response.read(16384).decode("utf-8", errors="replace")
             return {
                 "status": int(getattr(response, "status", response.getcode())),
                 "location": response.headers.get("Location", ""),
+                "body": body,
             }
     except urllib.error.HTTPError as error:
+        body = error.read(16384).decode("utf-8", errors="replace")
         return {
             "status": int(error.code),
             "location": error.headers.get("Location", ""),
+            "body": body,
         }
     except Exception:
-        return {"status": 0, "location": ""}
+        return {"status": 0, "location": "", "body": ""}
 
 
 def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
@@ -152,10 +153,12 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
             return False
         parsed = urlparse(location)
         if not parsed.netloc:
-            return location.startswith("/") or location.startswith("?")
+            return not parsed.scheme
         return parsed.netloc == urlparse(auth_url).netloc
 
     if auth_strategy == "native_oidc":
+        if endpoint["name"] == "semaphore":
+            return semaphore_login_metadata_success(endpoint["url"])
         if status in {200, 201, 202, 204, 401}:
             return True
         if status not in {301, 302, 303, 307, 308}:
@@ -164,7 +167,7 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
             return False
         parsed = urlparse(location)
         if not parsed.netloc:
-            return location.startswith("/") or location.startswith("?")
+            return not parsed.scheme
         return parsed.netloc in {
             urlparse(auth_url).netloc,
             urlparse(endpoint["url"]).netloc,
@@ -179,7 +182,22 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
             return False
         parsed = urlparse(location)
         if not parsed.netloc:
-            return location.startswith("/") or location.startswith("?")
+            return not parsed.scheme
         return parsed.netloc == urlparse(endpoint["url"]).netloc
 
     return False
+
+
+def semaphore_login_metadata_success(base_url: str) -> bool:
+    metadata_url = base_url.rstrip("/") + "/api/auth/login"
+    response = probe_web_response(metadata_url)
+    if int(response["status"]) != 200:
+        return False
+    try:
+        payload = json.loads(str(response.get("body", "") or "{}"))
+    except json.JSONDecodeError:
+        return False
+    providers = payload.get("oidc_providers") or []
+    if not any(provider.get("id") == "authelia" for provider in providers if isinstance(provider, dict)):
+        return False
+    return payload.get("login_with_password") is False

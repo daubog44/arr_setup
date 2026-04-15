@@ -285,7 +285,7 @@ ingresses:
     service: longhorn-frontend
     port: 80
     namespace: longhorn-system
-    auth_strategy: app_native
+    auth_strategy: edge_forward_auth
     homepage_group: Management
     homepage_name: Longhorn
     homepage_icon: longhorn.png

@@ -15,7 +15,9 @@ The public UI surface is reachable again, but the auth contract is still inconsi
 - fix the Headlamp Authelia redirect URI mismatch and preserve native OIDC
 - enable native OIDC for Semaphore with the correct Authelia provider redirect path
 - keep edge forward-auth only for apps that do not have a mature native OIDC path in this repo
+- keep Longhorn behind edge forward-auth until a repo-backed native auth path exists
 - remove route-level forward-auth from native-OIDC and app-native routes to avoid double login
+- suppress redundant local login affordances on control-plane apps where repo config supports it
 - update endpoint verification so route auth posture is validated against the declared strategy
 - sync the stable `public-ui-surface` capability spec to the new contract
 

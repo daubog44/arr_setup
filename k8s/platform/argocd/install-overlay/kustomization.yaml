@@ -8,25 +8,21 @@ patches:
       version: v1
       kind: ConfigMap
       name: argocd-cm
-      namespace: argocd
     path: argocd-cm.yaml
   - target:
       version: v1
       kind: ConfigMap
       name: argocd-rbac-cm
-      namespace: argocd
     path: argocd-rbac-cm.yaml
   - target:
       version: v1
       kind: ConfigMap
       name: argocd-cmd-params-cm
-      namespace: argocd
     path: cmd-params.yaml
   - target:
       version: v1
       kind: ConfigMap
       name: argocd-notifications-cm
-      namespace: argocd
     path: notifications-cm.yaml
   - target:
       group: apps
