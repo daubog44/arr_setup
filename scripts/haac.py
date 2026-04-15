@@ -1218,8 +1218,9 @@ def create_secret_yaml(
     *,
     literals: dict[str, str] | None = None,
     files: dict[str, Path] | None = None,
+    labels: dict[str, str] | None = None,
 ) -> str:
-    return secretlib.render_secret_manifest(name, namespace, literals=literals, files=files)
+    return secretlib.render_secret_manifest(name, namespace, literals=literals, files=files, labels=labels)
 
 
 def seal_yaml(kubeseal: str, cert: Path, yaml_text: str) -> str:
@@ -1346,13 +1347,6 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
-            "argocd-oidc-secret",
-            "argocd",
-            ARGOCD_OIDC_SECRET_OUTPUT,
-            {"clientSecret": env["ARGOCD_OIDC_SECRET"]},
-            None,
-        ),
-        (
             "downloaders-auth",
             "media",
             SECRETS_DIR / "downloaders-auth-sealed-secret.yaml",
@@ -1444,6 +1438,15 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
     for name, namespace, output_path, literals, files in secrets:
         secret_yaml = create_secret_yaml(kubectl, name, namespace, literals=literals, files=files)
         output_path.write_text(seal_yaml(kubeseal, cert, secret_yaml), encoding="utf-8")
+
+    argocd_oidc_secret_yaml = create_secret_yaml(
+        kubectl,
+        "argocd-oidc-secret",
+        "argocd",
+        literals={"clientSecret": env["ARGOCD_OIDC_SECRET"]},
+        labels={"app.kubernetes.io/part-of": "argocd"},
+    )
+    ARGOCD_OIDC_SECRET_OUTPUT.write_text(seal_yaml(kubeseal, cert, argocd_oidc_secret_yaml), encoding="utf-8")
 
     render_values_file(env)
     render_gitops_manifests(env)

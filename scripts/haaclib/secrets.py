@@ -11,6 +11,7 @@ def render_secret_manifest(
     *,
     literals: dict[str, str] | None = None,
     files: dict[str, Path] | None = None,
+    labels: dict[str, str] | None = None,
 ) -> str:
     lines = [
         "apiVersion: v1",
@@ -18,8 +19,13 @@ def render_secret_manifest(
         "metadata:",
         f"  name: {name}",
         f"  namespace: {namespace}",
-        "type: Opaque",
     ]
+    label_items = labels or {}
+    if label_items:
+        lines.append("  labels:")
+        for key, value in label_items.items():
+            lines.append(f"    {key}: {json.dumps(value)}")
+    lines.append("type: Opaque")
 
     literal_items = literals or {}
     if literal_items:
