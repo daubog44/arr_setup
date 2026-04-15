@@ -171,7 +171,7 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
             return semaphore_login_metadata_success(endpoint["url"])
         if endpoint["name"] == "argocd":
             if status == 200:
-                return "Log in via Authelia" in body
+                return "Argo CD" in body and '<div id="app"></div>' in body
             if status not in {301, 302, 303, 307, 308} or not location:
                 return False
             parsed = urlparse(location)

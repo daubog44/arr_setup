@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 from pathlib import Path
 
 
@@ -46,17 +45,3 @@ def render_gitops_manifests(
             continue
         content = render_env_placeholders(template_path.read_text(encoding="utf-8"), env)
         output_path.write_text(content, encoding="utf-8")
-
-
-def stage_template_tree(*, source_dir: Path, runtime_dir: Path, env: dict[str, str]) -> Path:
-    runtime_dir.parent.mkdir(parents=True, exist_ok=True)
-    if runtime_dir.exists():
-        shutil.rmtree(runtime_dir)
-    shutil.copytree(source_dir, runtime_dir)
-    for template_path in runtime_dir.rglob("*.template"):
-        output_path = template_path.with_name(template_path.name[: -len(".template")])
-        output_path.write_text(
-            render_env_placeholders(template_path.read_text(encoding="utf-8"), env),
-            encoding="utf-8",
-        )
-    return runtime_dir

@@ -1,3 +1,0 @@
-- op: replace
-  path: /spec/template/spec/initContainers/0/args/0
-  value: /bin/cp --update=none /usr/local/bin/argocd /var/run/argocd/argocd && /bin/rm -rf /var/run/argocd/argocd-cmp-server && /bin/ln -s /var/run/argocd/argocd /var/run/argocd/argocd-cmp-server

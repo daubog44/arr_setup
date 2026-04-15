@@ -3,17 +3,13 @@ kind: Kustomization
 namespace: argocd
 resources:
   - upstream-manifests/cluster-install
+  - argocd-oidc-sealed-secret.yaml
 patches:
   - target:
       version: v1
       kind: ConfigMap
       name: argocd-cm
     path: argocd-cm.yaml
-  - target:
-      version: v1
-      kind: Secret
-      name: argocd-secret
-    path: argocd-secret-patch.yaml
   - target:
       version: v1
       kind: ConfigMap

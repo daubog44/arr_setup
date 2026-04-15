@@ -44,3 +44,4 @@ k8s/charts/haac-stack/charts/*.tgz
 ansible/inventory.yml
 ansible/*.retry
 output/
+.tmp/
