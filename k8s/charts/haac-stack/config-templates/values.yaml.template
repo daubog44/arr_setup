@@ -312,3 +312,19 @@ ingresses:
     homepage_name: Falco
     homepage_icon: falco.png
     homepage_description: Runtime Security
+
+homepage:
+  extraLinks:
+    Chaos:
+      - name: ChaosTest
+        href: "https://litmus.${DOMAIN_NAME}"
+        icon: litmuschaos.png
+        description: Chaos Workflow UI
+  bookmarks:
+    Infrastructure:
+      - name: Proxmox
+        href: "https://${PROXMOX_ACCESS_HOST}:8006"
+        icon: proxmox.png
+      - name: GitHub
+        href: "https://github.com"
+        icon: github.png

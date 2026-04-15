@@ -877,7 +877,7 @@ def cleanup_falco_legacy_ui_storage(kubectl: str, kubeconfig: Path, env: dict[st
             "--kubeconfig",
             str(kubeconfig),
             "get",
-            "pvc,pod",
+            "statefulset,pvc,pod",
             "-n",
             "security",
             "-o",
@@ -895,6 +895,9 @@ def cleanup_falco_legacy_ui_storage(kubectl: str, kubeconfig: Path, env: dict[st
         if not resource_name:
             continue
         kind, _, name = resource_name.partition("/")
+        if kind.startswith("statefulset") and name == "falco-falcosidekick-ui-redis":
+            stale_resources.append(resource_name)
+            continue
         if kind == "persistentvolumeclaim" and name.startswith("falco-falcosidekick-ui-redis-data-"):
             stale_resources.append(resource_name)
             continue
@@ -923,7 +926,7 @@ def cleanup_falco_legacy_ui_storage(kubectl: str, kubeconfig: Path, env: dict[st
         capture_output=True,
     )
     if deleted.returncode == 0:
-        print("[ok] Removed legacy Falco UI storage drift resources to converge on stateless Web UI")
+        print("[ok] Removed legacy Falco UI Redis resources to converge on the stateless Web UI profile")
 
 
 def render_env_placeholders(content: str, env: dict[str, str]) -> str:
@@ -1867,10 +1870,10 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
             ]
         )
         cleanup_legacy_default_argocd_install(kubectl, session_kubeconfig)
+        cleanup_falco_legacy_ui_storage(kubectl, session_kubeconfig, env)
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=root_app)
         cleanup_disabled_platform_apps(kubectl, session_kubeconfig, env)
-        cleanup_falco_legacy_ui_storage(kubectl, session_kubeconfig, env)
 
 
 def seed_argocd_bootstrap_patch(kubectl: str, kubeconfig: Path, timeout_seconds: int = 120) -> None:
