@@ -48,6 +48,7 @@ identity_providers:
       - client_id: headlamp
         client_name: Headlamp
         public: true
+        token_endpoint_auth_method: none
         authorization_policy: one_factor
         require_pkce: true
         pkce_challenge_method: S256
