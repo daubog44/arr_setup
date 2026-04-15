@@ -1,21 +1,22 @@
-## Why
+# Why
 
-`task up` still has two structural regressions after the previous cleanup:
+Two structural defects still sit in the `task up` path:
 
-1. the repo-local ArgoCD bootstrap overlay installs namespaced resources without a fixed namespace, so a fresh local bootstrap can create a second ArgoCD control plane in `default` before self-management converges in `argocd`;
-2. Falco is now published as an official protected UI route, but the enabled chart profile still uses the legacy `ebpf` probe-build path and a persistent Redis-backed Web UI, which leaves the Application degraded on these unprivileged LXC nodes.
+- the repo-local ArgoCD bootstrap can leave a legacy install in `default` while the intended install lives in `argocd`
+- Falco is part of the official public UI catalog, but the current runtime profile is still not coherent with unprivileged Proxmox LXC guests
 
-Both issues break the operator contract: the public UI surface reports Falco as official while the backing app is degraded, and the bootstrap path leaves cluster drift that is not repo-owned.
+That leaves the cluster with avoidable drift and a degraded official route.
 
 ## What Changes
 
-- make the repo-local ArgoCD install overlay namespace-safe from the first apply
-- remove the legacy ArgoCD install left in `default` during bootstrap reconciliation
-- switch Falco to an LXC-compatible `modern_ebpf` profile and remove the unnecessary persistent Redis requirement for the Web UI
-- sync the accepted public-surface and archive-governance contracts into stable specs with real purposes
+- harden the repo-local ArgoCD bootstrap so it converges on one namespaced install only
+- remove legacy `argocd-*` resources left in `default`
+- switch Falco to the chart-supported `modern_ebpf` profile for this environment
+- make the Falcosidekick UI stateless and rely on Authelia protection instead of its own built-in basic auth
+- align stable OpenSpec archival/spec wording with the actual archived state
 
-## Impact
+## Expected Outcome
 
-- `task up` remains the same command, but ArgoCD bootstrap becomes single-owner from the first install
-- Falco stays opt-in, but when enabled its official UI route is backed by a convergent chart profile
-- stable OpenSpec specs stop carrying placeholder `TBD` purpose text
+- `task reconcile:argocd` and `task up` no longer leave a duplicate ArgoCD install in `default`
+- `falco.nucleoautogenerativo.it` remains an official protected UI route and the platform app converges much closer to healthy
+- stable OpenSpec docs stop carrying placeholder archive text

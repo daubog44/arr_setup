@@ -20,9 +20,9 @@ spec:
         driver:
           enabled: true
           kind: modern_ebpf
-        modernEbpf:
-          leastPrivileged: false
-          sysfsMount: true
+          modernEbpf:
+            leastPrivileged: false
+            sysfsMount: true
         containerSecurityContext:
           privileged: true
           allowPrivilegeEscalation: true
@@ -46,6 +46,7 @@ spec:
           enabled: true
           webui:
             enabled: true
+            disableauth: true
             redis:
               storageEnabled: false
           config:

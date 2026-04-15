@@ -1,15 +1,26 @@
-## Design
+# Design
 
-### ArgoCD bootstrap
+## ArgoCD bootstrap
 
-The install overlay must set `namespace: argocd` directly in the Kustomization, not rely on later self-management. This prevents a first `kubectl apply -k` from landing namespaced resources in `default`.
+The repo already vendors the initial ArgoCD manifests. The fix is to make that bootstrap overlay explicitly namespace-scoped and to add one cleanup pass for legacy `argocd-*` resources previously created in `default`.
 
-Because older runs already created a second control plane in `default`, `deploy_argocd` also performs a one-time cleanup of the known legacy ArgoCD resources from `default` after the repo-owned install in `argocd` is healthy.
+The cleanup is bounded:
 
-### Falco on unprivileged LXC
+- namespace-scoped only
+- only `argocd-*` names
+- executed during `deploy-argocd`
 
-The current Falco profile fails because it uses `driver.kind: ebpf`, which triggers build/mount behavior not supported in these guests. The chart supports `driver.kind: modern_ebpf`, which is the right profile for this environment. The Falcosidekick Web UI also does not need a persistent Redis PVC for this homelab; disabling Redis storage removes the failing Longhorn attach path while preserving the protected UI route.
+## Falco
 
-### Spec cleanup
+The current LXC environment cannot sustain the legacy `ebpf` probe build path. The Falco chart already supports `modern_ebpf`, which avoids the failing driver-loader build path.
 
-The two stable specs updated by the previous archive closeout need explicit `Purpose` text so the stable spec set is readable without reopening archived changes.
+The Falcosidekick UI should not depend on a Redis PVC in this homelab. Disabling UI Redis persistence makes the UI stateless and avoids Longhorn readiness blocking the official route.
+
+Because the route is already protected by Authelia forward-auth, the UI's own basic auth can be disabled.
+
+## Verification
+
+- `helm template` renders the Falco app values cleanly
+- `task reconcile:argocd` removes the legacy default-namespace ArgoCD resources
+- `task verify-cluster` shows only the intended ArgoCD install and healthy route backends
+- `task verify-endpoints` reports Homepage, Semaphore, Litmus, and Falco as protected reachable URLs

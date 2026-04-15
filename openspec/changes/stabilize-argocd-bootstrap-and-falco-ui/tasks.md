@@ -1,5 +1,5 @@
-- [x] 1. Make the repo-local ArgoCD install overlay namespace-safe for first bootstrap
-- [x] 2. Remove the legacy ArgoCD install from `default` during bootstrap reconciliation
-- [x] 3. Switch Falco to an LXC-compatible chart profile and remove the failing Redis PVC dependency for the Web UI
-- [ ] 4. Reconcile GitOps and verify ArgoCD/Falco/Homepage routes live
-- [x] 5. Replace the archived stable-spec `Purpose` placeholders with real text
+- [ ] 1. Pin the repo-local ArgoCD bootstrap overlay and legacy cleanup to one convergent namespaced install.
+- [ ] 2. Move the Falco app profile to a Proxmox-LXC-compatible `modern_ebpf` configuration.
+- [ ] 3. Make the Falcosidekick UI stateless and protected only through the shared Authelia forward-auth layer.
+- [ ] 4. Align stable OpenSpec archival/spec wording with the archived state.
+- [ ] 5. Validate with `helm template`, `task reconcile:argocd`, `task verify-cluster`, and `task verify-endpoints`.

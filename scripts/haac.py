@@ -1721,54 +1721,37 @@ def pre_commit_hook() -> None:
 
 
 def cleanup_legacy_default_argocd_install(kubectl: str, kubeconfig: Path) -> None:
-    legacy_resources = [
-        "deployment/argocd-applicationset-controller",
-        "deployment/argocd-dex-server",
-        "deployment/argocd-notifications-controller",
-        "deployment/argocd-redis",
-        "deployment/argocd-repo-server",
-        "deployment/argocd-server",
-        "statefulset/argocd-application-controller",
-        "service/argocd-applicationset-controller",
-        "service/argocd-dex-server",
-        "service/argocd-metrics",
-        "service/argocd-notifications-controller-metrics",
-        "service/argocd-redis",
-        "service/argocd-repo-server",
-        "service/argocd-server",
-        "service/argocd-server-metrics",
-        "configmap/argocd-cm",
-        "configmap/argocd-cmd-params-cm",
-        "configmap/argocd-gpg-keys-cm",
-        "configmap/argocd-notifications-cm",
-        "configmap/argocd-rbac-cm",
-        "configmap/argocd-ssh-known-hosts-cm",
-        "configmap/argocd-tls-certs-cm",
-        "secret/argocd-initial-admin-secret",
-        "secret/argocd-notifications-secret",
-        "secret/argocd-redis",
-        "secret/argocd-secret",
-        "serviceaccount/argocd-application-controller",
-        "serviceaccount/argocd-applicationset-controller",
-        "serviceaccount/argocd-dex-server",
-        "serviceaccount/argocd-notifications-controller",
-        "serviceaccount/argocd-redis",
-        "serviceaccount/argocd-repo-server",
-        "serviceaccount/argocd-server",
-        "role.rbac.authorization.k8s.io/argocd-application-controller",
-        "role.rbac.authorization.k8s.io/argocd-applicationset-controller",
-        "role.rbac.authorization.k8s.io/argocd-dex-server",
-        "role.rbac.authorization.k8s.io/argocd-notifications-controller",
-        "role.rbac.authorization.k8s.io/argocd-redis",
-        "role.rbac.authorization.k8s.io/argocd-server",
-        "rolebinding.rbac.authorization.k8s.io/argocd-application-controller",
-        "rolebinding.rbac.authorization.k8s.io/argocd-applicationset-controller",
-        "rolebinding.rbac.authorization.k8s.io/argocd-dex-server",
-        "rolebinding.rbac.authorization.k8s.io/argocd-notifications-controller",
-        "rolebinding.rbac.authorization.k8s.io/argocd-redis",
-        "rolebinding.rbac.authorization.k8s.io/argocd-server",
-    ]
-    completed = run(
+    existing = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "get",
+            "deployment,statefulset,service,configmap,secret,serviceaccount,role,rolebinding,networkpolicy",
+            "-n",
+            "default",
+            "-o",
+            "name",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if existing.returncode != 0:
+        return
+
+    legacy_resources = []
+    for resource_name in (existing.stdout or "").splitlines():
+        resource_name = resource_name.strip()
+        if not resource_name:
+            continue
+        _, _, name = resource_name.partition("/")
+        if name.startswith("argocd-"):
+            legacy_resources.append(resource_name)
+
+    if not legacy_resources:
+        return
+
+    deleted = run(
         [
             kubectl,
             "--kubeconfig",
@@ -1783,8 +1766,8 @@ def cleanup_legacy_default_argocd_install(kubectl: str, kubeconfig: Path) -> Non
         check=False,
         capture_output=True,
     )
-    output = (completed.stdout or completed.stderr or "").strip()
-    if completed.returncode == 0 and output and "deleted" in output:
+    output = (deleted.stdout or deleted.stderr or "").strip()
+    if deleted.returncode == 0 and output:
         print("[ok] Removed legacy ArgoCD bootstrap resources from namespace default")
 
 
