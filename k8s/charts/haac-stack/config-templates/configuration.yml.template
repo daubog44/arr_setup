@@ -80,7 +80,7 @@ identity_providers:
         token_endpoint_auth_method: client_secret_basic
         authorization_policy: one_factor
         redirect_uris:
-          - https://argocd.${DOMAIN_NAME}/api/dex/callback
+          - https://argocd.${DOMAIN_NAME}/auth/callback
         scopes:
           - openid
           - profile

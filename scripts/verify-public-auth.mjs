@@ -143,7 +143,16 @@ async function run() {
     await verifyEdgeRoute(page, env, "falco", "falco");
     await verifyEdgeRoute(page, env, "longhorn", "longhorn");
     await verifyHeadlamp(page, env);
-    await verifyNativeOidc(page, env, "argocd", "argocd", { expectSelector: 'text="Applications"' });
+    await verifyNativeOidc(page, env, "argocd", "argocd", {
+      expectSelector: 'text="Settings"',
+      preAuthAction: async currentPage => {
+        const oidcButton = currentPage.locator('text="Log in via Authelia"');
+        if (await oidcButton.count()) {
+          await oidcButton.first().waitFor({ state: "visible", timeout: 30000 });
+          await oidcButton.first().click();
+        }
+      },
+    });
     await verifyNativeOidc(page, env, "grafana", "grafana", {
       expectSelector: 'text="Home"',
       preAuthAction: async currentPage => {

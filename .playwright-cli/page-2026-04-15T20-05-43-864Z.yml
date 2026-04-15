@@ -1,0 +1,27 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - paragraph
+    - generic [ref=e5]:
+      - paragraph
+      - button "Lingua" [ref=e7] [cursor=pointer]:
+        - img [ref=e8]
+        - paragraph
+  - generic [ref=e12]:
+    - img [ref=e14]
+    - heading "Si è verificato un errore nell'elaborazione della richiesta" [level=5] [ref=e17]
+    - generic [ref=e19]:
+      - button "Home" [ref=e20] [cursor=pointer]
+      - generic [ref=e22]:
+        - 'heading "Errore: invalid_request" [level=6] [ref=e23]':
+          - strong [ref=e24]: "Errore:"
+          - text: invalid_request
+        - separator [ref=e25]
+        - paragraph [ref=e26]:
+          - strong [ref=e27]: "Descrizione:"
+          - text: The request is missing a required parameter, includes an invalid parameter value, includes a parameter more than once, or is otherwise malformed.
+        - paragraph [ref=e28]:
+          - strong [ref=e29]: "Suggerimento:"
+          - text: The 'redirect_uri' parameter does not match any of the OAuth 2.0 Client's pre-registered 'redirect_uris'.
+      - heading "È possibile chiudere questa scheda o tornare a casa facendo clic sul pulsante home." [level=6] [ref=e30]
+    - link "Powered by Authelia" [ref=e33] [cursor=pointer]:
+      - /url: https://www.authelia.com
