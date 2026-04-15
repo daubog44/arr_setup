@@ -14,7 +14,7 @@ image:
   # -- The image repository to pull from
   repository: falcosecurity/falcosidekick
   # -- The image tag to pull
-  tag: 2.32.0
+  tag: 2.33.0
   # -- The image pull policy
   pullPolicy: IfNotPresent
 
@@ -1242,7 +1242,7 @@ webui:
     # -- The web UI image repository to pull from
     repository: falcosecurity/falcosidekick-ui
     # -- The web UI image tag to pull
-    tag: "2.2.0"
+    tag: "2.3.0"
     # -- The web UI image pull policy
     pullPolicy: IfNotPresent
 
