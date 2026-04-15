@@ -64,6 +64,7 @@ spec:
               icon: signin
               client_id: grafana
               client_secret: "$__env{GRAFANA_OIDC_SECRET}"
+              auth_style: InHeader
               scopes: openid profile email groups
               empty_scopes: false
               auth_url: https://auth.nucleoautogenerativo.it/api/oidc/authorization

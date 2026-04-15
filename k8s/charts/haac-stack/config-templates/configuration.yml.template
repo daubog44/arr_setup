@@ -47,10 +47,10 @@ identity_providers:
     clients:
       - client_id: headlamp
         client_name: Headlamp
-        client_secret: "${HEADLAMP_OIDC_HASH}"
-        public: false
-        token_endpoint_auth_method: client_secret_post
+        public: true
         authorization_policy: one_factor
+        require_pkce: true
+        pkce_challenge_method: S256
         redirect_uris:
           - https://headlamp.${DOMAIN_NAME}/oidc-callback
         scopes:
@@ -63,6 +63,7 @@ identity_providers:
         client_name: Semaphore Ansible
         client_secret: "${SEMAPHORE_OIDC_HASH}"
         public: false
+        token_endpoint_auth_method: client_secret_basic
         authorization_policy: one_factor
         redirect_uris:
           - https://ansible.${DOMAIN_NAME}/api/auth/oidc/authelia/redirect
@@ -76,6 +77,7 @@ identity_providers:
         client_name: Grafana
         client_secret: "${GRAFANA_OIDC_HASH}"
         public: false
+        token_endpoint_auth_method: client_secret_basic
         authorization_policy: one_factor
         redirect_uris:
           - https://grafana.${DOMAIN_NAME}/login/generic_oauth
@@ -89,6 +91,7 @@ identity_providers:
         client_name: ArgoCD
         client_secret: "${ARGOCD_OIDC_HASH}"
         public: false
+        token_endpoint_auth_method: client_secret_basic
         authorization_policy: one_factor
         redirect_uris:
           - https://argocd.${DOMAIN_NAME}/api/dex/callback

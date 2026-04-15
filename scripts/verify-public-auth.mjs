@@ -33,6 +33,12 @@ async function maybeAutheliaLogin(page, env) {
   const password = page.locator('#password-textfield, input[autocomplete="current-password"]').first();
   const signIn = page.locator('#sign-in-button, button[type="submit"], input[type="submit"]').first();
   const consentButton = page.locator('#openid-consent-accept').first();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if ((await username.count()) || (await consentButton.count())) {
+      break;
+    }
+    await page.waitForTimeout(500);
+  }
   if (await username.count()) {
     await username.waitFor({ state: "visible", timeout: 30000 });
     await username.fill("admin");
@@ -108,6 +114,8 @@ async function verifyNativeOidc(page, env, subdomain, screenshotName, options = 
     await options.preAuthAction(page, env);
   }
   await ensureHost(page, expectedHost, env);
+  await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(3000);
   if (options.expectSelector) {
     await page.waitForSelector(options.expectSelector, { timeout: 30000 });
   }

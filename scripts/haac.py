@@ -1281,7 +1281,6 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "PROTONVPN_SERVER_COUNTRIES",
             "NTFY_TOPIC",
             "ARGOCD_OIDC_SECRET",
-            "HEADLAMP_OIDC_SECRET",
             "QUI_PASSWORD",
             "GRAFANA_OIDC_SECRET",
             "SEMAPHORE_DB_PASSWORD",
@@ -1347,13 +1346,6 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
-            "headlamp-oidc-secret",
-            "mgmt",
-            SECRETS_DIR / "headlamp-oidc-sealed-secret.yaml",
-            {"HEADLAMP_OIDC_SECRET": env["HEADLAMP_OIDC_SECRET"]},
-            None,
-        ),
-        (
             "grafana-admin-secret",
             "monitoring",
             SECRETS_DIR / "grafana-admin-sealed-secret.yaml",
@@ -1411,9 +1403,10 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
                             "redirect_url": f"https://ansible.{env['DOMAIN_NAME']}/api/auth/oidc/authelia/redirect",
                             "client_id": "semaphore",
                             "client_secret": env["SEMAPHORE_OIDC_SECRET"],
+                            "scopes": ["openid", "profile", "email", "groups"],
                             "username_claim": "preferred_username",
                             "name_claim": "name",
-                            "email_claim": "email",
+                            "email_claim": f"email | {{{{ .preferred_username }}}}@{env['DOMAIN_NAME']}",
                         }
                     }
                 )
