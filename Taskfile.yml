@@ -132,6 +132,7 @@ tasks:
       - task: deploy-argocd
       - task: wait-for-argocd-sync
       - task: sync-cloudflare
+      - task: repair-litmus-admin
       - task: verify-endpoints
       - task: verify-browser-auth
 
@@ -143,6 +144,7 @@ tasks:
       - task: deploy-argocd
       - task: wait-for-argocd-sync
       - task: sync-cloudflare
+      - task: repair-litmus-admin
       - task: verify-endpoints
       - task: verify-browser-auth
 
@@ -161,6 +163,7 @@ tasks:
     desc: Verify cluster health, then enforce both HTTP-level and browser-level public URL checks.
     cmds:
       - task: verify-cluster
+      - task: repair-litmus-admin
       - task: verify-endpoints
       - task: verify-browser-auth
 
@@ -211,6 +214,11 @@ tasks:
     desc: Check the public HTTP endpoints exposed through Cloudflare and Traefik, reporting full versus partial success.
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" verify-web --domain "{{.DOMAIN_NAME_VALUE}}"'
+
+  repair-litmus-admin:
+    desc: Reconcile the Litmus admin account from the repo-managed secret when the persisted MongoDB state drifted.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-litmus-admin --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   verify-browser-auth:
     desc: Run browser-level auth verification for the official public UI surface using the repo-local Playwright verifier.

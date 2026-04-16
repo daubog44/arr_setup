@@ -18,6 +18,7 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from contextlib import contextmanager
@@ -2341,6 +2342,182 @@ def verify_cluster(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
             print()
 
 
+def decode_secret_data(secret: dict[str, object]) -> dict[str, str]:
+    data = secret.get("data")
+    if not isinstance(data, dict):
+        return {}
+    decoded: dict[str, str] = {}
+    for key, value in data.items():
+        if not isinstance(value, str):
+            continue
+        decoded[key] = base64.b64decode(value).decode("utf-8")
+    return decoded
+
+
+def wait_for_local_port(port: int, timeout_seconds: int = 20) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return
+        except OSError:
+            time.sleep(0.5)
+    raise HaaCError(f"Timed out waiting for local port {port} to accept connections")
+
+
+@contextmanager
+def kubectl_port_forward(
+    kubectl: str,
+    kubeconfig: Path,
+    namespace: str,
+    resource: str,
+    remote_port: int,
+) -> int:
+    runtime_dir = TMP_DIR / "port-forward"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        local_port = listener.getsockname()[1]
+    log_path = runtime_dir / f"{namespace}-{resource.replace('/', '-')}-{local_port}.log"
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        process = subprocess.Popen(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(kubeconfig),
+                "port-forward",
+                "-n",
+                namespace,
+                resource,
+                f"{local_port}:{remote_port}",
+            ],
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            wait_for_local_port(local_port)
+            yield local_port
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+
+
+def litmus_login_probe(port: int, username: str, password: str) -> tuple[int, str]:
+    payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/login",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8")
+
+
+def reconcile_litmus_admin(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
+    env = merged_env()
+    username = env.get("LITMUS_ADMIN_USERNAME", "admin")
+    password = env.get("LITMUS_ADMIN_PASSWORD") or env.get("AUTHELIA_ADMIN_PASSWORD")
+    if not password:
+        print("[skip] Litmus admin reconciliation skipped: no LITMUS_ADMIN_PASSWORD or AUTHELIA_ADMIN_PASSWORD configured")
+        return
+
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        if run([kubectl, "--kubeconfig", str(session_kubeconfig), "get", "deploy", "litmus-auth-server", "-n", "chaos"], check=False).returncode != 0:
+            print("[skip] Litmus admin reconciliation skipped: litmus-auth-server deployment is not present")
+            return
+
+        service = kubectl_json(
+            kubectl,
+            session_kubeconfig,
+            ["get", "svc", "litmus-auth-server-service", "-n", "chaos", "-o", "json"],
+            context="Unable to read Litmus auth service",
+        )
+        ports = ((service.get("spec") or {}).get("ports") or [])
+        auth_port = None
+        for port_spec in ports:
+            if not isinstance(port_spec, dict):
+                continue
+            if port_spec.get("name") == "auth-server":
+                auth_port = int(port_spec["port"])
+                break
+        if auth_port is None and ports:
+            first_port = ports[0]
+            if isinstance(first_port, dict) and first_port.get("port") is not None:
+                auth_port = int(first_port["port"])
+        if auth_port is None:
+            raise HaaCError("Unable to determine Litmus auth service port")
+
+        with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
+            status, _ = litmus_login_probe(port, username, password)
+        if status == 200:
+            print("[ok] Litmus admin credentials already match the repo-managed secret")
+            return
+        if status != 401:
+            raise HaaCError(f"Unexpected Litmus login probe status before repair: {status}")
+
+        mongodb_secret = kubectl_json(
+            kubectl,
+            session_kubeconfig,
+            ["get", "secret", "litmus-mongodb", "-n", "chaos", "-o", "json"],
+            context="Unable to read Litmus MongoDB secret",
+        )
+        mongodb_data = decode_secret_data(mongodb_secret)
+        mongodb_root_password = mongodb_data.get("mongodb-root-password")
+        if not mongodb_root_password:
+            raise HaaCError("Litmus MongoDB root password is missing from secret litmus-mongodb")
+        mongo_uri = (
+            "mongodb://root:"
+            f"{urllib.parse.quote(mongodb_root_password, safe='')}"
+            "@127.0.0.1:27017/admin?authSource=admin"
+        )
+        delete_script = f'db.getSiblingDB("auth").users.deleteOne({{username:{json.dumps(username)}}})'
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "exec",
+                "-n",
+                "chaos",
+                "statefulset/litmus-mongodb",
+                "--",
+                "mongosh",
+                "--quiet",
+                mongo_uri,
+                "--eval",
+                delete_script,
+            ]
+        )
+        run([kubectl, "--kubeconfig", str(session_kubeconfig), "rollout", "restart", "deployment/litmus-auth-server", "-n", "chaos"])
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "rollout",
+                "status",
+                "deployment/litmus-auth-server",
+                "-n",
+                "chaos",
+                "--timeout=180s",
+            ]
+        )
+        with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
+            status, _ = litmus_login_probe(port, username, password)
+        if status != 200:
+            raise HaaCError(f"Litmus admin credentials still failed after repair: login probe returned {status}")
+        print("[ok] Litmus admin credentials reconciled from the repo-managed secret")
+
+
 def parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
@@ -3525,6 +3702,10 @@ def cmd_verify_cluster(args: argparse.Namespace) -> None:
     verify_cluster(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
+def cmd_reconcile_litmus_admin(args: argparse.Namespace) -> None:
+    reconcile_litmus_admin(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
+
+
 def cmd_verify_web(args: argparse.Namespace) -> None:
     verify_web(args.domain)
 
@@ -3697,6 +3878,13 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--kubeconfig", required=True)
     command.add_argument("--kubectl", default="kubectl")
     command.set_defaults(func=cmd_verify_cluster)
+
+    command = subparsers.add_parser("reconcile-litmus-admin")
+    command.add_argument("--master-ip", required=True)
+    command.add_argument("--proxmox-host", required=True)
+    command.add_argument("--kubeconfig", required=True)
+    command.add_argument("--kubectl", default="kubectl")
+    command.set_defaults(func=cmd_reconcile_litmus_admin)
 
     command = subparsers.add_parser("verify-web")
     command.add_argument("--domain", required=True)
