@@ -11,7 +11,11 @@
       "icon" (default "globe.png" $conf.homepage_icon)
       "href" $href
       "description" (default "" $conf.homepage_description)
+      "siteMonitor" (default (printf "http://%s.%s.svc.cluster.local:%v/" $conf.service $conf.namespace $conf.port) $conf.homepage_site_monitor)
 }}
+{{- if $conf.homepage_widget }}
+{{- $_ := set $entry "widget" $conf.homepage_widget }}
+{{- end }}
 {{- $existing := get $groups $group | default (list) }}
 {{- $existing = append $existing $entry }}
 {{- range $alias := ($conf.homepage_aliases | default (list)) }}
@@ -63,6 +67,13 @@ layout:
         icon: {{ $entry.icon | quote }}
         href: {{ $entry.href | quote }}
         description: {{ $entry.description | quote }}
+{{- if $entry.siteMonitor }}
+        siteMonitor: {{ $entry.siteMonitor | quote }}
+{{- end }}
+{{- if $entry.widget }}
+        widget:
+{{ toYaml $entry.widget | indent 10 }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

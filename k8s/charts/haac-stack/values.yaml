@@ -159,7 +159,7 @@ ingresses:
     auth_strategy: edge_forward_auth
     homepage_group: Management
     homepage_name: Homepage
-    homepage_icon: homepage.png
+    homepage_icon: mdi-view-dashboard-outline
     homepage_description: Homelab Dashboard
   headlamp:
     enabled: true
@@ -170,7 +170,7 @@ ingresses:
     auth_strategy: edge_forward_auth
     homepage_group: Management
     homepage_name: Headlamp
-    homepage_icon: headlamp.png
+    homepage_icon: mdi-lighthouse-on
     homepage_description: K8s Dashboard
   ntfy:
     enabled: true
@@ -260,6 +260,18 @@ ingresses:
     homepage_name: qBittorrent
     homepage_icon: qbittorrent.png
     homepage_description: Torrent Client
+    homepage_widget:
+      type: qbittorrent
+      url: http://qbittorrent.media.svc.cluster.local:8080
+      username: "{{HOMEPAGE_VAR_QBITTORRENT_USERNAME}}"
+      password: "{{HOMEPAGE_VAR_QBITTORRENT_PASSWORD}}"
+      enableLeechProgress: true
+      enableLeechSize: true
+      fields:
+        - download
+        - upload
+        - leech
+        - seed
   argocd:
     enabled: true
     subdomain: argocd
@@ -269,7 +281,7 @@ ingresses:
     auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: ArgoCD
-    homepage_icon: argocd.png
+    homepage_icon: si-argo-#ef7b4d
     homepage_description: GitOps CI/CD
   grafana:
     enabled: true
@@ -282,6 +294,16 @@ ingresses:
     homepage_name: Grafana
     homepage_icon: grafana.png
     homepage_description: Observability Metrics
+    homepage_widget:
+      type: grafana
+      version: 2
+      url: http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local
+      username: "{{HOMEPAGE_VAR_GRAFANA_USERNAME}}"
+      password: "{{HOMEPAGE_VAR_GRAFANA_PASSWORD}}"
+      fields:
+        - dashboards
+        - datasources
+        - alertstriggered
   longhorn:
     enabled: true
     subdomain: longhorn
@@ -302,7 +324,7 @@ ingresses:
     auth_strategy: app_native
     homepage_group: Chaos
     homepage_name: Litmus
-    homepage_icon: litmuschaos.png
+    homepage_icon: mdi-flask-outline
     homepage_description: Chaos Center
   falco:
     enabled: true
@@ -313,14 +335,14 @@ ingresses:
     auth_strategy: edge_forward_auth
     homepage_group: Security
     homepage_name: Falco
-    homepage_icon: falco.png
+    homepage_icon: mdi-shield-search-outline
     homepage_description: Runtime Security
 
 homepage:
   bookmarks:
     Infrastructure:
       - name: Proxmox
-        href: "https://100.94.77.28:8006"
+        href: "https://192.168.0.200:8006"
         icon: proxmox.png
       - name: GitHub
         href: "https://github.com"

@@ -217,6 +217,7 @@ const routeChecks = {
           !currentUrl.pathname.startsWith("/login") &&
           (body.includes("Dashboards") || body.includes("Explore") || body.includes("Connections") || body.includes("Administration"))
         ) {
+          await verifyGrafanaObservability(currentPage);
           return;
         }
       }
@@ -294,6 +295,87 @@ async function ensureHost(page, expectedHost, env) {
 
 async function screenshot(page, name) {
   await page.screenshot({ path: path.join(captureDir, `${name}.png`), fullPage: true });
+}
+
+async function fetchJson(page, relativePath) {
+  const response = await page.evaluate(async (targetPath) => {
+    const result = await fetch(targetPath, { credentials: "same-origin" });
+    return {
+      status: result.status,
+      text: await result.text(),
+    };
+  }, relativePath);
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Request to ${relativePath} failed with status ${response.status}: ${response.text}`);
+  }
+  try {
+    return JSON.parse(response.text);
+  } catch {
+    throw new Error(`Request to ${relativePath} did not return JSON: ${response.text}`);
+  }
+}
+
+async function resolvePrometheusDatasource(page) {
+  const datasources = await fetchJson(page, "/api/datasources");
+  if (!Array.isArray(datasources)) {
+    throw new Error(`Grafana datasources endpoint returned an unexpected payload: ${JSON.stringify(datasources)}`);
+  }
+  const prometheusDatasources = datasources.filter(item => item?.type === "prometheus");
+  if (!prometheusDatasources.length) {
+    throw new Error(`Grafana has no Prometheus datasource configured: ${JSON.stringify(datasources)}`);
+  }
+  return prometheusDatasources.find(item => item?.isDefault) || prometheusDatasources[0];
+}
+
+function prometheusScalar(result) {
+  const scalar = result?.data?.result?.[0]?.value?.[1];
+  const numeric = Number(scalar);
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`Prometheus query did not return a scalar value: ${JSON.stringify(result)}`);
+  }
+  return numeric;
+}
+
+async function verifyGrafanaObservability(page) {
+  const dataSource = await resolvePrometheusDatasource(page);
+  const datasourceUid = dataSource.uid;
+  if (!datasourceUid) {
+    throw new Error(`Grafana Prometheus datasource is missing a UID: ${JSON.stringify(dataSource)}`);
+  }
+  const dashboardResults = await fetchJson(page, "/api/search?query=Kubernetes%20API%20server");
+  const dashboardTitlePattern = new RegExp("Kubernetes\\s*/\\s*API server", "i");
+  const dashboard = dashboardResults.find(
+    item => item.type === "dash-db" && dashboardTitlePattern.test(item.title || ""),
+  );
+  if (!dashboard) {
+    throw new Error(`Grafana could not find the official Kubernetes / API server dashboard: ${JSON.stringify(dashboardResults)}`);
+  }
+
+  const clusterCount = await fetchJson(
+    page,
+    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query?query=${encodeURIComponent(
+      'count(count by (cluster) (up{job="apiserver",cluster!=""}))',
+    )}`,
+  );
+  if (prometheusScalar(clusterCount) < 1) {
+    throw new Error(`Grafana Prometheus datasource resolved no cluster selector values for job="apiserver": ${JSON.stringify(clusterCount)}`);
+  }
+
+  const instanceCount = await fetchJson(
+    page,
+    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query?query=${encodeURIComponent(
+      'count(count by (instance) (up{job="apiserver",cluster!=""}))',
+    )}`,
+  );
+  if (prometheusScalar(instanceCount) < 1) {
+    throw new Error(`Grafana Prometheus datasource resolved no instance selector values for job="apiserver": ${JSON.stringify(instanceCount)}`);
+  }
+
+  await page.goto(`https://${new URL(page.url()).host}${dashboard.url}`, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+  await page.waitForSelector('text=/Kubernetes\\s*\\/\\s*API server/i', { timeout: 30000 });
 }
 
 async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedText = null, unexpectedText = null) {

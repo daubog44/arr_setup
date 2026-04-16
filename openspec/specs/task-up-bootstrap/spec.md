@@ -59,6 +59,11 @@ The system MUST verify public URLs only after the prerequisites for exposure are
 - **WHEN** one or more public endpoints are not reachable
 - **THEN** the bootstrap output MUST identify which endpoints failed and preserve the status of the endpoints that passed
 
+#### Scenario: Final public URL verification includes Grafana usability
+
+- **WHEN** `task up` reaches the final official URL verification phase
+- **THEN** Grafana MUST pass both browser-auth verification and the repo-managed observability usability gate for the shipped official dashboards
+
 ### Requirement: Browser-level endpoint verification
 
 The system MUST support browser-level verification of the final public URLs in addition to HTTP-level reachability checks when the operator workflow is being validated through the autonomous loop.

@@ -1,0 +1,13 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: semaphore-bootstrap-script
+  namespace: mgmt
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+data:
+  semaphore-bootstrap.sh: |
+{{ .Files.Get "files/post-install/semaphore-bootstrap.sh" | indent 4 }}
+  semaphore-maintenance-catalog.sh: |
+{{ .Files.Get "files/post-install/semaphore-maintenance-catalog.sh" | indent 4 }}

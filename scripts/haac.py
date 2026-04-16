@@ -54,6 +54,7 @@ VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
 LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
+HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 GITOPS_RENDERED_OUTPUTS = (
@@ -1450,12 +1451,24 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
+            "homepage-widgets-secret",
+            "mgmt",
+            HOMEPAGE_WIDGETS_SECRET_OUTPUT,
+            {
+                "HOMEPAGE_VAR_GRAFANA_USERNAME": "admin",
+                "HOMEPAGE_VAR_GRAFANA_PASSWORD": env.get("GRAFANA_ADMIN_PASSWORD", env["QUI_PASSWORD"]),
+                "HOMEPAGE_VAR_QBITTORRENT_USERNAME": "admin",
+                "HOMEPAGE_VAR_QBITTORRENT_PASSWORD": env["QUI_PASSWORD"],
+            },
+            None,
+        ),
+        (
             "grafana-admin-secret",
             "monitoring",
             SECRETS_DIR / "grafana-admin-sealed-secret.yaml",
             {
                 "admin-user": "admin",
-                "admin-password": env["QUI_PASSWORD"],
+                "admin-password": env.get("GRAFANA_ADMIN_PASSWORD", env["QUI_PASSWORD"]),
             },
             None,
         ),
