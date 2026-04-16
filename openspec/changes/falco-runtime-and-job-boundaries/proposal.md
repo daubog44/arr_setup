@@ -4,7 +4,7 @@ Falco is currently published as a healthy UI while the runtime sensor path is st
 
 ## What Changes
 
-- Switch the Falco runtime profile from the failing `modern_ebpf` path to the compatible `ebpf` path for this environment.
+- Keep the Falco runtime profile on `modern_ebpf`, but add the host and LXC prerequisites that make it work on the declared unprivileged LXC runtime workers.
 - Keep Falco UI protected through shared edge auth, but require source-of-truth runtime node selection when Falco is enabled.
 - Fail closed if Falco is enabled without any declared runtime-capable worker nodes.
 - Make the ephemeral WSL SSH runtime idempotent so repeated `task up` / `verify-cluster` runs do not fail on stale copied key material.
@@ -16,7 +16,7 @@ Falco is currently published as a healthy UI while the runtime sensor path is st
 - `maintenance-job-boundaries`: defines which recurring work belongs in Kubernetes CronJobs and which belongs in Semaphore-managed maintenance schedules.
 
 ### Modified Capabilities
-- `falco-lxc-readiness`: change Falco from "UI only unless unsupported" to "runtime supported on declared compatible unprivileged LXC workers using the compatible probe path".
+- `falco-lxc-readiness`: change Falco from "UI only unless unsupported" to "runtime supported on declared compatible unprivileged LXC workers using the compatible `modern_ebpf` path with explicit host prerequisites".
 - `operator-runtime-hygiene`: tighten the WSL runtime requirement so ephemeral SSH artifacts are recreated idempotently on rerun instead of failing on stale copies.
 
 ## Impact

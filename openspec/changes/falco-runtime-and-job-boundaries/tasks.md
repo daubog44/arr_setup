@@ -7,7 +7,7 @@
 
 - [ ] 2.1 Make the WSL runtime SSH material idempotent on rerun in `scripts/haac.py`
 - [ ] 2.2 Add source-of-truth validation for Falco runtime-capable worker selection when Falco is enabled
-- [ ] 2.3 Switch the Falco GitOps template to the compatible `ebpf` driver path and keep runtime scheduling bound to declared worker labels
+- [ ] 2.3 Keep the Falco GitOps template on the compatible `modern_ebpf` driver path and add the required host/LXC prerequisites while keeping runtime scheduling bound to declared worker labels
 
 ## 3. Validation
 

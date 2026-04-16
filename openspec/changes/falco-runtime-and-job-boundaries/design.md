@@ -1,6 +1,6 @@
 ## Context
 
-The live cluster proved that Falco is not generically impossible on the unprivileged LXC workers. The actual failure is specific to the `modern_ebpf` path: Falco starts, selects the syscall source, then crashes because the ring-buffer map type is not permitted in this environment. The classic `ebpf` probe path is the compatible fallback documented by the Falco chart.
+The live cluster proved that Falco is not generically impossible on the unprivileged LXC workers. The initial diagnosis was incomplete: the first `modern_ebpf` failure happened before the workers exposed the required host kernel metadata. After adding the kernel metadata mounts, the legacy `ebpf` fallback turned out to be the wrong model because it forces in-guest probe compilation against a host toolchain and glibc version the Debian 12 guest does not have. The compatible upstream path for this environment is `modern_ebpf` with explicit host and LXC prerequisites.
 
 The repo already has a source-of-truth mechanism for runtime node labels through `WORKER_NODES_JSON -> node_labels -> apply_node_labels.yml`, but the current docs still describe the result as unsupported by default. Separately, the Windows operator path copies SSH material into `.tmp/wsl-runtime`, yet the copy step is not idempotent and can fail on rerun.
 
@@ -26,12 +26,12 @@ That split is correct, but it is not stated as a stable contract today.
 
 ## Decisions
 
-### Use the chart's classic `ebpf` driver for this environment
+### Use the chart's `modern_ebpf` driver with explicit host prerequisites
 
-The live failure is specifically in `modern_ebpf`, not the existence of any syscall probe at all. The official Falco chart already supports `driver.kind: ebpf`, which is the compatible fallback for kernels and runtimes where the modern ring-buffer path is unavailable. This keeps Falco on a supported upstream path instead of introducing a local fork.
+The official Falco chart already supports `driver.kind: modern_ebpf`, which avoids the in-guest probe compilation path entirely. In this environment, once the runtime-capable workers expose `/usr/lib/modules`, `/usr/src`, and `/sys/kernel/*`, the `modern_ebpf` path is the correct supported upstream path because it no longer depends on the Debian 12 guest having the same glibc and compiler toolchain as the Proxmox host kernel build.
 
 Alternative considered:
-- Keep `modern_ebpf` and treat runtime detection as unsupported. Rejected because the user requirement is that Falco runtime must function, and the live evidence points to a compatible supported fallback.
+- Keep `modern_ebpf` without adding host prerequisites. Rejected because the live evidence now shows the kernel metadata exposure is required for the Falco runtime to initialize correctly on this LXC model.
 
 ### Keep runtime-node selection explicit and source-of-truth driven
 
@@ -54,7 +54,7 @@ The repo-local `.tmp/wsl-runtime` path is the right model, but file materializat
 ## Risks / Trade-offs
 
 - `[Falco runtime still node-specific]` → Keep explicit runtime-node declaration and fail closed when none are declared.
-- `[Classic eBPF is less modern than modern_ebpf]` → Prefer the compatible upstream-supported path over a crash-looping path that provides no runtime coverage.
+- `[modern_ebpf still depends on node prerequisites]` → Keep explicit runtime-node declaration and mount the kernel metadata only on those declared workers.
 - `[More preflight validation for Falco may block bootstrap]` → Fail early with a clear message instead of silently converging to a UI-only false positive.
 - `[WSL cleanup races]` → Remove/copy files atomically enough for the current single-operator workflow and keep runtime cleanup best-effort.
 
@@ -62,11 +62,11 @@ The repo-local `.tmp/wsl-runtime` path is the right model, but file materializat
 
 1. Update the OpenSpec delta specs for Falco readiness, operator runtime hygiene, and the new maintenance-job boundary.
 2. Patch `scripts/haac.py` and `scripts/haaclib/gitops.py` to validate and materialize the runtime inputs safely.
-3. Switch the Falco application template to `driver.kind: ebpf`.
+3. Switch the Falco application template back to `driver.kind: modern_ebpf` and add the required host kernel metadata mounts.
 4. Re-render the Falco application and values outputs.
 5. Validate locally with `helm template`, `kubectl kustomize`, and bootstrap dry-run.
-6. Reconcile the live cluster and verify that the Falco daemonset starts on the declared worker and no longer crashes in the old `modern_ebpf` path.
+6. Reconcile the live cluster and verify that the Falco daemonset starts on the declared worker without falling back to legacy in-guest probe compilation.
 
 ## Open Questions
 
-- None for this change. The live evidence is sufficient to prefer `ebpf` now.
+- None for this change. The live evidence is sufficient to prefer `modern_ebpf` once the host prerequisites are in place.

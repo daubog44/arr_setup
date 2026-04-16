@@ -9,10 +9,10 @@ The platform GitOps configuration MUST avoid deploying a permanently crash-loopi
 - **WHEN** the platform GitOps manifests are rendered
 - **THEN** the rendered Falco application manifest MUST become a clean no-op instead of an ArgoCD application that will crash-loop in-cluster
 
-#### Scenario: Enabled Falco uses the compatible `ebpf` driver path
+#### Scenario: Enabled Falco uses the compatible `modern_ebpf` driver path
 - **WHEN** Falco is explicitly enabled for this environment
-- **THEN** the enabled manifest MUST avoid the failing `modern_ebpf` ring-buffer path observed on the live LXC nodes
-- **AND** it MUST render the upstream-supported `ebpf` driver path instead
+- **THEN** the enabled manifest MUST render the upstream-supported `modern_ebpf` driver path
+- **AND** the declared runtime-capable workers MUST expose host `/usr/lib/modules`, `/usr/src`, and `/sys/kernel/*` metadata into the guest before the Falco daemonset is reconciled
 
 #### Scenario: Enabled Falco requires at least one repo-managed runtime node
 - **WHEN** Falco is explicitly enabled through operator inputs

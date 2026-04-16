@@ -686,14 +686,13 @@ def wsl_home_dir(env: dict[str, str]) -> str:
     return run_stdout(wsl_command("bash", "-lc", "printf %s \"$HOME\"", distro=wsl_distro(env)))
 
 
-def wsl_runtime_dir(env: dict[str, str]) -> Path:
-    return ensure_tmp_dir("wsl-runtime") / wsl_distro(env)
+def wsl_runtime_dir(env: dict[str, str]) -> str:
+    runtime_root = env.get("HAAC_WSL_RUNTIME_ROOT", "/tmp/haac-runtime").strip() or "/tmp/haac-runtime"
+    return f"{runtime_root.rstrip('/')}/{wsl_distro(env)}"
 
 
 def ensure_wsl_runtime_dir(env: dict[str, str]) -> str:
-    runtime_dir = wsl_runtime_dir(env)
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_dir_wsl = to_posix_wsl_path(runtime_dir, env)
+    runtime_dir_wsl = wsl_runtime_dir(env)
     run(
         wsl_command(
             "bash",
@@ -750,14 +749,12 @@ def sync_wsl_known_hosts_back(env: dict[str, str], known_hosts_wsl: str) -> None
 
 
 def cleanup_wsl_runtime(env: dict[str, str]) -> None:
-    runtime_dir = wsl_runtime_dir(env)
-    if runtime_dir.exists():
-        runtime_dir_wsl = to_posix_wsl_path(runtime_dir, env)
+    runtime_dir_wsl = wsl_runtime_dir(env)
+    if runtime_dir_wsl:
         run(
             wsl_command("bash", "-lc", f"rm -rf {shlex.quote(runtime_dir_wsl)}", distro=wsl_distro(env)),
             check=False,
         )
-        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env: dict[str, str]) -> None:
@@ -785,6 +782,7 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
             "SMB_PASSWORD",
             "STORAGE_UID",
             "STORAGE_GID",
+            "HAAC_ENABLE_FALCO",
             "LXC_K3S_COMPAT_MODE",
             "LXC_ENABLE_GPU_PASSTHROUGH",
             "LXC_ENABLE_TUN",

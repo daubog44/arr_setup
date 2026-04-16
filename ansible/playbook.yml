@@ -204,7 +204,16 @@
 - name: Host Hardware Discovery & Driver Setup
   hosts: proxmox_host
   gather_facts: true
+  vars:
+    haac_enable_falco: "{{ (lookup('env', 'HAAC_ENABLE_FALCO') | default('', true) | lower) in ['1', 'true', 'yes', 'on'] }}"
   tasks:
+    - name: Ensure Proxmox kernel headers are installed when Falco runtime is enabled
+      ansible.builtin.apt:
+        name: "proxmox-headers-{{ ansible_facts['kernel'] }}"
+        state: present
+        update_cache: true
+      when: haac_enable_falco
+
     - name: Detect NVIDIA GPU
       ansible.builtin.shell: lspci | grep -i "NVIDIA" | grep -i "VGA" || true
       register: nvidia_check
@@ -380,6 +389,7 @@
     operator_bootstrap_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_ed25519.pub') | trim }}"
     semaphore_maintenance_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_semaphore_ed25519.pub') | trim }}"
     repo_deploy_pubkey: "{{ lookup('file', playbook_dir ~ '/../.ssh/haac_repo_deploy_ed25519.pub') | trim }}"
+    haac_enable_falco: "{{ (lookup('env', 'HAAC_ENABLE_FALCO') | default('', true) | lower) in ['1', 'true', 'yes', 'on'] }}"
   tasks:
     - name: Get Video and Render GIDs
       ansible.builtin.shell: |
@@ -505,6 +515,13 @@
                   'lxc.mount.entry: /sys/kernel/debug sys/kernel/debug none bind,optional 0 0',
                   'lxc.mount.entry: /sys/kernel/btf sys/kernel/btf none bind,optional 0 0'
                 ] if (lxc_enable_ebpf_mounts | bool) else [])
+              + ([
+                  'lxc.mount.entry: /usr/lib/modules usr/lib/modules none bind,optional 0 0',
+                  'lxc.mount.entry: /usr/src usr/src none bind,optional 0 0'
+                ] if (
+                  haac_enable_falco
+                  and ((node_labels | default({})).get('haac.io/falco-runtime', '') | string | lower) in ['1', 'true', 'yes', 'on']
+                ) else [])
               + ([
                   'lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file'
                 ] if (lxc_enable_tun | bool) else [])

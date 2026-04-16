@@ -189,12 +189,14 @@ This avoids forcing infra maintenance into Kubernetes jobs that would need the s
 
 ## Falco On Unprivileged LXC
 
-Falco runtime is supported in this repo on declared compatible unprivileged LXC workers, but not through the `modern_ebpf` driver.
+Falco runtime is supported in this repo on declared compatible unprivileged LXC workers through `modern_ebpf`, not through the legacy compile-in-guest `ebpf` path.
 
-- the live failure mode was specific to `modern_ebpf` ring-buffer support
-- the repo now uses the chart's classic `ebpf` driver path for this environment
+- the live failure mode was not `modern_ebpf` itself but missing host kernel metadata inside the guest
+- the repo uses the chart's `modern_ebpf` driver path for this environment
 - Falco runtime scheduling remains explicit and source-of-truth driven through `WORKER_NODES_JSON` worker labels
 - when `HAAC_ENABLE_FALCO=true`, at least one worker must declare `haac.io/falco-runtime=true`
+- the declared runtime worker receives a dedicated LXC sensor path by bind-mounting host `/usr/lib/modules` and `/usr/src` into the container in addition to `/sys/kernel/debug` and `/sys/kernel/btf`
+- the Proxmox host installs `proxmox-headers-$(uname -r)` before those runtime workers are restarted, so the worker exposes the kernel metadata that `modern_ebpf` needs without relying on legacy in-guest probe compilation
 
 If global Task is missing, use:
 
