@@ -2,7 +2,6 @@
 
 ## Purpose
 Keep the Falco public surface healthy while delivering supported runtime coverage in this homelab environment.
-
 ## Requirements
 ### Requirement: Falco runtime is delivered through a supported host-side sensor path
 The platform GitOps configuration MUST avoid deploying an unsupported Falco runtime DaemonSet onto the repository's unprivileged Proxmox LXC-based K3s nodes, while still keeping the Falco UI and alert pipeline healthy in-cluster.
@@ -23,3 +22,9 @@ The platform GitOps configuration MUST avoid deploying an unsupported Falco runt
 - **WHEN** Falco is explicitly enabled through operator inputs
 - **THEN** the Proxmox host configuration MUST install and enable a Falco sensor using the supported `modern_ebpf` host path
 - **AND** that sensor MUST forward events to the cluster-side ingest endpoint through `http_output`
+
+#### Scenario: Falco enablement no longer depends on worker runtime labels
+- **WHEN** Falco is enabled through operator inputs
+- **THEN** the repo MUST NOT require `WORKER_NODES_JSON` entries with `haac.io/falco-runtime=true`
+- **AND** bootstrap validation MUST derive Falco readiness from the host-side sensor path instead of an undocumented manual cluster label
+
