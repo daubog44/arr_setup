@@ -52,7 +52,7 @@ VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "valu
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
-LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-sealed-secret.yaml"
+LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 GITOPS_RENDERED_OUTPUTS = (
@@ -1466,7 +1466,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
-            "litmus-admin-secret",
+            "litmus-admin-credentials",
             "chaos",
             LITMUS_ADMIN_SECRET_OUTPUT,
             {

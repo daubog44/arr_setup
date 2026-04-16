@@ -14,20 +14,19 @@ spec:
     targetRevision: "3.28.0"
     helm:
       values: |
-        existingSecret: litmus-admin-secret
-        adminConfig:
-          DB_SERVER: mongodb://litmus-mongodb.chaos.svc.cluster.local:27017/admin
-
+        existingSecret: litmus-admin-credentials
         portal:
           server:
             service:
               type: ClusterIP
-        
+
         # Deploy the chaos center and agent together for homelab simplicity
         adminMode: true
         mongodb:
-          architecture: standalone
+          architecture: replicaset
           replicaCount: 1
+          arbiter:
+            enabled: true
           persistence:
             storageClass: local-path
         

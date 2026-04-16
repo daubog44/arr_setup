@@ -23,6 +23,27 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+      initContainers:
+        - name: bootstrap-config
+          image: >-
+            {{ printf "%s:%s" .Values.global.images.homepage.repository .Values.global.images.homepage.tag }}
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - >-
+              set -eu;
+              mkdir -p /app/config/logs;
+              cp -f /bootstrap-config/*.yaml /app/config/;
+              if [ ! -f /app/config/kubernetes.yaml ]; then
+                cp /app/src/skeleton/kubernetes.yaml /app/config/kubernetes.yaml;
+              fi
+          volumeMounts:
+            - name: config-bootstrap
+              mountPath: /bootstrap-config
+              readOnly: true
+            - name: config-storage
+              mountPath: /app/config
       containers:
         - name: homepage
           image: >-
@@ -49,13 +70,10 @@ spec:
             - name: HOMEPAGE_ALLOWED_HOSTS
               value: "home.{{ .Values.global.domainName }}"
           volumeMounts:
-            - name: config-files
-              mountPath: /app/config
-              readOnly: true
             - name: config-storage
-              mountPath: /app/config/logs
+              mountPath: /app/config
       volumes:
-        - name: config-files
+        - name: config-bootstrap
           configMap:
             name: homepage-config
         - name: config-storage
