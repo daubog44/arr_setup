@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - argocd
   - applications
+  - chaos/litmus-admin-sealed-secret.yaml
   - falco-ingest-service.yaml
   - traefik/traefik-gateway-rbac.yaml
   - traefik/traefik-gatewayclass.yaml

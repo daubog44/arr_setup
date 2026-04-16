@@ -107,10 +107,37 @@ function loadIngressCatalog(content, domainName) {
 }
 
 const routeChecks = {
-  homepage: { expectedText: "ChaosTest" },
+  homepage: { expectedText: "Litmus", unexpectedText: "ChaosTest" },
   headlamp: { type: "headlamp" },
   ntfy: {},
-  litmus: {},
+  litmus: {
+    appNativeSelector: 'text=/Welcome to Litmus|Sign In|Username|Password/',
+    async login(currentPage, env) {
+      const username = currentPage.locator('input[name="username"], input[placeholder="Username"]').first();
+      const password = currentPage.locator('input[name="password"], input[placeholder="Password"]').first();
+      const submit = currentPage.locator('button:has-text("Sign In"), button[type="submit"]').first();
+      if (!(await username.count()) || !(await password.count()) || !(await submit.count())) {
+        return;
+      }
+      await username.fill(env.LITMUS_ADMIN_USERNAME || "admin");
+      await password.fill(env.LITMUS_ADMIN_PASSWORD || env.AUTHELIA_ADMIN_PASSWORD);
+      await submit.click();
+    },
+    async waitForSuccess(currentPage) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await currentPage.waitForTimeout(1000);
+        const body = String((await currentPage.textContent("body").catch(() => "")) || "");
+        const url = currentPage.url();
+        if (body.includes("invalid credentials") || body.includes("Invalid Credentials") || body.includes("Login failed")) {
+          throw new Error(`Litmus login failed: ${body}`);
+        }
+        if (!url.includes("/login") && /Chaos|Workflow|Probe|Targets|Project/i.test(body)) {
+          return;
+        }
+      }
+      throw new Error(`Litmus did not reach an authenticated landing page: ${currentPage.url()}`);
+    },
+  },
   falco: {},
   longhorn: {},
   jellyfin: { appNativeSelector: 'text=/Jellyfin|Sign In|Username|Password/' },
@@ -247,12 +274,18 @@ async function screenshot(page, name) {
   await page.screenshot({ path: path.join(captureDir, `${name}.png`), fullPage: true });
 }
 
-async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedText = null) {
+async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedText = null, unexpectedText = null) {
   const expectedHost = `${subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   await ensureHost(page, expectedHost, env);
   if (expectedText) {
     await page.waitForSelector(`text=${expectedText}`, { timeout: 30000 });
+  }
+  if (unexpectedText) {
+    const body = String((await page.textContent("body").catch(() => "")) || "");
+    if (body.includes(unexpectedText)) {
+      throw new Error(`${screenshotName} rendered unexpected text: ${unexpectedText}`);
+    }
   }
   await screenshot(page, screenshotName);
 }
@@ -322,6 +355,12 @@ async function verifyAppNative(page, env, endpoint, screenshotName, options = {}
   } else if (!body.trim()) {
     throw new Error(`App-native route ${expectedHost} rendered an empty body`);
   }
+  if (options.login) {
+    await options.login(page, env, endpoint);
+  }
+  if (options.waitForSuccess) {
+    await options.waitForSuccess(page, env, endpoint);
+  }
   await screenshot(page, screenshotName);
 }
 
@@ -330,6 +369,8 @@ async function run() {
   if (!env.AUTHELIA_ADMIN_PASSWORD) {
     throw new Error("AUTHELIA_ADMIN_PASSWORD is required in .env for browser auth verification");
   }
+  env.LITMUS_ADMIN_USERNAME = env.LITMUS_ADMIN_USERNAME || "admin";
+  env.LITMUS_ADMIN_PASSWORD = env.LITMUS_ADMIN_PASSWORD || env.AUTHELIA_ADMIN_PASSWORD;
   const ingressCatalog = loadIngressCatalog(loadCatalogContent(env), env.DOMAIN_NAME);
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext();
@@ -342,7 +383,14 @@ async function run() {
         await verifyHeadlamp(page, env);
         continue;
       }
-      await verifyEdgeRoute(page, env, endpoint.subdomain, endpoint.name, routeConfig.expectedText ?? null);
+      await verifyEdgeRoute(
+        page,
+        env,
+        endpoint.subdomain,
+        endpoint.name,
+        routeConfig.expectedText ?? null,
+        routeConfig.unexpectedText ?? null,
+      );
     }
     for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "native_oidc")) {
       const routeConfig = routeChecks[endpoint.name];

@@ -50,17 +50,8 @@ spec:
               value: "home.{{ .Values.global.domainName }}"
           volumeMounts:
             - name: config-files
-              mountPath: /app/config/settings.yaml
-              subPath: settings.yaml
-            - name: config-files
-              mountPath: /app/config/services.yaml
-              subPath: services.yaml
-            - name: config-files
-              mountPath: /app/config/widgets.yaml
-              subPath: widgets.yaml
-            - name: config-files
-              mountPath: /app/config/bookmarks.yaml
-              subPath: bookmarks.yaml
+              mountPath: /app/config
+              readOnly: true
             - name: config-storage
               mountPath: /app/config/logs
       volumes:

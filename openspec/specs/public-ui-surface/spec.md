@@ -42,10 +42,9 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 
 - **WHEN** the official public UI catalog is rendered
 - **THEN** `authelia` MUST be `public`
-- **AND** `homepage`, `ntfy`, `litmus`, `falco`, and `longhorn` MUST be `edge_forward_auth`
-- **AND** `headlamp` MUST be `edge_forward_auth`
+- **AND** `homepage`, `ntfy`, `falco`, `longhorn`, and `headlamp` MUST be `edge_forward_auth`
 - **AND** `semaphore`, `grafana`, and `argocd` MUST be `native_oidc`
-- **AND** `jellyfin`, `radarr`, `sonarr`, `prowlarr`, `autobrr`, and `qbittorrent` MUST be `app_native`
+- **AND** `jellyfin`, `radarr`, `sonarr`, `prowlarr`, `autobrr`, `qbittorrent`, and `litmus` MUST be `app_native`
 
 #### Scenario: Browser verification runs for a native-OIDC route
 
@@ -90,11 +89,18 @@ The operator-visible UI catalog MUST include Falco and Litmus when those UIs are
 - **AND** runtime sensor scheduling MUST remain explicit opt-in on compatible nodes instead of assuming every unprivileged LXC worker can host the probe
 - **AND** the compatible-node opt-in MUST be expressible from repo-managed operator inputs rather than as an undocumented manual cluster label
 
-#### Scenario: Litmus aliases stay visible on Homepage
+#### Scenario: Litmus stays visible as one canonical Homepage entry
 
 - **WHEN** Litmus is enabled in the official route catalog
 - **THEN** Homepage MUST include the primary `Litmus` link
-- **AND** Homepage MUST also include the `ChaosTest` alias derived from the same route catalog entry
+- **AND** Homepage MUST NOT render a duplicate `ChaosTest` alias for the same route
+
+#### Scenario: Litmus app-native login is repo-managed
+
+- **WHEN** Litmus is published as an official `app_native` route
+- **THEN** the chart MUST consume a repo-managed existing secret for `ADMIN_USERNAME` and `ADMIN_PASSWORD`
+- **AND** the browser verification flow MUST prove that those repo-managed credentials reach the Litmus application after the initial login form
+- **AND** the route MUST NOT remain behind the shared Authelia forward-auth middleware
 
 #### Scenario: Edge-auth UI uses shared auth
 
@@ -117,4 +123,3 @@ Endpoint verification MUST evaluate exactly the official published UI surface.
 - **THEN** the repo MUST prefer Playwright MCP when it is available in the client
 - **AND** the repo MUST provide a repo-local Playwright CLI fallback when Playwright MCP is unavailable
 - **AND** the verification contract MUST stay the same across both paths
-

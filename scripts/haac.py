@@ -52,6 +52,7 @@ VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "valu
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
+LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 GITOPS_RENDERED_OUTPUTS = (
@@ -154,6 +155,9 @@ def merged_env() -> dict[str, str]:
             "GRAFANA_OIDC_SECRET_SHA256",
             hashlib.sha256(merged["GRAFANA_OIDC_SECRET"].encode("utf-8")).hexdigest(),
         )
+    merged.setdefault("LITMUS_ADMIN_USERNAME", "admin")
+    if merged.get("AUTHELIA_ADMIN_PASSWORD"):
+        merged.setdefault("LITMUS_ADMIN_PASSWORD", merged["AUTHELIA_ADMIN_PASSWORD"])
     return merged
 
 
@@ -1462,6 +1466,16 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
+            "litmus-admin-secret",
+            "chaos",
+            LITMUS_ADMIN_SECRET_OUTPUT,
+            {
+                "ADMIN_USERNAME": env.get("LITMUS_ADMIN_USERNAME", "admin"),
+                "ADMIN_PASSWORD": env["LITMUS_ADMIN_PASSWORD"],
+            },
+            None,
+        ),
+        (
             "semaphore-db-secret",
             "mgmt",
             SECRETS_DIR / "semaphore-sealed-secret.yaml",
@@ -1546,6 +1560,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
 
         for name, namespace, output_path, literals, files in secrets:
             secret_yaml = create_secret_yaml(kubectl, name, namespace, literals=literals, files=files)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(seal_yaml(kubeseal, cert, secret_yaml), encoding="utf-8")
 
         for legacy_path in (
