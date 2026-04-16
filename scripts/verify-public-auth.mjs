@@ -265,8 +265,16 @@ async function maybeAutheliaLogin(page, env) {
     }
     if (await username.count()) {
       await username.waitFor({ state: "visible", timeout: 30000 });
-      await username.fill("admin");
+      const usernameEnabled = await username.isEnabled().catch(() => false);
+      if (usernameEnabled) {
+        const currentUsername = await username.inputValue().catch(() => "");
+        if (currentUsername !== "admin") {
+          await username.fill("admin");
+        }
+      }
+      await password.waitFor({ state: "visible", timeout: 30000 });
       await password.fill(env.AUTHELIA_ADMIN_PASSWORD);
+      await signIn.waitFor({ state: "visible", timeout: 30000 });
       await signIn.click();
       await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
       continue;
