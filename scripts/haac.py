@@ -2422,6 +2422,38 @@ def litmus_login_probe(port: int, username: str, password: str) -> tuple[int, st
         return exc.code, exc.read().decode("utf-8")
 
 
+def litmus_clear_initial_login(
+    kubectl: str,
+    kubeconfig: Path,
+    mongo_uri: str,
+    *,
+    username: str,
+) -> None:
+    update_script = (
+        'db.getSiblingDB("auth").users.updateOne('
+        f'{{username:{json.dumps(username)}}}, '
+        '{\\$set:{is_initial_login:false}}'
+        ')'
+    )
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "exec",
+            "-n",
+            "chaos",
+            "statefulset/litmus-mongodb",
+            "--",
+            "mongosh",
+            "--quiet",
+            mongo_uri,
+            "--eval",
+            update_script,
+        ]
+    )
+
+
 def reconcile_litmus_admin(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     username = env.get("LITMUS_ADMIN_USERNAME", "admin")
@@ -2456,14 +2488,6 @@ def reconcile_litmus_admin(master_ip: str, proxmox_host: str, kubeconfig: Path, 
         if auth_port is None:
             raise HaaCError("Unable to determine Litmus auth service port")
 
-        with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
-            status, _ = litmus_login_probe(port, username, password)
-        if status == 200:
-            print("[ok] Litmus admin credentials already match the repo-managed secret")
-            return
-        if status != 401:
-            raise HaaCError(f"Unexpected Litmus login probe status before repair: {status}")
-
         mongodb_secret = kubectl_json(
             kubectl,
             session_kubeconfig,
@@ -2479,43 +2503,54 @@ def reconcile_litmus_admin(master_ip: str, proxmox_host: str, kubeconfig: Path, 
             f"{urllib.parse.quote(mongodb_root_password, safe='')}"
             "@127.0.0.1:27017/admin?authSource=admin"
         )
-        delete_script = f'db.getSiblingDB("auth").users.deleteOne({{username:{json.dumps(username)}}})'
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(session_kubeconfig),
-                "exec",
-                "-n",
-                "chaos",
-                "statefulset/litmus-mongodb",
-                "--",
-                "mongosh",
-                "--quiet",
-                mongo_uri,
-                "--eval",
-                delete_script,
-            ]
-        )
-        run([kubectl, "--kubeconfig", str(session_kubeconfig), "rollout", "restart", "deployment/litmus-auth-server", "-n", "chaos"])
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(session_kubeconfig),
-                "rollout",
-                "status",
-                "deployment/litmus-auth-server",
-                "-n",
-                "chaos",
-                "--timeout=180s",
-            ]
-        )
+
         with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
             status, _ = litmus_login_probe(port, username, password)
-        if status != 200:
-            raise HaaCError(f"Litmus admin credentials still failed after repair: login probe returned {status}")
-        print("[ok] Litmus admin credentials reconciled from the repo-managed secret")
+        if status not in {200, 401}:
+            raise HaaCError(f"Unexpected Litmus login probe status before repair: {status}")
+        if status == 401:
+            delete_script = f'db.getSiblingDB("auth").users.deleteOne({{username:{json.dumps(username)}}})'
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "exec",
+                    "-n",
+                    "chaos",
+                    "statefulset/litmus-mongodb",
+                    "--",
+                    "mongosh",
+                    "--quiet",
+                    mongo_uri,
+                    "--eval",
+                    delete_script,
+                ]
+            )
+            run([kubectl, "--kubeconfig", str(session_kubeconfig), "rollout", "restart", "deployment/litmus-auth-server", "-n", "chaos"])
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "rollout",
+                    "status",
+                    "deployment/litmus-auth-server",
+                    "-n",
+                    "chaos",
+                    "--timeout=180s",
+                ]
+            )
+            with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
+                status, _ = litmus_login_probe(port, username, password)
+            if status != 200:
+                raise HaaCError(f"Litmus admin credentials still failed after repair: login probe returned {status}")
+            print("[ok] Litmus admin credentials reconciled from the repo-managed secret")
+        else:
+            print("[ok] Litmus admin credentials already match the repo-managed secret")
+
+        litmus_clear_initial_login(kubectl, session_kubeconfig, mongo_uri, username=username)
+        print("[ok] Litmus admin initial-login gate cleared")
 
 
 def parse_bool(value: str) -> bool:
