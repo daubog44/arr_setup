@@ -102,7 +102,7 @@ spec:
               # 2. Create maintenance SSH key from mounted secret
               KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"HaaC Maintenance SSH Key\",\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$(cat $MAINTENANCE_SSH_KEY_PATH | base64 | tr -d '\n')\"}}")
+                -d "{\"name\":\"HaaC Maintenance SSH Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$(cat $MAINTENANCE_SSH_KEY_PATH | base64 | tr -d '\n')\"}}")
               KEY_ID=$(echo "$KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created maintenance SSH key ID: $KEY_ID"
 
@@ -110,11 +110,12 @@ spec:
 {{- if or (hasPrefix "git@" .Values.global.gitops.repoUrl) (hasPrefix "ssh://" .Values.global.gitops.repoUrl) }}
               REPO_KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"HaaC Repo Deploy Key\",\"type\":\"ssh\",\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$(cat /etc/repo-ssh/repo_deploy_ed25519 | base64 | tr -d '\n')\"}}")
+                -d "{\"name\":\"HaaC Repo Deploy Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$(cat /etc/repo-ssh/repo_deploy_ed25519 | base64 | tr -d '\n')\"}}")
               REPO_KEY_ID=$(echo "$REPO_KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
               REPO_PAYLOAD="{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\",\"ssh_key_id\":$REPO_KEY_ID}"
 {{- else }}
-              REPO_PAYLOAD="{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\"}"
+              NONE_KEY_ID=$(curl -sf -b /tmp/cookies.txt "$BASE/api/project/$PROJECT_ID/keys" | tr '{' '\n' | grep '"name":"None"' | sed 's/.*"id":\([0-9]*\).*/\1/' | head -n 1)
+              REPO_PAYLOAD="{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\",\"ssh_key_id\":$NONE_KEY_ID}"
 {{- end }}
               REPO=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/repositories" \
                 -H "Content-Type: application/json" \
@@ -138,24 +139,24 @@ spec:
               echo "Created environment ID: $ENV_ID"
 
               # 6. Create task template: K3s Nodes Update
-              TPL_K3S=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/tasks" \
+              TPL_K3S=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/templates" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"Rolling OS Update - K3s Nodes\",\"project_id\":$PROJECT_ID,\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna i nodi K3s (serial: 1) ogni lunedi notte\"}")
+                -d "{\"name\":\"Rolling OS Update - K3s Nodes\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna i nodi K3s (serial: 1) ogni lunedi notte\"}")
               TPL_K3S_ID=$(echo "$TPL_K3S" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created K3s template ID: $TPL_K3S_ID"
 
               # 7. Create task template: Proxmox Hosts Update
-              TPL_PVE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/tasks" \
+              TPL_PVE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/templates" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"Rolling OS Update - Proxmox Hosts\",\"project_id\":$PROJECT_ID,\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna gli host Proxmox (serial: 1) ogni lunedi notte\"}")
+                -d "{\"name\":\"Rolling OS Update - Proxmox Hosts\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna gli host Proxmox (serial: 1) ogni lunedi notte\"}")
               TPL_PVE_ID=$(echo "$TPL_PVE" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created Proxmox template ID: $TPL_PVE_ID"
 
               # 7.5 Create task template: K3s Database Restore
               # It will run a local bash script generated dynamically via an inline playbook since Semaphore runs ansible natively
-              TPL_RESTORE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/tasks" \
+              TPL_RESTORE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/templates" \
                 -H "Content-Type: application/json" \
-                -d "{\"name\":\"⚠️ Restore K3s Database (from NAS)\",\"project_id\":$PROJECT_ID,\"playbook\":\"HaaC/ansible/restore-k3s-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Ripristina il db SQLite dal NAS sul master nodo. USARE CON CAUTELA. Parametro BACKUP_FILE facoltativo (es. BACKUP_FILE=k3s-state-2023.db)\"}")
+                -d "{\"name\":\"⚠️ Restore K3s Database (from NAS)\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/restore-k3s-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Ripristina il db SQLite dal NAS sul master nodo. USARE CON CAUTELA. Parametro BACKUP_FILE facoltativo (es. BACKUP_FILE=k3s-state-2023.db)\"}")
               TPL_RESTORE_ID=$(echo "$TPL_RESTORE" | sed 's/.*"id":\([0-9]*\).*/\1/')
               echo "Created Restore DB template ID: $TPL_RESTORE_ID"
 
