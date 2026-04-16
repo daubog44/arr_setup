@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 
 from haaclib import endpoints as endpointlib
 from haaclib import gitops as gitopslib
+from haaclib import gitstate as gitstatelib
 from haaclib import secrets as secretlib
 from haaclib.authelia import resolve_admin_password_hash
 from haaclib.redaction import redact_sensitive_text, secret_values_from_env
@@ -34,6 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
 K8S_DIR = ROOT / "k8s"
 TOOLS_DIR = ROOT / ".tools"
+TMP_DIR = ROOT / ".tmp"
 LEGACY_TOOLS_BIN_DIR = TOOLS_DIR / "bin"
 LEGACY_TOOLS_METADATA_PATH = TOOLS_DIR / "versions.json"
 SSH_DIR = ROOT / ".ssh"
@@ -75,6 +77,17 @@ TASK_VERSION = "3.49.1"
 SYSTEM_UPGRADE_CONTROLLER_VERSION = "v0.19.0"
 LEGACY_PROXMOX_DOWNLOAD_FILE_ADDRESS = "proxmox_virtual_environment_download_file.debian_container_template"
 PROXMOX_DOWNLOAD_FILE_ADDRESS = "proxmox_download_file.debian_container_template"
+LEGACY_ARTIFACT_DIRS = (
+    ROOT / "output",
+    ROOT / ".tmp-falco",
+)
+LEGACY_ARTIFACT_PATTERNS = (
+    ".tmp-*.log",
+    "haac-*.log",
+    "loop-*.log",
+    "master-*.log",
+    "worker*-*.log",
+)
 
 
 class HaaCError(RuntimeError):
@@ -163,6 +176,12 @@ def local_kubeconfig_path() -> Path:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_tmp_dir(*segments: str) -> Path:
+    path = TMP_DIR.joinpath(*segments)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def is_windows() -> bool:
@@ -290,6 +309,37 @@ def proxmox_ssh_command(host: str, remote_command: str, *, connect_timeout: int 
             distro=wsl_distro(env),
         )
     return [*proxmox_ssh_base_command(host, connect_timeout=connect_timeout), remote_command]
+
+
+def run_proxmox_ssh(
+    host: str,
+    remote_command: str,
+    *,
+    connect_timeout: int = 5,
+    check: bool = True,
+    capture_output: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    env = merged_env()
+    try:
+        return run(
+            proxmox_ssh_command(host, remote_command, connect_timeout=connect_timeout),
+            env=env,
+            check=check,
+            capture_output=capture_output,
+        )
+    finally:
+        if is_windows():
+            cleanup_wsl_runtime(env)
+
+
+def run_proxmox_ssh_stdout(host: str, remote_command: str, *, connect_timeout: int = 5, check: bool = True) -> str:
+    return run_proxmox_ssh(
+        host,
+        remote_command,
+        connect_timeout=connect_timeout,
+        check=check,
+        capture_output=True,
+    ).stdout.strip()
 
 
 def proxmox_tunnel_command(
@@ -490,27 +540,11 @@ def gitops_revision(env: dict[str, str]) -> str:
     return revision
 
 
-def is_git_repo() -> bool:
-    return (ROOT / ".git").exists()
-
-
-def git_has_remote(remote_name: str = "origin") -> bool:
-    if not is_git_repo():
-        return False
-    completed = run(["git", "remote", "get-url", remote_name], check=False, capture_output=True)
-    return completed.returncode == 0
-
-
-def git_ref_state(local_ref: str, remote_ref: str) -> str:
-    if git_head(local_ref) == git_head(remote_ref):
-        return "equal"
-    local_has_remote = run(["git", "merge-base", "--is-ancestor", remote_ref, local_ref], check=False).returncode == 0
-    remote_has_local = run(["git", "merge-base", "--is-ancestor", local_ref, remote_ref], check=False).returncode == 0
-    if local_has_remote and not remote_has_local:
-        return "ahead"
-    if remote_has_local and not local_has_remote:
-        return "behind"
-    return "diverged"
+def gitops_repo_url(env: dict[str, str]) -> str:
+    repo_url = env.get("GITOPS_REPO_URL", "").strip()
+    if not repo_url:
+        raise HaaCError("Missing required environment variable: GITOPS_REPO_URL")
+    return repo_url
 
 
 def ensure_tcp_endpoint(
@@ -652,19 +686,38 @@ def wsl_home_dir(env: dict[str, str]) -> str:
     return run_stdout(wsl_command("bash", "-lc", "printf %s \"$HOME\"", distro=wsl_distro(env)))
 
 
+def wsl_runtime_dir(env: dict[str, str]) -> Path:
+    return ensure_tmp_dir("wsl-runtime") / wsl_distro(env)
+
+
+def ensure_wsl_runtime_dir(env: dict[str, str]) -> str:
+    runtime_dir = wsl_runtime_dir(env)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    runtime_dir_wsl = to_posix_wsl_path(runtime_dir, env)
+    run(
+        wsl_command(
+            "bash",
+            "-lc",
+            f"mkdir -p {shlex.quote(runtime_dir_wsl)} && chmod 700 {shlex.quote(runtime_dir_wsl)}",
+            distro=wsl_distro(env),
+        )
+    )
+    return runtime_dir_wsl
+
+
 def ensure_wsl_ssh_keypair(env: dict[str, str]) -> str:
     if not SSH_PRIVATE_KEY_PATH.exists() or not SSH_PUBLIC_KEY_PATH.exists():
         raise HaaCError(f"Repo SSH keypair not found: {SSH_PRIVATE_KEY_PATH}")
 
-    home_dir = wsl_home_dir(env)
-    private_key_wsl = f"{home_dir}/.ssh/haac_ed25519"
+    runtime_dir_wsl = ensure_wsl_runtime_dir(env)
+    private_key_wsl = f"{runtime_dir_wsl}/haac_ed25519"
     private_key_source_wsl = to_posix_wsl_path(SSH_PRIVATE_KEY_PATH, env)
     public_key_source_wsl = to_posix_wsl_path(SSH_PUBLIC_KEY_PATH, env)
     command = (
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        f"cp {shlex.quote(private_key_source_wsl)} ~/.ssh/haac_ed25519 && "
-        f"cp {shlex.quote(public_key_source_wsl)} ~/.ssh/haac_ed25519.pub && "
-        "chmod 600 ~/.ssh/haac_ed25519 && chmod 644 ~/.ssh/haac_ed25519.pub"
+        f"rm -f {shlex.quote(private_key_wsl)} {shlex.quote(private_key_wsl)}.pub && "
+        f"cp -f {shlex.quote(private_key_source_wsl)} {shlex.quote(private_key_wsl)} && "
+        f"cp -f {shlex.quote(public_key_source_wsl)} {shlex.quote(private_key_wsl)}.pub && "
+        f"chmod 600 {shlex.quote(private_key_wsl)} && chmod 644 {shlex.quote(private_key_wsl)}.pub"
     )
     run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
     return private_key_wsl
@@ -672,13 +725,13 @@ def ensure_wsl_ssh_keypair(env: dict[str, str]) -> str:
 
 def ensure_wsl_known_hosts(env: dict[str, str]) -> str:
     local_known_hosts = known_hosts_path(env)
-    home_dir = wsl_home_dir(env)
-    known_hosts_wsl = f"{home_dir}/.ssh/haac_known_hosts"
+    runtime_dir_wsl = ensure_wsl_runtime_dir(env)
+    known_hosts_wsl = f"{runtime_dir_wsl}/haac_known_hosts"
     local_known_hosts_wsl = to_posix_wsl_path(local_known_hosts, env)
     command = (
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        f"cp {shlex.quote(local_known_hosts_wsl)} ~/.ssh/haac_known_hosts && "
-        "chmod 600 ~/.ssh/haac_known_hosts"
+        f"rm -f {shlex.quote(known_hosts_wsl)} && "
+        f"cp -f {shlex.quote(local_known_hosts_wsl)} {shlex.quote(known_hosts_wsl)} && "
+        f"chmod 600 {shlex.quote(known_hosts_wsl)}"
     )
     run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)))
     return known_hosts_wsl
@@ -694,6 +747,17 @@ def sync_wsl_known_hosts_back(env: dict[str, str], known_hosts_wsl: str) -> None
         "fi"
     ).format(src=shlex.quote(known_hosts_wsl), dst=shlex.quote(local_known_hosts_wsl))
     run(wsl_command("bash", "-lc", command, distro=wsl_distro(env)), check=False)
+
+
+def cleanup_wsl_runtime(env: dict[str, str]) -> None:
+    runtime_dir = wsl_runtime_dir(env)
+    if runtime_dir.exists():
+        runtime_dir_wsl = to_posix_wsl_path(runtime_dir, env)
+        run(
+            wsl_command("bash", "-lc", f"rm -rf {shlex.quote(runtime_dir_wsl)}", distro=wsl_distro(env)),
+            check=False,
+        )
+        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env: dict[str, str]) -> None:
@@ -748,6 +812,7 @@ def run_ansible_wsl(inventory: Path, playbook: Path, extra_args: list[str], env:
         run(wsl_command("bash", "-se", distro=wsl_distro(env)), input_bytes=script_bytes)
     finally:
         sync_wsl_known_hosts_back(env, known_hosts_wsl)
+        cleanup_wsl_runtime(env)
 
 
 def allocate_local_port() -> int:
@@ -783,7 +848,7 @@ def session_kubeconfig_copy(source: Path, server: str) -> tuple[Path, Path]:
     if not source.exists():
         raise HaaCError(f"Kubeconfig not found: {source}")
 
-    session_dir = Path(tempfile.mkdtemp(prefix="haac-kubeconfig-"))
+    session_dir = Path(tempfile.mkdtemp(prefix="haac-kubeconfig-", dir=ensure_tmp_dir("kube-sessions")))
     session_kubeconfig = session_dir / source.name
     shutil.copy2(source, session_kubeconfig)
     rewrite_kubeconfig_server(session_kubeconfig, server)
@@ -798,6 +863,7 @@ def tunnel_failure_detail(process: subprocess.Popen[str], command: list[str]) ->
 @contextmanager
 def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None, remote_port: int = 6443):
     resolved_local_port = local_port or allocate_local_port()
+    env = merged_env()
     command = proxmox_tunnel_command(
         proxmox_host,
         master_ip=master_ip,
@@ -836,6 +902,8 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None,
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         process.kill()
+            if is_windows():
+                cleanup_wsl_runtime(env)
     raise HaaCError(f"SSH tunnel failed to start: {last_error or command_label(command)}")
 
 
@@ -1314,17 +1382,18 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
         raise HaaCError("Local Sealed Secrets public cert is missing. Run generate-secrets with cluster access first.")
 
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
-    temp_dir = Path(tempfile.mkdtemp(prefix="haac-secrets-"))
-    authelia_configuration, authelia_users = render_authelia(temp_dir, env)
-    env["AUTHELIA_CONFIG_CHECKSUM"] = hashlib.sha256(
-        (
-            authelia_configuration.read_text(encoding="utf-8")
-            + "\n---\n"
-            + authelia_users.read_text(encoding="utf-8")
-        ).encode("utf-8")
-    ).hexdigest()
+    temp_dir = Path(tempfile.mkdtemp(prefix="haac-secrets-", dir=ensure_tmp_dir("secrets-runtime")))
+    try:
+        authelia_configuration, authelia_users = render_authelia(temp_dir, env)
+        env["AUTHELIA_CONFIG_CHECKSUM"] = hashlib.sha256(
+            (
+                authelia_configuration.read_text(encoding="utf-8")
+                + "\n---\n"
+                + authelia_users.read_text(encoding="utf-8")
+            ).encode("utf-8")
+        ).hexdigest()
 
-    secrets = [
+        secrets = [
         (
             "protonvpn-key",
             "media",
@@ -1435,62 +1504,64 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
         ),
     ]
 
-    ensure_repo_deploy_ssh_keypair()
-    maintenance_ssh_key = SEMAPHORE_SSH_PRIVATE_KEY_PATH
-    if not maintenance_ssh_key.exists() or not SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
-        raise HaaCError(
-            "Semaphore maintenance SSH keypair is missing. Run `task configure-os` or `task up` first so the "
-            "maintenance key is generated and authorized before it is published to the cluster."
-        )
-    secrets.append(
-        (
-            "haac-maintenance-ssh-key",
-            "mgmt",
-            SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT,
-            None,
-            {
-                "maintenance_ed25519": maintenance_ssh_key,
-                "known_hosts": known_hosts_path(env),
-            },
-        )
-    )
-
-    repo_url = env["GITOPS_REPO_URL"]
-    if repo_url_requires_ssh_auth(repo_url):
-        repo_deploy_key = REPO_DEPLOY_SSH_PRIVATE_KEY_PATH
-        if repo_deploy_key.exists():
-            secrets.append(
-                (
-                    "haac-repo-deploy-key",
-                    "mgmt",
-                    SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT,
-                    None,
-                    {"repo_deploy_ed25519": repo_deploy_key},
-                )
+        ensure_repo_deploy_ssh_keypair()
+        maintenance_ssh_key = SEMAPHORE_SSH_PRIVATE_KEY_PATH
+        if not maintenance_ssh_key.exists() or not SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
+            raise HaaCError(
+                "Semaphore maintenance SSH keypair is missing. Run `task configure-os` or `task up` first so the "
+                "maintenance key is generated and authorized before it is published to the cluster."
             )
+        secrets.append(
+            (
+                "haac-maintenance-ssh-key",
+                "mgmt",
+                SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT,
+                None,
+                {
+                    "maintenance_ed25519": maintenance_ssh_key,
+                    "known_hosts": known_hosts_path(env),
+                },
+            )
+        )
 
-    for name, namespace, output_path, literals, files in secrets:
-        secret_yaml = create_secret_yaml(kubectl, name, namespace, literals=literals, files=files)
-        output_path.write_text(seal_yaml(kubeseal, cert, secret_yaml), encoding="utf-8")
+        repo_url = env["GITOPS_REPO_URL"]
+        if repo_url_requires_ssh_auth(repo_url):
+            repo_deploy_key = REPO_DEPLOY_SSH_PRIVATE_KEY_PATH
+            if repo_deploy_key.exists():
+                secrets.append(
+                    (
+                        "haac-repo-deploy-key",
+                        "mgmt",
+                        SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT,
+                        None,
+                        {"repo_deploy_ed25519": repo_deploy_key},
+                    )
+                )
 
-    for legacy_path in (
-        SECRETS_DIR / "haac-ssh-sealed-secret.yaml",
-        SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT if not repo_url_requires_ssh_auth(repo_url) else None,
-    ):
-        if legacy_path:
-            legacy_path.unlink(missing_ok=True)
+        for name, namespace, output_path, literals, files in secrets:
+            secret_yaml = create_secret_yaml(kubectl, name, namespace, literals=literals, files=files)
+            output_path.write_text(seal_yaml(kubeseal, cert, secret_yaml), encoding="utf-8")
 
-    argocd_oidc_secret_yaml = create_secret_yaml(
-        kubectl,
-        "argocd-oidc-secret",
-        "argocd",
-        literals={"clientSecret": env["ARGOCD_OIDC_SECRET"]},
-        labels={"app.kubernetes.io/part-of": "argocd"},
-    )
-    ARGOCD_OIDC_SECRET_OUTPUT.write_text(seal_yaml(kubeseal, cert, argocd_oidc_secret_yaml), encoding="utf-8")
+        for legacy_path in (
+            SECRETS_DIR / "haac-ssh-sealed-secret.yaml",
+            SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT if not repo_url_requires_ssh_auth(repo_url) else None,
+        ):
+            if legacy_path:
+                legacy_path.unlink(missing_ok=True)
 
-    render_values_file(env)
-    render_gitops_manifests(env)
+        argocd_oidc_secret_yaml = create_secret_yaml(
+            kubectl,
+            "argocd-oidc-secret",
+            "argocd",
+            literals={"clientSecret": env["ARGOCD_OIDC_SECRET"]},
+            labels={"app.kubernetes.io/part-of": "argocd"},
+        )
+        ARGOCD_OIDC_SECRET_OUTPUT.write_text(seal_yaml(kubeseal, cert, argocd_oidc_secret_yaml), encoding="utf-8")
+
+        render_values_file(env)
+        render_gitops_manifests(env)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def apply_rendered_file(file_path: Path, kubeconfig: Path, kubectl: str, env: dict[str, str]) -> None:
@@ -1734,89 +1805,74 @@ def require_success(completed: subprocess.CompletedProcess[str], context: str) -
     raise HaaCError(f"{context}\n{redact_text(detail)}")
 
 
-def require_git_bootstrap_repo(remote_name: str = "origin") -> None:
-    if not is_git_repo():
+def require_git_bootstrap_repo(env: dict[str, str], remote_name: str = "origin") -> None:
+    if not gitstatelib.is_git_repo(ROOT):
         raise HaaCError("Git repository metadata not found. `task up` requires a writable GitOps clone.")
-    if not git_has_remote(remote_name):
+    if not gitstatelib.git_has_remote(ROOT, remote_name):
         raise HaaCError(
             f"Git remote '{remote_name}' is required so bootstrap changes can be synced and pushed before ArgoCD waits."
         )
+    configured_remote = gitstatelib.normalize_git_remote_url(gitstatelib.git_remote_url(ROOT, remote_name))
+    expected_remote = gitstatelib.normalize_git_remote_url(gitops_repo_url(env))
+    if configured_remote != expected_remote:
+        raise HaaCError(
+            f"Git remote '{remote_name}' does not match GITOPS_REPO_URL. "
+            f"Configured: {configured_remote} Expected: {expected_remote}. "
+            "Fix the local remote before running sync, publication, or bootstrap."
+        )
 
 
-def git_dirty_paths() -> list[str]:
-    status = run_stdout(["git", "status", "--porcelain"], check=False)
-    paths: list[str] = []
-    for line in status.splitlines():
-        if not line.strip():
-            continue
-        path = line[3:] if len(line) > 3 else line
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        paths.append(path.strip())
-    return paths
-
-
-def git_head(ref: str) -> str:
-    return run_stdout(["git", "rev-parse", ref])
-
-
-def sync_repo(push_all: bool) -> None:
-    require_git_bootstrap_repo()
+def sync_repo() -> None:
     env = merged_env()
+    require_git_bootstrap_repo(env)
     revision = gitops_revision(env)
 
     remote_ref = f"origin/{revision}"
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
 
-    dirty_paths = git_dirty_paths()
-    if not push_all:
-        ref_state = git_ref_state("HEAD", remote_ref)
-        if ref_state in {"behind", "diverged"}:
-            raise HaaCError(
-                "PUSH_ALL=false keeps `task up` out of Git merge policy. "
-                f"Local HEAD is {ref_state} relative to {remote_ref}. "
-                "Pull/rebase explicitly first, or rerun with PUSH_ALL=true if you intentionally want Codex to checkpoint and merge for you."
-            )
-        if ref_state == "ahead":
-            print(f"[ok] Local branch is ahead of {remote_ref}; no merge is required for safe default bootstrap.")
-        elif dirty_paths:
-            print("[warn] Preserving local uncommitted work because PUSH_ALL=false and the GitOps branch is already current.")
-        else:
-            print(f"[ok] GitOps branch already matches {remote_ref}; no local merge needed.")
+    checkpoint_git_changes(
+        "Auto-save before sync [skip ci]",
+        empty_message="[ok] GitOps repo already checkpointed before sync.",
+    )
+
+    ref_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
+    if ref_state == "equal":
+        print(f"[ok] GitOps repo already matches {remote_ref}; no merge needed.")
         return
-
-    if push_all:
-        checkpoint_git_changes(
-            "Auto-save before sync [skip ci]",
-            empty_message="[ok] GitOps repo already checkpointed before sync.",
-        )
-
-    merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
-    require_success(merge, f"Git merge failed for {remote_ref}")
-    print(f"[ok] GitOps repo synchronized with {remote_ref}")
+    if ref_state == "behind":
+        fast_forward = run(["git", "merge", "--ff-only", remote_ref], check=False, capture_output=True)
+        require_success(fast_forward, f"Fast-forward sync failed for {remote_ref}")
+        print(f"[ok] GitOps repo fast-forwarded to {remote_ref}")
+        return
+    if ref_state == "ahead":
+        print(f"[ok] Local branch is already ahead of {remote_ref}; no merge needed.")
+        return
+    raise HaaCError(
+        f"Git sync stopped because local HEAD diverged from {remote_ref}. "
+        "Resolve the divergence explicitly with your preferred Git workflow, then rerun `task sync`."
+    )
 
 
 def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
-    require_git_bootstrap_repo()
     env = merged_env()
+    require_git_bootstrap_repo(env)
     revision = gitops_revision(env)
 
     remote_ref = f"origin/{revision}"
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
+    ref_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
+    if ref_state in {"behind", "diverged"}:
+        raise HaaCError(
+            "GitOps publication is publish-only and will not merge remote state. "
+            f"Local HEAD is {ref_state} relative to {remote_ref}. "
+            "Run `task sync` first, then rerun the publish or bootstrap command."
+        )
     if push_all:
         checkpoint_git_changes(
             "Auto-commit manual work [skip ci]",
             empty_message="[ok] No local repo changes needed a checkpoint before GitOps publication.",
-        )
-        merge = run(["git", "merge", remote_ref, "-X", "ours", "--no-edit"], check=False, capture_output=True)
-        require_success(merge, f"Git merge failed for {remote_ref}")
-        print(f"[ok] GitOps repo synchronized with {remote_ref}")
-    elif git_ref_state("HEAD", remote_ref) in {"ahead", "behind", "diverged"}:
-        raise HaaCError(
-            "GitOps publication requires the local branch to match origin when PUSH_ALL=false. "
-            "Run `task sync` first with a clean worktree or rerun with PUSH_ALL=true."
         )
 
     generate_secrets_core(kubeconfig, kubectl, fetch_cert=False)
@@ -1872,7 +1928,7 @@ def pre_commit_hook() -> None:
         health = run([kubectl, "--kubeconfig", str(kubeconfig), "get", "ns", "kube-system"], check=False)
         if health.returncode == 0:
             generate_secrets_core(kubeconfig, kubectl, fetch_cert=True)
-            if is_git_repo():
+            if gitstatelib.is_git_repo(ROOT):
                 run(
                     ["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]],
                     check=False,
@@ -2443,7 +2499,7 @@ def sync_cloudflare() -> None:
     managed_domain_records = [
         item
         for item in all_records.get("result", [])
-        if item.get("type") == "CNAME"
+        if item.get("type") in {"A", "AAAA", "CNAME"}
         and item.get("name")
         and (
             item.get("name") == domain_name
@@ -2452,7 +2508,12 @@ def sync_cloudflare() -> None:
     ]
     for record in managed_domain_records:
         name = str(record.get("name"))
-        should_keep = name in expected_hostnames and record.get("content") == expected_target and record.get("proxied") is True
+        should_keep = (
+            name in expected_hostnames
+            and record.get("type") == "CNAME"
+            and record.get("content") == expected_target
+            and record.get("proxied") is True
+        )
         if should_keep:
             continue
         delete_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records/{record['id']}"
@@ -2460,7 +2521,11 @@ def sync_cloudflare() -> None:
         if not deleted.get("success"):
             raise HaaCError(f"Failed to delete conflicting DNS record {name}: {deleted}")
 
-    existing_names = {str(item.get("name")) for item in managed_domain_records if item.get("content") == expected_target and item.get("proxied") is True}
+    existing_names = {
+        str(item.get("name"))
+        for item in managed_domain_records
+        if item.get("type") == "CNAME" and item.get("content") == expected_target and item.get("proxied") is True
+    }
     for record_name in expected_hostnames:
         if record_name in existing_names:
             continue
@@ -2853,32 +2918,28 @@ def shutdown_cluster(proxmox_host: str, tofu_dir: Path) -> None:
                 vmids.append((str(vmid), f"Worker {index}"))
 
     for vmid, label in vmids:
-        status = run(
-            proxmox_ssh_command(proxmox_host, f"pct status {vmid}"),
+        status = run_proxmox_ssh(
+            proxmox_host,
+            f"pct status {vmid}",
             check=False,
             capture_output=True,
         )
         if "status: running" not in (status.stdout or ""):
             continue
-        run(
-            proxmox_ssh_command(
-                proxmox_host,
-                f"pct exec {vmid} -- bash -lc 'systemctl stop k3s 2>/dev/null || true; systemctl stop k3s-agent 2>/dev/null || true'",
-            ),
+        run_proxmox_ssh(
+            proxmox_host,
+            f"pct exec {vmid} -- bash -lc 'systemctl stop k3s 2>/dev/null || true; systemctl stop k3s-agent 2>/dev/null || true'",
             check=False,
         )
-        graceful = run(
-            proxmox_ssh_command(proxmox_host, f"pct shutdown {vmid} --timeout 180"),
-            check=False,
-        )
+        graceful = run_proxmox_ssh(proxmox_host, f"pct shutdown {vmid} --timeout 180", check=False)
         if graceful.returncode != 0:
-            run(proxmox_ssh_command(proxmox_host, f"pct stop {vmid}"), check=False)
+            run_proxmox_ssh(proxmox_host, f"pct stop {vmid}", check=False)
         print(f"Shutdown requested for {label} ({vmid})")
 
 
 def restore_k3s(proxmox_host: str, tofu_dir: Path, backup_file: str, nas_mount_path: str) -> None:
     master_vmid = run_stdout([resolved_binary("tofu"), f"-chdir={tofu_dir}", "output", "-raw", "master_vmid"])
-    run(proxmox_ssh_command(proxmox_host, f"pct exec {master_vmid} -- systemctl stop k3s"))
+    run_proxmox_ssh(proxmox_host, f"pct exec {master_vmid} -- systemctl stop k3s")
 
     restore_script = f"""
 set -e
@@ -2887,13 +2948,34 @@ pct exec "$LXC_ID" -- mv /var/lib/rancher/k3s/server/db/state.db /var/lib/ranche
 cp {shlex.quote(nas_mount_path)}/{shlex.quote(backup_file)} /var/lib/lxc/$LXC_ID/rootfs/var/lib/rancher/k3s/server/db/state.db
 pct exec "$LXC_ID" -- chown root:root /var/lib/rancher/k3s/server/db/state.db
 """
-    run(proxmox_ssh_command(proxmox_host, f"bash -lc {shlex.quote(restore_script)}"))
-    run(proxmox_ssh_command(proxmox_host, f"pct exec {master_vmid} -- systemctl start k3s"))
+    run_proxmox_ssh(proxmox_host, f"bash -lc {shlex.quote(restore_script)}")
+    run_proxmox_ssh(proxmox_host, f"pct exec {master_vmid} -- systemctl start k3s")
 
 
 def remove_file(path: Path) -> None:
     if path.exists():
         path.unlink()
+
+
+def clean_local_artifacts() -> None:
+    removed: list[str] = []
+    for artifact_dir in LEGACY_ARTIFACT_DIRS:
+        if artifact_dir.exists():
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+            removed.append(str(artifact_dir.relative_to(ROOT)))
+
+    for pattern in LEGACY_ARTIFACT_PATTERNS:
+        for path in ROOT.glob(pattern):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+                removed.append(str(path.relative_to(ROOT)))
+
+    if removed:
+        print("[ok] Removed local investigation artifacts:")
+        for item in sorted(removed):
+            print(f"  - {item}")
+    else:
+        print("[ok] No stray local investigation artifacts were found outside .tmp/")
 
 
 def monitor(master_ip: str, proxmox_host: str, kubeconfig: Path) -> None:
@@ -3183,6 +3265,7 @@ def cmd_check_env(_: argparse.Namespace) -> None:
         ],
         env,
     )
+    gitopslib.validate_falco_runtime_inputs(env)
     access_host = proxmox_access_host(env)
     access_hint = (
         "Set PROXMOX_ACCESS_HOST to the workstation-reachable Proxmox IP/FQDN, "
@@ -3231,8 +3314,10 @@ def resolve_default_gateway(env: dict[str, str]) -> str:
     if env.get("LXC_GATEWAY"):
         return env["LXC_GATEWAY"]
     host = proxmox_access_host(env)
-    completed = run(
-        proxmox_ssh_command(host, "ip route | awk '/default/ {print $3; exit}'", connect_timeout=5),
+    completed = run_proxmox_ssh(
+        host,
+        "ip route | awk '/default/ {print $3; exit}'",
+        connect_timeout=5,
         check=False,
         capture_output=True,
     )
@@ -3359,7 +3444,7 @@ def cmd_tofu_output(args: argparse.Namespace) -> None:
 
 
 def cmd_sync_repo(args: argparse.Namespace) -> None:
-    sync_repo(args.push_all)
+    sync_repo()
 
 
 def cmd_setup_hooks(_: argparse.Namespace) -> None:
@@ -3450,6 +3535,10 @@ def cmd_remove_file(args: argparse.Namespace) -> None:
     remove_file(Path(args.path))
 
 
+def cmd_clean_artifacts(_: argparse.Namespace) -> None:
+    clean_local_artifacts()
+
+
 def cmd_monitor(args: argparse.Namespace) -> None:
     monitor(args.master_ip, args.proxmox_host, Path(args.kubeconfig))
 
@@ -3527,7 +3616,6 @@ def build_parser() -> argparse.ArgumentParser:
     command.set_defaults(func=cmd_tofu_output)
 
     command = subparsers.add_parser("sync-repo")
-    command.add_argument("--push-all", action="store_true")
     command.set_defaults(func=cmd_sync_repo)
 
     command = subparsers.add_parser("setup-hooks")
@@ -3632,6 +3720,9 @@ def build_parser() -> argparse.ArgumentParser:
     command = subparsers.add_parser("remove-file")
     command.add_argument("--path", required=True)
     command.set_defaults(func=cmd_remove_file)
+
+    command = subparsers.add_parser("clean-artifacts")
+    command.set_defaults(func=cmd_clean_artifacts)
 
     command = subparsers.add_parser("monitor")
     command.add_argument("--master-ip", required=True)

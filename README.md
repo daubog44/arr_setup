@@ -131,7 +131,7 @@ That bootstrap path is also the supported rerun path. A partial or previously su
 
 The logical phase order is:
 
-1. preflight: `check-env`, `doctor`, `sync`
+1. preflight: `check-env`, `doctor`
 2. infra provisioning: OpenTofu init and apply through the explicit `provision-infra` phase
 3. node configuration: Ansible plus K3s service, flannel, and node-readiness gating before GitOps bootstrap
 4. secret and GitOps publication: regenerate rendered artifacts, push the GitOps source of truth, bootstrap ArgoCD
@@ -149,7 +149,9 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 
 `LXC_PASSWORD` remains the documented password source of truth. Supporting `scripts/haac.py` bootstrap commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
 
-`PUSH_ALL` is now safe-by-default. With `PUSH_ALL=false`, `task up` publishes only generated GitOps artifacts and refuses to auto-checkpoint unrelated local work when the branch is behind `origin`. `PUSH_ALL=true` remains available as the explicit wide-publication escape hatch.
+`task up` is now publish-only on the Git boundary. It stages only generated GitOps artifacts and refuses to merge remote state when the branch is behind or diverged.
+
+Git merge policy is explicit. `task sync` owns the local checkpoint plus safe fast-forward merge path, fails closed on divergence, and leaves manual conflict resolution explicit. Broad repo publication is no longer part of the supported Task operator surface.
 
 `MASTER_TARGET_NODE` remains the Proxmox node name used inside OpenTofu and generated inventory. `PROXMOX_ACCESS_HOST` is the workstation-reachable IP or hostname used for the Proxmox API, SSH, and tunnel operations. If the node name itself already resolves locally, `PROXMOX_ACCESS_HOST` may be left unset and the bootstrap falls back to `MASTER_TARGET_NODE`.
 
@@ -249,6 +251,21 @@ The current storage path is:
 
 So yes, the cluster can use the NAS, but today it does so through the Proxmox host mount and LXC bind mounts, not through a CSI SMB driver inside Kubernetes.
 
+## Recurring Jobs
+
+Recurring work is intentionally split across two execution planes.
+
+- Kubernetes CronJobs own in-cluster recurring work:
+  - `kube-system/descheduler`
+  - `media/recyclarr`
+  - `mgmt/k3s-sqlite-backup`
+- Semaphore schedules own infra maintenance that needs Ansible inventory, jump-host access, maintenance SSH credentials, serialized rollout, or host reboot semantics:
+  - `Rolling OS Update - K3s Nodes`
+  - `Rolling OS Update - Proxmox Hosts`
+  - `Restore K3s Database (from NAS)` as an on-demand template
+
+That split is deliberate. Cluster-local jobs stay in Kubernetes; infra maintenance stays in Semaphore.
+
 ## Notes
 
 - `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by `scripts/haac.py`.
@@ -256,6 +273,7 @@ So yes, the cluster can use the NAS, but today it does so through the Proxmox ho
 - LXC should remain `unprivileged` by default; K3s, GPU, TUN, and eBPF exceptions are centrally gated with env flags.
 - `task up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.
 - GPU workload scheduling uses standard Kubernetes GPU resources; Node Feature Discovery is used for infrastructure-side GPU discovery.
+- Falco runtime is supported on declared compatible unprivileged LXC workers through the chart's `ebpf` driver path. When `HAAC_ENABLE_FALCO=true`, at least one worker in `WORKER_NODES_JSON` must declare `{"haac.io/falco-runtime":"true"}` or preflight fails closed.
 - `task -n up` is a Task dry-run flag. It is not implemented in `scripts/haac.py`; it comes from Task itself and shows what would run without executing it.
 
 See `ARCHITECTURE.md` for the full architecture and `HOMELAB_SERVICES.md` for the service inventory.

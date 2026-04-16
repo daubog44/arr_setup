@@ -149,7 +149,7 @@ The one-command bootstrap contract is stage-based and shared by `task up`, `.\ha
 
 The required order is:
 
-1. preflight: validate `.env`, workstation tooling, and the writable GitOps remote
+1. preflight: validate `.env` and workstation tooling
 2. infra provisioning: OpenTofu
 3. node configuration: Ansible plus K3s service, flannel, and cluster node-readiness gating before GitOps bootstrap
 4. secret and GitOps publication
@@ -168,7 +168,33 @@ For Proxmox connectivity, `.env` separates node identity from workstation access
 
 `.env` is also the single source of truth for Terraform inputs. The wrapper translates env values into `TF_VAR_*` centrally before calling OpenTofu, instead of duplicating that mapping in `Taskfile.yml`.
 
-Publication scope is now explicit too: `PUSH_ALL=false` keeps the default GitOps push limited to generated artifacts, while `PUSH_ALL=true` is the opt-in broad publication path.
+Publication scope is now explicit too: the supported Task pipeline publishes only generated GitOps artifacts.
+
+Git merge policy is separate from the main bootstrap path. `task sync` owns checkpoint plus safe fast-forward merge policy and fails closed on divergence; `task up` only publishes GitOps outputs and fails closed with guidance if the local branch is behind or diverged from the configured remote revision.
+
+## Recurring Work Boundaries
+
+Recurring work is split by execution plane, not by naming convention.
+
+- Kubernetes CronJobs are used when the work is cluster-local and should execute inside the cluster:
+  - `descheduler`
+  - `recyclarr`
+  - `k3s-sqlite-backup`
+- Semaphore schedules are used when the work needs Ansible inventory, jump-host access, maintenance credentials, serialized rollout, or reboot-aware host maintenance:
+  - rolling K3s node updates
+  - rolling Proxmox host updates
+  - K3s database restore as an on-demand operator template
+
+This avoids forcing infra maintenance into Kubernetes jobs that would need the same external trust and inventory boundary anyway.
+
+## Falco On Unprivileged LXC
+
+Falco runtime is supported in this repo on declared compatible unprivileged LXC workers, but not through the `modern_ebpf` driver.
+
+- the live failure mode was specific to `modern_ebpf` ring-buffer support
+- the repo now uses the chart's classic `ebpf` driver path for this environment
+- Falco runtime scheduling remains explicit and source-of-truth driven through `WORKER_NODES_JSON` worker labels
+- when `HAAC_ENABLE_FALCO=true`, at least one worker must declare `haac.io/falco-runtime=true`
 
 If global Task is missing, use:
 

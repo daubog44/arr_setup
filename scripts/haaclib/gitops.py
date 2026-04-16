@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
 def render_env_placeholders(content: str, env: dict[str, str]) -> str:
@@ -25,8 +28,44 @@ def falco_enabled(env: dict[str, str]) -> bool:
     value = env.get("HAAC_ENABLE_FALCO")
     if value is None:
         value = env.get("LXC_UNPRIVILEGED", "true")
-        return value.strip().lower() not in {"1", "true", "yes", "on"}
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+        return value.strip().lower() not in TRUTHY_VALUES
+    return value.strip().lower() in TRUTHY_VALUES
+
+
+def load_worker_nodes(env: dict[str, str]) -> dict[str, dict]:
+    raw_value = env.get("WORKER_NODES_JSON", "").strip()
+    if not raw_value:
+        raise RuntimeError("Missing required environment variable: WORKER_NODES_JSON")
+    try:
+        data = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"WORKER_NODES_JSON is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("WORKER_NODES_JSON must decode to an object keyed by worker name")
+    return data
+
+
+def falco_runtime_workers(env: dict[str, str]) -> list[str]:
+    runtime_workers: list[str] = []
+    for worker_name, worker_config in load_worker_nodes(env).items():
+        labels = worker_config.get("labels", {})
+        if not isinstance(labels, dict):
+            raise RuntimeError(f"WORKER_NODES_JSON worker '{worker_name}' has non-object labels")
+        value = labels.get("haac.io/falco-runtime")
+        if value is not None and str(value).strip().lower() in TRUTHY_VALUES:
+            runtime_workers.append(worker_name)
+    return runtime_workers
+
+
+def validate_falco_runtime_inputs(env: dict[str, str]) -> None:
+    if not falco_enabled(env):
+        return
+    runtime_workers = falco_runtime_workers(env)
+    if not runtime_workers:
+        raise RuntimeError(
+            "HAAC_ENABLE_FALCO=true requires at least one WORKER_NODES_JSON labels entry with "
+            '"haac.io/falco-runtime":"true" so the Falco daemonset has a declared runtime target.'
+        )
 
 
 def render_gitops_manifests(
@@ -36,6 +75,7 @@ def render_gitops_manifests(
     falco_output: Path,
     disabled_gitops_list: str,
 ) -> None:
+    validate_falco_runtime_inputs(env)
     for output_path in outputs:
         template_path = gitops_template_path(output_path)
         if not template_path.exists():
