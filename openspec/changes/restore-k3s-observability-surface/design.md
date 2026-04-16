@@ -9,6 +9,7 @@ The current Grafana public UI is reachable, but the shipped Kubernetes API serve
 This wave will add a narrow K3s observability layer:
 
 - repo-managed Prometheus labels and values that make the shipped control-plane dashboards resolve correctly on this topology
+- explicit Grafana datasource and dashboard provisioning so the official dashboards do not depend on upstream implicit defaults
 - cleanup of kube-prometheus-stack values that currently carry dead or misleading configuration
 - browser/runtime verification that fails when the official Grafana dashboards are empty or their datasource variables cannot resolve
 

@@ -6,6 +6,7 @@ The repository MUST provide a K3s-compatible Prometheus scrape surface for the o
 #### Scenario: Control-plane dashboards are rendered
 - **WHEN** kube-prometheus-stack is reconciled on the HaaC K3s topology
 - **THEN** the Prometheus configuration MUST expose the labels and targets required for the official Kubernetes API server dashboard
+- **AND** Grafana MUST provision at least one Prometheus datasource for the official dashboards through repo-managed configuration
 - **AND** the official dashboard variables MUST be able to resolve at least one `cluster` value and one `instance` value from the repo-managed metric surface
 - **AND** the repo MUST NOT rely on undeclared kubeadm-only discovery behavior
 

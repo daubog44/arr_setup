@@ -46,6 +46,9 @@ spec:
 
         grafana:
           enabled: true
+          forceDeployDatasources: true
+          forceDeployDashboards: true
+          defaultDashboardsEnabled: true
           podAnnotations:
             checksum/grafana-oidc-secret: "60e2c2a547257c9cc43176895eee24667aaa3dffe6546a978eaf4002dc4d378f"
           admin:
@@ -77,6 +80,23 @@ spec:
           envFromSecret: "grafana-oidc-secret"
           ingress:
             enabled: false
+          sidecar:
+            dashboards:
+              enabled: true
+            datasources:
+              enabled: true
+              defaultDatasourceEnabled: true
+              isDefaultDatasource: true
+          additionalDataSources:
+            - name: Prometheus
+              uid: prometheus
+              type: prometheus
+              access: proxy
+              url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+              isDefault: true
+              jsonData:
+                httpMethod: POST
+                timeInterval: 30s
 
           dashboardProviders:
             dashboardproviders.yaml:
