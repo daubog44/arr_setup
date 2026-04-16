@@ -299,15 +299,11 @@ ingresses:
     service: litmus-frontend-service
     port: 9091
     namespace: chaos
-    auth_strategy: edge_forward_auth
+    auth_strategy: app_native
     homepage_group: Chaos
     homepage_name: Litmus
     homepage_icon: litmuschaos.png
     homepage_description: Chaos Center
-    homepage_aliases:
-      - name: ChaosTest
-        icon: litmuschaos.png
-        description: Chaos Workflow UI
   falco:
     enabled: true
     subdomain: falco
