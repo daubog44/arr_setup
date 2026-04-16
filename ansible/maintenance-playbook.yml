@@ -1,43 +1,7 @@
 ---
-# Separate maintenance playbook file (not a ConfigMap anymore - stored in repo)
-# Location: HaaC/ansible/maintenance-playbook.yml
-# Semaphore will clone the repo and find this file via:
-#   playbook: HaaC/ansible/maintenance-playbook.yml
-
-- name: Rolling OS Update (K3s Nodes)
-  hosts: k3s_master,k3s_workers
-  serial: 1
-  gather_facts: false
-  tasks:
-    - name: Wait for node to be reachable
-      ansible.builtin.wait_for_connection:
-        timeout: 60
-
-    - name: Run bounded K3s node maintenance wrapper
-      ansible.builtin.command: /usr/local/sbin/haac-k3s-maintenance
-      become: true
-      register: maintenance_result
-      changed_when: true
-
-    - name: Log reboot status
-      ansible.builtin.debug:
-        msg: "Node {{ inventory_hostname }} {{ 'NEEDS REBOOT - Kured will handle it tonight' if 'REBOOT_REQUIRED=1' in maintenance_result.stdout else 'is up to date' }}"
-
-- name: Rolling OS Update (Proxmox Hosts)
-  hosts: proxmox_host
-  serial: 1
-  gather_facts: false
-  tasks:
-    - name: Wait for host to be reachable
-      ansible.builtin.wait_for_connection:
-        timeout: 60
-
-    - name: Run bounded Proxmox maintenance wrapper
-      ansible.builtin.command: /usr/local/sbin/haac-proxmox-maintenance
-      become: true
-      register: maintenance_result
-      changed_when: true
-
-    - name: Log Proxmox host reboot status
-      ansible.builtin.debug:
-        msg: "Proxmox host {{ inventory_hostname }} {{ 'needs a manual reboot when convenient' if 'REBOOT_REQUIRED=1' in maintenance_result.stdout else 'is up to date' }}"
+# Compatibility aggregate playbook for manual maintenance runs.
+# Semaphore uses the split playbooks below for strict host-class isolation:
+#   - HaaC/ansible/maintenance-k3s-playbook.yml
+#   - HaaC/ansible/maintenance-proxmox-playbook.yml
+- import_playbook: maintenance-k3s-playbook.yml
+- import_playbook: maintenance-proxmox-playbook.yml

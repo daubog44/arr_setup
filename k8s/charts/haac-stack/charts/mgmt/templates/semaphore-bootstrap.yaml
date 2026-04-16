@@ -1,12 +1,12 @@
 ---
 # Post-install bootstrap Job: configures Semaphore completely via API
 # Runs once after Semaphore is deployed and sets up:
-#   - SSH Key (from SealedSecret)
+#   - SSH key (from SealedSecret)
 #   - Git repository (arr_setup repo)
 #   - Inventory (from the repo)
-#   - Environment (sets ANSIBLE_HOST_KEY_CHECKING=False)
-#   - Task Template: Rolling OS Update K3s
-#   - Task Template: Rolling OS Update Proxmox
+#   - Environment (sets ANSIBLE_HOST_KEY_CHECKING=True with explicit known_hosts)
+#   - Task template: Rolling OS Update K3s
+#   - Task template: Rolling OS Update Proxmox
 #   - Schedules for both templates (every Monday 03:00)
 apiVersion: batch/v1
 kind: Job
@@ -46,6 +46,8 @@ spec:
               value: "/opt/ansible/maintenance-inventory.yml"
             - name: MAINTENANCE_SSH_KEY_PATH
               value: "/etc/ansible-ssh/maintenance_ed25519"
+            - name: MAINTENANCE_KNOWN_HOSTS_PATH
+              value: "/etc/ansible-ssh/known_hosts"
           volumeMounts:
             - name: maintenance-ssh-key
               mountPath: /etc/ansible-ssh
@@ -78,36 +80,94 @@ spec:
                 -d "{\"auth\":\"$USERNAME\",\"password\":\"$PASS\"}" > /dev/null
               echo "Semaphore admin authentication succeeded."
 
-              HDR='-H "Content-Type: application/json"'
+              find_named_id() {
+                RESPONSE="$1"
+                RESOURCE_NAME="$2"
+                printf '%s' "$RESPONSE" | tr '{' '\n' | grep "\"name\":\"$RESOURCE_NAME\"" | sed 's/.*"id":\([0-9]*\).*/\1/' | head -n 1
+              }
 
-              # Reconcile the managed project idempotently by recreating it if it already exists.
-              # This keeps the managed inventory/key/repository model converged after auth and trust-model changes.
-              EXISTING=$(curl -sf -b /tmp/cookies.txt "$BASE/api/projects")
-              if echo "$EXISTING" | grep -q "HaaC Maintenance"; then
-                EXISTING_PROJECT_ID=$(echo "$EXISTING" | tr '{' '\n' | grep '"name":"HaaC Maintenance"' | sed 's/.*"id":\([0-9]*\).*/\1/' | head -n 1)
-                if [ -n "$EXISTING_PROJECT_ID" ]; then
-                  echo "Managed Semaphore project already exists. Recreating project $EXISTING_PROJECT_ID to converge bootstrap-owned resources."
-                  curl -sf -b /tmp/cookies.txt -X DELETE "$BASE/api/project/$EXISTING_PROJECT_ID" > /dev/null
-                  sleep 3
+              delete_named_resource() {
+                COLLECTION="$1"
+                RESOURCE_NAME="$2"
+                CURRENT=$(curl -sf -b /tmp/cookies.txt "$BASE/api/project/$PROJECT_ID/$COLLECTION")
+                CURRENT_ID=$(find_named_id "$CURRENT" "$RESOURCE_NAME")
+                if [ -n "$CURRENT_ID" ]; then
+                  echo "Removing existing $COLLECTION resource '$RESOURCE_NAME' ($CURRENT_ID)"
+                  curl -sf -b /tmp/cookies.txt -X DELETE "$BASE/api/project/$PROJECT_ID/$COLLECTION/$CURRENT_ID" > /dev/null
                 fi
+              }
+
+              upsert_named_resource() {
+                COLLECTION="$1"
+                RESOURCE_NAME="$2"
+                PAYLOAD="$3"
+                CURRENT=$(curl -sf -b /tmp/cookies.txt "$BASE/api/project/$PROJECT_ID/$COLLECTION")
+                CURRENT_ID=$(find_named_id "$CURRENT" "$RESOURCE_NAME")
+                if [ -n "$CURRENT_ID" ]; then
+                  echo "Updating $COLLECTION resource '$RESOURCE_NAME' ($CURRENT_ID)"
+                  curl -sf -b /tmp/cookies.txt -X PUT "$BASE/api/project/$PROJECT_ID/$COLLECTION/$CURRENT_ID" \
+                    -H "Content-Type: application/json" \
+                    -d "$PAYLOAD"
+                else
+                  echo "Creating $COLLECTION resource '$RESOURCE_NAME'"
+                  curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/$COLLECTION" \
+                    -H "Content-Type: application/json" \
+                    -d "$PAYLOAD"
+                fi
+              }
+
+              find_schedule_id_by_template() {
+                RESPONSE="$1"
+                TEMPLATE_ID="$2"
+                printf '%s' "$RESPONSE" | tr '{' '\n' | grep "\"template_id\":$TEMPLATE_ID" | sed 's/.*"id":\([0-9]*\).*/\1/' | head -n 1
+              }
+
+              upsert_schedule() {
+                TEMPLATE_ID="$1"
+                CRON_FORMAT="$2"
+                PAYLOAD="{\"project_id\":$PROJECT_ID,\"template_id\":$TEMPLATE_ID,\"cron_format\":\"$CRON_FORMAT\",\"enabled\":true}"
+                CURRENT=$(curl -sf -b /tmp/cookies.txt "$BASE/api/project/$PROJECT_ID/schedules")
+                CURRENT_ID=$(find_schedule_id_by_template "$CURRENT" "$TEMPLATE_ID")
+                if [ -n "$CURRENT_ID" ]; then
+                  echo "Updating schedule $CURRENT_ID for template $TEMPLATE_ID"
+                  curl -sf -b /tmp/cookies.txt -X PUT "$BASE/api/project/$PROJECT_ID/schedules/$CURRENT_ID" \
+                    -H "Content-Type: application/json" \
+                    -d "$PAYLOAD" > /dev/null
+                else
+                  echo "Creating schedule for template $TEMPLATE_ID"
+                  curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/schedules" \
+                    -H "Content-Type: application/json" \
+                    -d "$PAYLOAD" > /dev/null
+                fi
+              }
+
+              # 1. Keep project identity stable; create once, then update it in place.
+              EXISTING=$(curl -sf -b /tmp/cookies.txt "$BASE/api/projects")
+              PROJECT_ID=$(find_named_id "$EXISTING" "HaaC Maintenance")
+              if [ -n "$PROJECT_ID" ]; then
+                echo "Reusing managed Semaphore project ID: $PROJECT_ID"
+                curl -sf -b /tmp/cookies.txt -X PUT "$BASE/api/project/$PROJECT_ID" \
+                  -H "Content-Type: application/json" \
+                  -d '{"name":"HaaC Maintenance","alert":true,"alert_chat":"","max_parallel_tasks":1}' > /dev/null
+              else
+                PROJECT=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/projects" \
+                  -H "Content-Type: application/json" \
+                  -d '{"name":"HaaC Maintenance","alert":true,"alert_chat":"","max_parallel_tasks":1}')
+                PROJECT_ID=$(echo "$PROJECT" | sed 's/.*"id":\([0-9]*\).*/\1/')
+                echo "Created project ID: $PROJECT_ID"
               fi
 
-              # 1. Create project
-              PROJECT=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/projects" \
-                -H "Content-Type: application/json" \
-                -d '{"name":"HaaC Maintenance","alert":true,"alert_chat":"","max_parallel_tasks":1}')
-              PROJECT_ID=$(echo "$PROJECT" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created project ID: $PROJECT_ID"
-
-              # 2. Create maintenance SSH key from mounted secret
+              # 2. Reconcile bootstrap-owned SSH keys without destroying the project.
+              delete_named_resource "keys" "HaaC Maintenance SSH Key"
               KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
                 -H "Content-Type: application/json" \
                 -d "{\"name\":\"HaaC Maintenance SSH Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$(cat $MAINTENANCE_SSH_KEY_PATH | base64 | tr -d '\n')\"}}")
               KEY_ID=$(echo "$KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created maintenance SSH key ID: $KEY_ID"
+              echo "Reconciled maintenance SSH key ID: $KEY_ID"
 
-              # 3. Create Git repository
+              # 3. Reconcile Git repository
 {{- if or (hasPrefix "git@" .Values.global.gitops.repoUrl) (hasPrefix "ssh://" .Values.global.gitops.repoUrl) }}
+              delete_named_resource "keys" "HaaC Repo Deploy Key"
               REPO_KEY=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/keys" \
                 -H "Content-Type: application/json" \
                 -d "{\"name\":\"HaaC Repo Deploy Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$(cat /etc/repo-ssh/repo_deploy_ed25519 | base64 | tr -d '\n')\"}}")
@@ -117,61 +177,48 @@ spec:
               NONE_KEY_ID=$(curl -sf -b /tmp/cookies.txt "$BASE/api/project/$PROJECT_ID/keys" | tr '{' '\n' | grep '"name":"None"' | sed 's/.*"id":\([0-9]*\).*/\1/' | head -n 1)
               REPO_PAYLOAD="{\"name\":\"arr_setup\",\"project_id\":$PROJECT_ID,\"git_url\":\"$REPO_URL\",\"git_branch\":\"$REPO_REVISION\",\"ssh_key_id\":$NONE_KEY_ID}"
 {{- end }}
-              REPO=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/repositories" \
-                -H "Content-Type: application/json" \
-                -d "$REPO_PAYLOAD")
+              REPO=$(upsert_named_resource "repositories" "arr_setup" "$REPO_PAYLOAD")
               REPO_ID=$(echo "$REPO" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created repository ID: $REPO_ID"
+              echo "Reconciled repository ID: $REPO_ID"
 
-              # 4. Create inventory — uses ConfigMap mounted at /opt/ansible/maintenance-inventory.yml
-              # This file auto-updates when Terraform regenerates inventory + Taskfile updates the ConfigMap
-              INV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/inventory" \
-                -H "Content-Type: application/json" \
-                -d "{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"$MAINTENANCE_INVENTORY_PATH\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}")
+              # 4. Reconcile inventory - uses ConfigMap mounted at /opt/ansible/maintenance-inventory.yml
+              INV_PAYLOAD="{\"name\":\"HaaC Nodes\",\"project_id\":$PROJECT_ID,\"inventory\":\"$MAINTENANCE_INVENTORY_PATH\",\"type\":\"file\",\"ssh_key_id\":$KEY_ID,\"repository_id\":$REPO_ID,\"become_key_id\":null}"
+              INV=$(upsert_named_resource "inventory" "HaaC Nodes" "$INV_PAYLOAD")
               INV_ID=$(echo "$INV" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created inventory ID: $INV_ID"
+              echo "Reconciled inventory ID: $INV_ID"
 
-              # 5. Create environment (accept new SSH host keys instead of disabling trust)
-              ENV=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/environment" \
-                -H "Content-Type: application/json" \
-                -d "{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"True\\\",\\\"HAAC_SSH_HOST_KEY_CHECKING\\\":\\\"accept-new\\\",\\\"HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH\\\":\\\"$MAINTENANCE_SSH_KEY_PATH\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}")
+              # 5. Reconcile environment (accept new SSH host keys instead of disabling trust)
+              ENV_PAYLOAD="{\"name\":\"Default\",\"project_id\":$PROJECT_ID,\"env\":\"{\\\"ANSIBLE_HOST_KEY_CHECKING\\\":\\\"True\\\",\\\"HAAC_SSH_HOST_KEY_CHECKING\\\":\\\"accept-new\\\",\\\"HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH\\\":\\\"$MAINTENANCE_SSH_KEY_PATH\\\",\\\"HAAC_SSH_KNOWN_HOSTS_PATH\\\":\\\"$MAINTENANCE_KNOWN_HOSTS_PATH\\\",\\\"DEBIAN_FRONTEND\\\":\\\"noninteractive\\\"}\",\"json\":\"{}\"}"
+              ENV=$(upsert_named_resource "environment" "Default" "$ENV_PAYLOAD")
               ENV_ID=$(echo "$ENV" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created environment ID: $ENV_ID"
+              echo "Reconciled environment ID: $ENV_ID"
 
-              # 6. Create task template: K3s Nodes Update
-              TPL_K3S=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/templates" \
-                -H "Content-Type: application/json" \
-                -d "{\"name\":\"Rolling OS Update - K3s Nodes\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna i nodi K3s (serial: 1) ogni lunedi notte\"}")
+              # 6. Reconcile task template: K3s Nodes Update
+              TPL_K3S_PAYLOAD="{\"name\":\"Rolling OS Update - K3s Nodes\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/maintenance-k3s-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna i nodi K3s (serial: 1) ogni lunedi notte\"}"
+              TPL_K3S=$(upsert_named_resource "templates" "Rolling OS Update - K3s Nodes" "$TPL_K3S_PAYLOAD")
               TPL_K3S_ID=$(echo "$TPL_K3S" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created K3s template ID: $TPL_K3S_ID"
+              echo "Reconciled K3s template ID: $TPL_K3S_ID"
 
-              # 7. Create task template: Proxmox Hosts Update
-              TPL_PVE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/templates" \
-                -H "Content-Type: application/json" \
-                -d "{\"name\":\"Rolling OS Update - Proxmox Hosts\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/maintenance-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna gli host Proxmox (serial: 1) ogni lunedi notte\"}")
+              # 7. Reconcile task template: Proxmox Hosts Update
+              TPL_PVE_PAYLOAD="{\"name\":\"Rolling OS Update - Proxmox Hosts\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/maintenance-proxmox-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Aggiorna gli host Proxmox (serial: 1) ogni lunedi notte\"}"
+              TPL_PVE=$(upsert_named_resource "templates" "Rolling OS Update - Proxmox Hosts" "$TPL_PVE_PAYLOAD")
               TPL_PVE_ID=$(echo "$TPL_PVE" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created Proxmox template ID: $TPL_PVE_ID"
+              echo "Reconciled Proxmox template ID: $TPL_PVE_ID"
 
-              # 7.5 Create task template: K3s Database Restore
-              # It will run a local bash script generated dynamically via an inline playbook since Semaphore runs ansible natively
-              TPL_RESTORE=$(curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/templates" \
-                -H "Content-Type: application/json" \
-                -d "{\"name\":\"⚠️ Restore K3s Database (from NAS)\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/restore-k3s-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Ripristina il db SQLite dal NAS sul master nodo. USARE CON CAUTELA. Parametro BACKUP_FILE facoltativo (es. BACKUP_FILE=k3s-state-2023.db)\"}")
+              # 7.5 Reconcile task template: K3s Database Restore
+              TPL_RESTORE_PAYLOAD="{\"name\":\"Restore K3s Database (from NAS)\",\"project_id\":$PROJECT_ID,\"app\":\"ansible\",\"playbook\":\"HaaC/ansible/restore-k3s-playbook.yml\",\"inventory_id\":$INV_ID,\"repository_id\":$REPO_ID,\"environment_id\":$ENV_ID,\"description\":\"Restore the SQLite database from NAS to the master node. Use with care. Optional BACKUP_FILE parameter (example: BACKUP_FILE=k3s-state-2023.db).\"}"
+              TPL_RESTORE=$(upsert_named_resource "templates" "Restore K3s Database (from NAS)" "$TPL_RESTORE_PAYLOAD")
               TPL_RESTORE_ID=$(echo "$TPL_RESTORE" | sed 's/.*"id":\([0-9]*\).*/\1/')
-              echo "Created Restore DB template ID: $TPL_RESTORE_ID"
+              echo "Reconciled Restore DB template ID: $TPL_RESTORE_ID"
 
-              # 8. Create schedules (every Monday at 03:00 Rome = 02:00 UTC)
-              curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/schedules" \
-                -H "Content-Type: application/json" \
-                -d "{\"project_id\":$PROJECT_ID,\"template_id\":$TPL_K3S_ID,\"cron_format\":\"0 2 * * 1\",\"enabled\":true}" > /dev/null
-              echo "Created K3s schedule"
+              # 8. Reconcile schedules (every Monday at 03:00 Rome = 02:00 UTC)
+              upsert_schedule "$TPL_K3S_ID" "0 2 * * 1"
+              echo "Reconciled K3s schedule"
 
-              curl -sf -b /tmp/cookies.txt -X POST "$BASE/api/project/$PROJECT_ID/schedules" \
-                -H "Content-Type: application/json" \
-                -d "{\"project_id\":$PROJECT_ID,\"template_id\":$TPL_PVE_ID,\"cron_format\":\"30 2 * * 1\",\"enabled\":true}" > /dev/null
-              echo "Created Proxmox schedule (30min after K3s)"
+              upsert_schedule "$TPL_PVE_ID" "30 2 * * 1"
+              echo "Reconciled Proxmox schedule (30min after K3s)"
 
-              echo "✅ Semaphore bootstrap complete!"
+              echo "Semaphore bootstrap complete."
       volumes:
         - name: maintenance-ssh-key
           secret:

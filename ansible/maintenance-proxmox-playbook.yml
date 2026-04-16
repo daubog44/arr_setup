@@ -1,0 +1,19 @@
+---
+- name: Rolling OS Update (Proxmox Hosts)
+  hosts: proxmox_host
+  serial: 1
+  gather_facts: false
+  tasks:
+    - name: Wait for host to be reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+
+    - name: Run bounded Proxmox maintenance wrapper
+      ansible.builtin.command: /usr/local/sbin/haac-proxmox-maintenance
+      become: true
+      register: maintenance_result
+      changed_when: true
+
+    - name: Log Proxmox host reboot status
+      ansible.builtin.debug:
+        msg: "Proxmox host {{ inventory_hostname }} {{ 'needs a manual reboot when convenient' if 'REBOOT_REQUIRED=1' in maintenance_result.stdout else 'is up to date' }}"

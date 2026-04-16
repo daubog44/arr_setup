@@ -1435,19 +1435,25 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
         ),
     ]
 
-    ensure_semaphore_ssh_keypair()
     ensure_repo_deploy_ssh_keypair()
     maintenance_ssh_key = SEMAPHORE_SSH_PRIVATE_KEY_PATH
-    if maintenance_ssh_key.exists():
-        secrets.append(
-            (
-                "haac-maintenance-ssh-key",
-                "mgmt",
-                SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT,
-                None,
-                {"maintenance_ed25519": maintenance_ssh_key},
-            )
+    if not maintenance_ssh_key.exists() or not SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
+        raise HaaCError(
+            "Semaphore maintenance SSH keypair is missing. Run `task configure-os` or `task up` first so the "
+            "maintenance key is generated and authorized before it is published to the cluster."
         )
+    secrets.append(
+        (
+            "haac-maintenance-ssh-key",
+            "mgmt",
+            SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT,
+            None,
+            {
+                "maintenance_ed25519": maintenance_ssh_key,
+                "known_hosts": known_hosts_path(env),
+            },
+        )
+    )
 
     repo_url = env["GITOPS_REPO_URL"]
     if repo_url_requires_ssh_auth(repo_url):
@@ -2956,7 +2962,6 @@ def doctor() -> None:
     env = merged_env()
     failures: list[str] = []
     ensure_repo_ssh_keypair()
-    ensure_semaphore_ssh_keypair()
     ensure_repo_deploy_ssh_keypair()
     known_hosts_path(env)
     checks = [
@@ -2995,8 +3000,10 @@ def doctor() -> None:
     if SEMAPHORE_SSH_PRIVATE_KEY_PATH.exists() and SEMAPHORE_SSH_PUBLIC_KEY_PATH.exists():
         print(f"[ok] semaphore maintenance ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
     else:
-        print(f"[missing] semaphore maintenance ssh keypair: {SEMAPHORE_SSH_PRIVATE_KEY_PATH}")
-        failures.append("semaphore-ssh-keypair")
+        print(
+            f"[warn] semaphore maintenance ssh keypair missing: {SEMAPHORE_SSH_PRIVATE_KEY_PATH} "
+            "(it will be created during `configure-os` or `task up` before cluster publication)"
+        )
 
     if REPO_DEPLOY_SSH_PRIVATE_KEY_PATH.exists() and REPO_DEPLOY_SSH_PUBLIC_KEY_PATH.exists():
         print(f"[ok] repo deploy ssh keypair: {REPO_DEPLOY_SSH_PRIVATE_KEY_PATH}")
@@ -3355,6 +3362,7 @@ def cmd_pre_commit_hook(_: argparse.Namespace) -> None:
 
 def cmd_run_ansible(args: argparse.Namespace) -> None:
     env = merged_env()
+    ensure_semaphore_ssh_keypair()
     inventory = ROOT / args.inventory
     playbook = ROOT / args.playbook
     extra_args = shlex.split(args.extra_args) if args.extra_args else []
