@@ -9,6 +9,7 @@ The public UI contract is also inconsistent: Homepage still renders the `ChaosTe
 - Change Litmus from `edge_forward_auth` to `app_native` in the public ingress catalog.
 - Remove the `ChaosTest` Homepage alias from the Litmus route definition.
 - Introduce a repo-managed Litmus admin secret derived from operator inputs instead of relying on the chart default `admin/litmus`.
+- Add an idempotent Litmus admin self-heal step so persisted MongoDB state is reconciled back to the repo-managed secret before browser verification.
 - Update browser verification so Litmus is only considered healthy if the app-native login succeeds with the repo-managed admin credential.
 - Update the stable public UI spec so Litmus is modeled as one canonical app-native route.
 

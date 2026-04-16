@@ -24,6 +24,19 @@ Behavior:
 
 This keeps the credential repo-managed without hardcoding it in the Application manifest.
 
+### Persisted auth drift
+
+Litmus persists the admin account in MongoDB and does not automatically overwrite an existing admin when the secret changes. That means a repo-managed credential can still fail after a prior bootstrap.
+
+The robust behavior in this repo is:
+
+- probe the Litmus auth server with the repo-managed credential before browser verification
+- if the login is already valid, continue
+- if the login fails with `invalid_credentials`, delete only the persisted Litmus admin user from MongoDB, restart `litmus-auth-server`, and let the service recreate the admin from the repo-managed secret
+- clear the `is_initial_login` flag so browser verification reaches the Litmus landing page instead of the password-reset wizard
+
+This keeps the fix idempotent and avoids requiring manual MongoDB cleanup when Litmus state drifts from the declared secret.
+
 ### Homepage
 
 The Litmus entry remains the single canonical Chaos UI entry. The `ChaosTest` alias is removed from the ingress catalog and from the stable spec.
@@ -38,3 +51,4 @@ Browser verification must now:
 - confirm it is not redirected through Authelia
 - log in with the repo-managed Litmus admin credential
 - fail if the UI stays on the login page or renders an error banner
+- fail if the UI lands on the Litmus initial password-reset flow instead of an authenticated landing page
