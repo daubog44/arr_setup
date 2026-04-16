@@ -31,7 +31,7 @@ metadata:
 spec:
   forwardAuth:
     address: http://authelia.mgmt.svc.cluster.local:9091/api/authz/forward-auth?strategy=header
-    trustForwardHeader: false
+    trustForwardHeader: true
     authResponseHeaders:
       - Remote-User
       - Remote-Groups
