@@ -132,6 +132,28 @@ const routeChecks = {
           throw new Error(`Litmus login failed: ${body}`);
         }
         if (!url.includes("/login") && /Chaos|Workflow|Probe|Targets|Project/i.test(body)) {
+          const manualBootstrapMarkers = [
+            "Deploying your Infrastructure",
+            "kubectl apply -f",
+            "There are no Kubernetes Chaos Infrastructures",
+            "Enable Chaos in Environments",
+          ];
+          for (const marker of manualBootstrapMarkers) {
+            if (body.includes(marker)) {
+              throw new Error(`Litmus still requires manual bootstrap: ${marker}`);
+            }
+          }
+          const environmentsLink = currentPage.locator('text=/Environments/i').first();
+          if (await environmentsLink.count()) {
+            await environmentsLink.click().catch(() => {});
+            await currentPage.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+            const environmentBody = String((await currentPage.textContent("body").catch(() => "")) || "");
+            for (const marker of manualBootstrapMarkers) {
+              if (environmentBody.includes(marker)) {
+                throw new Error(`Litmus environment page still requires manual bootstrap: ${marker}`);
+              }
+            }
+          }
           return;
         }
       }

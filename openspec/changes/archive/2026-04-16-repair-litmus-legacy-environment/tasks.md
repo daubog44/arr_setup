@@ -1,0 +1,5 @@
+- [x] 1.1 Extend the Litmus chaos reconciler to migrate the legacy `test` environment out of the UI path when the canonical default environment is healthy
+- [x] 1.2 Keep the bootstrap idempotent by preserving `haac-default` as the only supported canonical environment and applying the legacy cleanup only when needed
+- [x] 2.1 Validate with `openspec validate repair-litmus-legacy-environment`
+- [x] 2.2 Validate live with `python scripts/haac.py reconcile-litmus-chaos ...` and confirm the legacy `test` environment no longer appears as a manual bootstrap path
+- [x] 2.3 Validate with `node scripts/verify-public-auth.mjs`

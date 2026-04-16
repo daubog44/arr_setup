@@ -1,0 +1,7 @@
+- [x] 1.1 Add Litmus API helpers for login, GraphQL queries, environment discovery, infra discovery, infra deletion, and infra registration
+- [x] 1.2 Implement `reconcile_litmus_chaos` to ensure a usable environment and active default chaos infrastructure without manual YAML apply
+- [x] 1.3 Wire the Litmus chaos reconciler into `task up`, `reconcile:argocd`, and `reconcile:gitops`
+- [x] 1.4 Strengthen Litmus verification so the manual "download/apply YAML" path is treated as a regression
+- [x] 2.1 Validate with `openspec validate automate-litmus-chaos-bootstrap`
+- [x] 2.2 Validate with `task -n up`
+- [x] 2.3 Validate live with `task reconcile:gitops` and confirm Litmus no longer asks the operator to download/apply infrastructure YAML

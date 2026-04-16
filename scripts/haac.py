@@ -2422,6 +2422,442 @@ def litmus_login_probe(port: int, username: str, password: str) -> tuple[int, st
         return exc.code, exc.read().decode("utf-8")
 
 
+LITMUS_DEFAULT_ENVIRONMENT_ID = "haac-default"
+LITMUS_DEFAULT_ENVIRONMENT_NAME = "haac-default"
+LITMUS_LEGACY_ENVIRONMENT_ID = "test"
+LITMUS_DEFAULT_ENVIRONMENT_DESCRIPTION = "HaaC default chaos environment"
+LITMUS_DEFAULT_INFRA_NAME = "haac-default"
+LITMUS_DEFAULT_INFRA_DESCRIPTION = "HaaC default chaos infrastructure"
+LITMUS_DEFAULT_INFRA_NAMESPACE = "litmus"
+LITMUS_DEFAULT_INFRA_SERVICE_ACCOUNT = "litmus"
+LITMUS_ENVIRONMENT_TYPE = "NON_PROD"
+LITMUS_INFRA_TYPE = "Kubernetes"
+LITMUS_PLATFORM_NAME = "Kubernetes"
+LITMUS_INFRA_SCOPE = "cluster"
+LITMUS_FRONTEND_INTERNAL_URL = "http://litmus-frontend-service.chaos.svc.cluster.local:9091"
+LITMUS_BACKEND_INTERNAL_URL = "http://litmus-server-service.chaos.svc.cluster.local:9002"
+LITMUS_AGENT_DEPLOYMENTS = (
+    "chaos-operator-ce",
+    "chaos-exporter",
+    "subscriber",
+    "event-tracker",
+    "workflow-controller",
+)
+
+
+def litmus_http_json(
+    url: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+    token: str | None = None,
+    referer: str | None = None,
+    timeout: int = 60,
+) -> dict[str, object]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if referer:
+        headers["Referer"] = referer
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8")
+        raise HaaCError(f"Litmus API request failed: {method} {url}\n{detail}") from exc
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HaaCError(f"Litmus API returned non-JSON content: {method} {url}") from exc
+
+
+def litmus_auth_login(port: int, username: str, password: str) -> dict[str, object]:
+    response = litmus_http_json(
+        f"http://127.0.0.1:{port}/login",
+        method="POST",
+        payload={"username": username, "password": password},
+    )
+    access_token = str(response.get("accessToken") or "")
+    project_id = str(response.get("projectID") or "")
+    if not access_token or not project_id:
+        raise HaaCError("Litmus auth login did not return an access token and project ID")
+    return response
+
+
+def litmus_graphql(
+    port: int,
+    token: str,
+    query: str,
+    variables: dict[str, object],
+    *,
+    referer: str = LITMUS_FRONTEND_INTERNAL_URL,
+) -> dict[str, object]:
+    response = litmus_http_json(
+        f"http://127.0.0.1:{port}/query",
+        method="POST",
+        payload={"query": query, "variables": variables},
+        token=token,
+        referer=referer,
+    )
+    errors = response.get("errors")
+    if isinstance(errors, list) and errors:
+        detail = json.dumps(errors, ensure_ascii=False)
+        raise HaaCError(f"Litmus GraphQL request failed:\n{detail}")
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise HaaCError("Litmus GraphQL request returned no data payload")
+    return data
+
+
+def litmus_list_environments(server_port: int, token: str, project_id: str) -> list[dict[str, object]]:
+    data = litmus_graphql(
+        server_port,
+        token,
+        "query ListEnvironments($projectID: ID!) { listEnvironments(projectID: $projectID) { totalNoOfEnvironments environments { environmentID name description type infraIDs } } }",
+        {"projectID": project_id},
+    )
+    payload = data.get("listEnvironments") or {}
+    environments = payload.get("environments") or []
+    return [item for item in environments if isinstance(item, dict)]
+
+
+def litmus_create_environment(server_port: int, token: str, project_id: str, environment_id: str, name: str) -> dict[str, object]:
+    data = litmus_graphql(
+        server_port,
+        token,
+        "mutation CreateEnvironment($projectID: ID!, $request: CreateEnvironmentRequest!) { createEnvironment(projectID: $projectID, request: $request) { environmentID name description type infraIDs } }",
+        {
+            "projectID": project_id,
+            "request": {
+                "environmentID": environment_id,
+                "name": name,
+                "type": LITMUS_ENVIRONMENT_TYPE,
+                "description": LITMUS_DEFAULT_ENVIRONMENT_DESCRIPTION,
+                "tags": ["haac", "default"],
+            },
+        },
+    )
+    created = data.get("createEnvironment")
+    if not isinstance(created, dict):
+        raise HaaCError("Litmus did not return the created environment")
+    return created
+
+
+def litmus_list_infras(server_port: int, token: str, project_id: str) -> list[dict[str, object]]:
+    data = litmus_graphql(
+        server_port,
+        token,
+        "query ListInfras($projectID: ID!) { listInfras(projectID: $projectID) { totalNoOfInfras infras { infraID name description environmentID infraNamespace serviceAccount infraScope isActive isInfraConfirmed token } } }",
+        {"projectID": project_id},
+    )
+    payload = data.get("listInfras") or {}
+    infras = payload.get("infras") or []
+    return [item for item in infras if isinstance(item, dict)]
+
+
+def litmus_delete_infra(server_port: int, token: str, project_id: str, infra_id: str) -> None:
+    litmus_graphql(
+        server_port,
+        token,
+        "mutation DeleteInfra($projectID: ID!, $infraID: String!) { deleteInfra(projectID: $projectID, infraID: $infraID) }",
+        {"projectID": project_id, "infraID": infra_id},
+    )
+
+
+def litmus_register_infra(server_port: int, token: str, project_id: str, environment_id: str, infra_name: str) -> dict[str, object]:
+    data = litmus_graphql(
+        server_port,
+        token,
+        "mutation RegisterInfra($projectID: ID!, $request: RegisterInfraRequest!) { registerInfra(projectID: $projectID, request: $request) { infraID token name manifest } }",
+        {
+            "projectID": project_id,
+            "request": {
+                "name": infra_name,
+                "description": LITMUS_DEFAULT_INFRA_DESCRIPTION,
+                "environmentID": environment_id,
+                "infrastructureType": LITMUS_INFRA_TYPE,
+                "platformName": LITMUS_PLATFORM_NAME,
+                "infraScope": LITMUS_INFRA_SCOPE,
+                "infraNamespace": LITMUS_DEFAULT_INFRA_NAMESPACE,
+                "serviceAccount": LITMUS_DEFAULT_INFRA_SERVICE_ACCOUNT,
+                "infraNsExists": False,
+                "infraSaExists": False,
+                "skipSsl": False,
+                "tags": ["haac", "default"],
+            },
+        },
+    )
+    registered = data.get("registerInfra")
+    if not isinstance(registered, dict):
+        raise HaaCError("Litmus did not return the registered infrastructure payload")
+    manifest = str(registered.get("manifest") or "")
+    if not manifest:
+        raise HaaCError("Litmus did not return the infrastructure manifest")
+    return registered
+
+
+def select_litmus_reconcile_targets(environments: list[dict[str, object]]) -> list[tuple[str, str, bool]]:
+    by_id = {str(item.get("environmentID") or ""): item for item in environments}
+    if LITMUS_DEFAULT_ENVIRONMENT_ID in by_id:
+        current = by_id[LITMUS_DEFAULT_ENVIRONMENT_ID]
+        return [
+            (
+                LITMUS_DEFAULT_ENVIRONMENT_ID,
+                str(current.get("name") or LITMUS_DEFAULT_ENVIRONMENT_NAME),
+                False,
+            )
+        ]
+    return [(LITMUS_DEFAULT_ENVIRONMENT_ID, LITMUS_DEFAULT_ENVIRONMENT_NAME, True)]
+
+
+def wait_for_litmus_agent_rollout(kubectl: str, kubeconfig: Path) -> None:
+    for deployment in LITMUS_AGENT_DEPLOYMENTS:
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(kubeconfig),
+                "rollout",
+                "status",
+                f"deployment/{deployment}",
+                "-n",
+                LITMUS_DEFAULT_INFRA_NAMESPACE,
+                "--timeout=240s",
+            ]
+        )
+
+
+def wait_for_litmus_infra_active(server_port: int, token: str, project_id: str, infra_name: str, environment_id: str, timeout_seconds: int = 300) -> dict[str, object]:
+    deadline = time.time() + timeout_seconds
+    last_state = ""
+    while time.time() < deadline:
+        infras = litmus_list_infras(server_port, token, project_id)
+        for infra in infras:
+            if str(infra.get("environmentID") or "") != environment_id:
+                continue
+            if str(infra.get("name") or "") != infra_name:
+                continue
+            if bool(infra.get("isActive")) and bool(infra.get("isInfraConfirmed")):
+                return infra
+            last_state = json.dumps(
+                {
+                    "infraID": infra.get("infraID"),
+                    "name": infra.get("name"),
+                    "isActive": infra.get("isActive"),
+                    "isInfraConfirmed": infra.get("isInfraConfirmed"),
+                },
+                ensure_ascii=False,
+            )
+        time.sleep(5)
+    raise HaaCError(
+        "Litmus infrastructure did not become active and confirmed within the timeout"
+        + (f": {last_state}" if last_state else "")
+    )
+
+
+def reconcile_litmus_environment_target(
+    server_port: int,
+    token: str,
+    project_id: str,
+    environment_id: str,
+    environment_name: str,
+    *,
+    should_create_environment: bool,
+    kubectl: str,
+    kubeconfig: Path,
+) -> None:
+    if should_create_environment:
+        litmus_create_environment(server_port, token, project_id, environment_id, environment_name)
+        print(f"[ok] Litmus default environment created: {environment_name} ({environment_id})")
+    else:
+        print(f"[ok] Litmus environment ready: {environment_name} ({environment_id})")
+
+    infras = litmus_list_infras(server_port, token, project_id)
+    active_infras = [
+        infra
+        for infra in infras
+        if str(infra.get("environmentID") or "") == environment_id and bool(infra.get("isActive")) and bool(infra.get("isInfraConfirmed"))
+    ]
+    if active_infras:
+        active = active_infras[0]
+        print(
+            f"[ok] Litmus chaos infrastructure already active: "
+            f"{active.get('name')} ({active.get('infraID')}) in {environment_id}"
+        )
+        return
+
+    infra_name = LITMUS_DEFAULT_INFRA_NAME
+    stale_default_infras = [
+        infra
+        for infra in infras
+        if str(infra.get("environmentID") or "") == environment_id
+        and str(infra.get("name") or "") == infra_name
+    ]
+    for infra in stale_default_infras:
+        infra_id = str(infra.get("infraID") or "")
+        if infra_id:
+            litmus_delete_infra(server_port, token, project_id, infra_id)
+            print(f"[ok] Litmus stale infrastructure record removed: {infra_id}")
+
+    registered = litmus_register_infra(server_port, token, project_id, environment_id, infra_name)
+    manifest = str(registered["manifest"])
+    infra_id = str(registered["infraID"])
+    run(
+        [kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"],
+        input_text=manifest,
+    )
+    wait_for_litmus_agent_rollout(kubectl, kubeconfig)
+    active = wait_for_litmus_infra_active(server_port, token, project_id, infra_name, environment_id)
+    print(
+        f"[ok] Litmus chaos infrastructure active: "
+        f"{active.get('name')} ({active.get('infraID') or infra_id}) in {environment_id}"
+    )
+
+
+def litmus_hide_legacy_environment(
+    kubectl: str,
+    kubeconfig: Path,
+    mongo_uri: str,
+    *,
+    username: str,
+) -> bool:
+    update_script = (
+        'const actor={user_id:"",username:'
+        + json.dumps(username)
+        + ',email:""};'
+        "const now=Date.now();"
+        'const env=db.getSiblingDB("litmus").environment.updateMany('
+        '{environment_id:"test",is_removed:false},'
+        '{\\$set:{is_removed:true,updated_at:now,updated_by:actor}}'
+        ");"
+        'const infra=db.getSiblingDB("litmus").chaosInfrastructures.updateMany('
+        '{environment_id:"test",is_removed:false},'
+        '{\\$set:{is_removed:true,is_registered:false,is_active:false,is_infra_confirmed:false,updated_at:now,updated_by:actor}}'
+        ");"
+        "print(JSON.stringify({envModified:env.modifiedCount,infraModified:infra.modifiedCount}));"
+    )
+    completed = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "exec",
+            "-n",
+            "chaos",
+            "statefulset/litmus-mongodb",
+            "--",
+            "mongosh",
+            "--quiet",
+            mongo_uri,
+            "--eval",
+            update_script,
+        ],
+        capture_output=True,
+    )
+    payload = json.loads((completed.stdout or "{}").strip() or "{}")
+    changed = int(payload.get("envModified") or 0) > 0 or int(payload.get("infraModified") or 0) > 0
+    if changed:
+        run([kubectl, "--kubeconfig", str(kubeconfig), "rollout", "restart", "deployment/litmus-server", "-n", "chaos"])
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(kubeconfig),
+                "rollout",
+                "status",
+                "deployment/litmus-server",
+                "-n",
+                "chaos",
+                "--timeout=180s",
+            ]
+        )
+    return changed
+
+
+def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
+    env = merged_env()
+    username = env.get("LITMUS_ADMIN_USERNAME", "admin")
+    password = env.get("LITMUS_ADMIN_PASSWORD") or env.get("AUTHELIA_ADMIN_PASSWORD")
+    if not password:
+        print("[skip] Litmus chaos reconciliation skipped: no LITMUS_ADMIN_PASSWORD or AUTHELIA_ADMIN_PASSWORD configured")
+        return
+
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        if run([kubectl, "--kubeconfig", str(session_kubeconfig), "get", "deploy", "litmus-auth-server", "-n", "chaos"], check=False).returncode != 0:
+            print("[skip] Litmus chaos reconciliation skipped: litmus-auth-server deployment is not present")
+            return
+        if run([kubectl, "--kubeconfig", str(session_kubeconfig), "get", "deploy", "litmus-server", "-n", "chaos"], check=False).returncode != 0:
+            print("[skip] Litmus chaos reconciliation skipped: litmus-server deployment is not present")
+            return
+
+        auth_service = kubectl_json(
+            kubectl,
+            session_kubeconfig,
+            ["get", "svc", "litmus-auth-server-service", "-n", "chaos", "-o", "json"],
+            context="Unable to read Litmus auth service",
+        )
+        auth_port = int(((auth_service.get("spec") or {}).get("ports") or [{}])[0].get("port") or 0)
+        if auth_port <= 0:
+            raise HaaCError("Unable to determine the Litmus auth service port")
+
+        server_service = kubectl_json(
+            kubectl,
+            session_kubeconfig,
+            ["get", "svc", "litmus-server-service", "-n", "chaos", "-o", "json"],
+            context="Unable to read Litmus server service",
+        )
+        server_port = int(((server_service.get("spec") or {}).get("ports") or [{}])[0].get("port") or 0)
+        if server_port <= 0:
+            raise HaaCError("Unable to determine the Litmus server service port")
+
+        mongodb_secret = kubectl_json(
+            kubectl,
+            session_kubeconfig,
+            ["get", "secret", "litmus-mongodb", "-n", "chaos", "-o", "json"],
+            context="Unable to read Litmus MongoDB secret",
+        )
+        mongodb_data = decode_secret_data(mongodb_secret)
+        mongodb_root_password = mongodb_data.get("mongodb-root-password")
+        if not mongodb_root_password:
+            raise HaaCError("Litmus MongoDB root password is missing from secret litmus-mongodb")
+        mongo_uri = (
+            "mongodb://root:"
+            f"{urllib.parse.quote(mongodb_root_password, safe='')}"
+            "@127.0.0.1:27017/admin?authSource=admin"
+        )
+
+        with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as auth_pf, kubectl_port_forward(
+            kubectl, session_kubeconfig, "chaos", "svc/litmus-server-service", server_port
+        ) as server_pf:
+            login = litmus_auth_login(auth_pf, username, password)
+            project_id = str(login["projectID"])
+            token = str(login["accessToken"])
+
+            environments = litmus_list_environments(server_pf, token, project_id)
+            targets = select_litmus_reconcile_targets(environments)
+            for environment_id, environment_name, should_create_environment in targets:
+                reconcile_litmus_environment_target(
+                    server_pf,
+                    token,
+                    project_id,
+                    environment_id,
+                    environment_name,
+                    should_create_environment=should_create_environment,
+                    kubectl=kubectl,
+                    kubeconfig=session_kubeconfig,
+                )
+            if any(str(item.get("environmentID") or "") == LITMUS_LEGACY_ENVIRONMENT_ID for item in environments):
+                if litmus_hide_legacy_environment(kubectl, session_kubeconfig, mongo_uri, username=username):
+                    print("[ok] Litmus legacy test environment hidden after canonical environment bootstrap")
+                else:
+                    print("[ok] Litmus legacy test environment already hidden")
+
+
 def litmus_clear_initial_login(
     kubectl: str,
     kubeconfig: Path,
@@ -3741,6 +4177,10 @@ def cmd_reconcile_litmus_admin(args: argparse.Namespace) -> None:
     reconcile_litmus_admin(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
+def cmd_reconcile_litmus_chaos(args: argparse.Namespace) -> None:
+    reconcile_litmus_chaos(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
+
+
 def cmd_verify_web(args: argparse.Namespace) -> None:
     verify_web(args.domain)
 
@@ -3920,6 +4360,13 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--kubeconfig", required=True)
     command.add_argument("--kubectl", default="kubectl")
     command.set_defaults(func=cmd_reconcile_litmus_admin)
+
+    command = subparsers.add_parser("reconcile-litmus-chaos")
+    command.add_argument("--master-ip", required=True)
+    command.add_argument("--proxmox-host", required=True)
+    command.add_argument("--kubeconfig", required=True)
+    command.add_argument("--kubectl", default="kubectl")
+    command.set_defaults(func=cmd_reconcile_litmus_chaos)
 
     command = subparsers.add_parser("verify-web")
     command.add_argument("--domain", required=True)
