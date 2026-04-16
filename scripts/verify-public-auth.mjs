@@ -108,7 +108,48 @@ function loadIngressCatalog(content, domainName) {
 
 const routeChecks = {
   homepage: { expectedText: "ChaosTest" },
-  headlamp: { type: "headlamp" },
+  headlamp: {
+    type: "native_oidc",
+    async preAuthAction(currentPage) {
+      const oidcButton = currentPage.locator('text=/Sign in|Log in/i');
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (await oidcButton.count()) {
+          await oidcButton.first().waitFor({ state: "visible", timeout: 30000 });
+          await oidcButton.first().click();
+          return;
+        }
+        if (new URL(currentPage.url()).host.startsWith("auth.")) {
+          return;
+        }
+        await currentPage.waitForTimeout(1000);
+      }
+      throw new Error("Headlamp OIDC sign-in button did not appear");
+    },
+    async waitForSuccess(currentPage, env) {
+      const expectedHost = `headlamp.${env.DOMAIN_NAME}`;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await currentPage.waitForTimeout(1000);
+        if (new URL(currentPage.url()).host !== expectedHost) {
+          continue;
+        }
+        const body = String((await currentPage.textContent("body").catch(() => "")) || "");
+        if (body.includes("invalid_request")) {
+          throw new Error(`Headlamp OIDC callback failed: ${body}`);
+        }
+        if (body.includes("Use A Token")) {
+          throw new Error("Headlamp still rendered the internal token login after OIDC");
+        }
+        if (body.includes("Unauthorized")) {
+          throw new Error("Headlamp rendered an unauthorized cluster state after OIDC");
+        }
+        if (!body.includes("Headlamp")) {
+          continue;
+        }
+        return;
+      }
+      throw new Error(`Headlamp did not converge to the authenticated UI at https://${expectedHost}`);
+    },
+  },
   ntfy: {},
   litmus: {},
   falco: {},
@@ -242,21 +283,6 @@ async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedTex
   await screenshot(page, screenshotName);
 }
 
-async function verifyHeadlamp(page, env) {
-  const expectedHost = `headlamp.${env.DOMAIN_NAME}`;
-  await verifyEdgeRoute(page, env, "headlamp", "headlamp");
-  await ensureHost(page, expectedHost, env);
-  const body = await page.textContent("body").catch(() => "");
-  if (String(body).includes("Use A Token")) {
-    await screenshot(page, "headlamp-main-still-login");
-    throw new Error("Headlamp still presented the internal login UI behind edge auth");
-  }
-  if (String(body).includes("Unauthorized")) {
-    await screenshot(page, "headlamp-main-unauthorized");
-    throw new Error("Headlamp rendered an unauthorized cluster state after edge auth");
-  }
-}
-
 async function verifyNativeOidc(page, env, endpoint, screenshotName, options = {}) {
   const expectedHost = `${endpoint.subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}${options.pathSuffix || ""}`, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -309,10 +335,6 @@ async function run() {
   try {
     for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "edge_forward_auth")) {
       const routeConfig = routeChecks[endpoint.name] || {};
-      if (routeConfig.type === "headlamp") {
-        await verifyHeadlamp(page, env);
-        continue;
-      }
       await verifyEdgeRoute(page, env, endpoint.subdomain, endpoint.name, routeConfig.expectedText ?? null);
     }
     for (const endpoint of ingressCatalog.filter(endpoint => endpoint.auth === "native_oidc")) {

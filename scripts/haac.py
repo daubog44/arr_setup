@@ -50,6 +50,7 @@ VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "valu
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
+HEADLAMP_OIDC_SECRET_OUTPUT = SECRETS_DIR / "headlamp-oidc-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 GITOPS_RENDERED_OUTPUTS = (
@@ -1300,6 +1301,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "ARGOCD_OIDC_SECRET",
             "QUI_PASSWORD",
             "GRAFANA_OIDC_SECRET",
+            "HEADLAMP_OIDC_SECRET",
             "SEMAPHORE_DB_PASSWORD",
             "SEMAPHORE_APP_SECRET",
             "SEMAPHORE_OIDC_SECRET",
@@ -1384,6 +1386,13 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "monitoring",
             SECRETS_DIR / "grafana-oidc-sealed-secret.yaml",
             {"clientSecret": env["GRAFANA_OIDC_SECRET"]},
+            None,
+        ),
+        (
+            "headlamp-oidc-secret",
+            "mgmt",
+            HEADLAMP_OIDC_SECRET_OUTPUT,
+            {"clientSecret": env["HEADLAMP_OIDC_SECRET"]},
             None,
         ),
         (

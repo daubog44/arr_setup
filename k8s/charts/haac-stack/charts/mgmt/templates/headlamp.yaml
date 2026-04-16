@@ -22,6 +22,18 @@ spec:
         - name: headlamp
           image: >-
             {{ .Values.global.images.headlamp.repository }}:{{ .Values.global.images.headlamp.tag }}
+          env:
+            - name: HEADLAMP_CONFIG_OIDC_CLIENT_ID
+              value: headlamp
+            - name: HEADLAMP_CONFIG_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: headlamp-oidc-secret
+                  key: clientSecret
+            - name: HEADLAMP_CONFIG_OIDC_IDP_ISSUER_URL
+              value: "https://auth.{{ .Values.global.domainName }}"
+            - name: HEADLAMP_CONFIG_OIDC_SCOPES
+              value: "openid,profile,email,groups"
           ports:
             - containerPort: 4466
           livenessProbe:
@@ -81,3 +93,16 @@ subjects:
   - kind: ServiceAccount
     name: headlamp-viewer
     namespace: mgmt
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-oidc-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: admins

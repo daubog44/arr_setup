@@ -166,7 +166,7 @@ ingresses:
     service: headlamp
     port: 80
     namespace: mgmt
-    auth_strategy: edge_forward_auth
+    auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: Headlamp
     homepage_icon: headlamp.png

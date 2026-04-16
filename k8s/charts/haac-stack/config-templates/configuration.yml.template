@@ -87,3 +87,17 @@ identity_providers:
           - groups
           - email
         userinfo_signed_response_alg: none
+      - client_id: headlamp
+        client_name: Headlamp
+        client_secret: "$plaintext$${HEADLAMP_OIDC_SECRET}"
+        public: false
+        token_endpoint_auth_method: client_secret_basic
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://headlamp.${DOMAIN_NAME}/oidc-callback
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none

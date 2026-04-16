@@ -852,6 +852,13 @@
           kubelet-arg:
             - "feature-gates=KubeletInUserNamespace=true"
             - "read-only-port=0"
+          kube-apiserver-arg:
+            - "oidc-issuer-url=https://auth.{{ lookup('env', 'DOMAIN_NAME') }}"
+            - "oidc-client-id=headlamp"
+            - "oidc-username-claim=preferred_username"
+            - "oidc-groups-claim=groups"
+            - "oidc-username-prefix=-"
+            - "oidc-groups-prefix=-"
           tls-san:
             - "{{ ansible_host | default(groups['k3s_master'][0]) }}"
           disable:

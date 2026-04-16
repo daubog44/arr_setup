@@ -40,7 +40,7 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "3f6de05d7e917c8babf9a95b6e4031fe5e64073a5492108a0f193d0caa60ed4e"
+    autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
   images:
     gluetun:
       repository: qmcgaw/gluetun
@@ -166,7 +166,7 @@ ingresses:
     service: headlamp
     port: 80
     namespace: mgmt
-    auth_strategy: edge_forward_auth
+    auth_strategy: native_oidc
     homepage_group: Management
     homepage_name: Headlamp
     homepage_icon: headlamp.png
@@ -323,7 +323,7 @@ homepage:
   bookmarks:
     Infrastructure:
       - name: Proxmox
-        href: "https://100.94.77.28:8006"
+        href: "https://192.168.0.200:8006"
         icon: proxmox.png
       - name: GitHub
         href: "https://github.com"
