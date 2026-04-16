@@ -26,7 +26,7 @@ Opt-in platform features MUST NOT create dead official URLs when disabled.
 
 ### Requirement: Official app UIs use an explicit auth strategy
 
-Published app UIs MUST declare an explicit per-route auth strategy in the public UI catalog.
+Published app UIs MUST declare an explicit per-route auth strategy in the public UI catalog, and the declared strategy MUST match the live browser-auth behavior.
 
 #### Scenario: Protected route is rendered
 
@@ -38,6 +38,15 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 - **AND** the declared strategy MUST come from `auth_strategy`, not from the legacy `auth_enabled` boolean
 - **AND** the operator-facing endpoint report MUST identify the declared auth strategy rather than only `public` or `protected`
 
+#### Scenario: Official auth matrix is rendered
+
+- **WHEN** the official public UI catalog is rendered
+- **THEN** `authelia` MUST be `public`
+- **AND** `homepage`, `ntfy`, `litmus`, `falco`, and `longhorn` MUST be `edge_forward_auth`
+- **AND** `headlamp` MUST be `edge_forward_auth`
+- **AND** `semaphore`, `grafana`, and `argocd` MUST be `native_oidc`
+- **AND** `jellyfin`, `radarr`, `sonarr`, `prowlarr`, `autobrr`, and `qbittorrent` MUST be `app_native`
+
 #### Scenario: Browser verification runs for a native-OIDC route
 
 - **WHEN** browser-level verification runs for a `native_oidc` route
@@ -45,11 +54,14 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 - **AND** a bare `302` redirect MUST NOT be considered sufficient proof of correctness
 - **AND** the registered OIDC client MUST allow the token endpoint auth method used by the deployed application build
 
-#### Scenario: In-cluster native OIDC is not treated as supported without a converged browser flow
+#### Scenario: Headlamp uses a single-login fallback when native OIDC is not converged
 
-- **WHEN** an in-cluster control-plane UI advertises native OIDC but the browser flow still lands on the local login screen or unauthorized cluster state after the upstream identity step
-- **THEN** the route MUST NOT remain declared as `native_oidc`
-- **AND** the route MUST fall back to `edge_forward_auth` or another strategy that produces a single working login gate
+- **WHEN** Headlamp native OIDC does not converge to the authenticated application in this repo
+- **THEN** `headlamp` MUST NOT remain declared as `native_oidc`
+- **AND** the route MUST fall back to `edge_forward_auth`
+- **AND** the deployment MUST provide a repo-managed in-cluster kubeconfig so the browser lands on the Headlamp application without a second token prompt
+- **AND** stale Headlamp OIDC client and secret artifacts MUST be removed from the repo-managed IdP configuration
+- **AND** the mounted Kubernetes access level MUST be repo-managed and default to a non-admin read-only role
 
 #### Scenario: Browser verification runs for an app-native route
 
@@ -76,6 +88,12 @@ The operator-visible UI catalog MUST include Falco and Litmus when those UIs are
 - **AND** runtime sensor scheduling MUST remain explicit opt-in on compatible nodes instead of assuming every unprivileged LXC worker can host the probe
 - **AND** the compatible-node opt-in MUST be expressible from repo-managed operator inputs rather than as an undocumented manual cluster label
 
+#### Scenario: Litmus aliases stay visible on Homepage
+
+- **WHEN** Litmus is enabled in the official route catalog
+- **THEN** Homepage MUST include the primary `Litmus` link
+- **AND** Homepage MUST also include the `ChaosTest` alias derived from the same route catalog entry
+
 #### Scenario: Edge-auth UI uses shared auth
 
 - **WHEN** Falco, Litmus, Homepage, Longhorn, or another official `edge_forward_auth` UI is published
@@ -90,3 +108,11 @@ Endpoint verification MUST evaluate exactly the official published UI surface.
 - **WHEN** the operator runs endpoint verification or reaches the final `task up` URL summary
 - **THEN** the verification list MUST include every enabled official UI route and no unsupported wildcard hosts
 - **AND** each result MUST report the URL, service, namespace, and declared auth strategy
+
+#### Scenario: Browser verification fallback is available when MCP is unavailable
+
+- **WHEN** browser-level verification is required for the official public UI surface
+- **THEN** the repo MUST prefer Playwright MCP when it is available in the client
+- **AND** the repo MUST provide a repo-local Playwright CLI fallback when Playwright MCP is unavailable
+- **AND** the verification contract MUST stay the same across both paths
+

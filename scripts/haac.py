@@ -2407,34 +2407,32 @@ def sync_cloudflare() -> None:
 
     config_result = current_config.get("result") or {}
     current_config_payload = config_result.get("config") or {}
-    ingress = current_config_payload.get("ingress", [])
     domain_name = env["DOMAIN_NAME"]
-    filtered = [
-        item
-        for item in ingress
-        if item.get("service") != "http_status:404"
-        and item.get("hostname") not in {f"*.{domain_name}", domain_name}
-    ]
-    filtered.extend(
-        [
+    declared_endpoints = load_endpoint_specs(domain_name)
+    expected_hostnames = sorted({f"{endpoint['subdomain']}.{domain_name}" for endpoint in declared_endpoints})
+    ingress = current_config_payload.get("ingress", [])
+    filtered = []
+    for item in ingress:
+        if item.get("service") == "http_status:404":
+            continue
+        hostname = str(item.get("hostname") or "")
+        if hostname == domain_name or hostname.endswith(f".{domain_name}"):
+            continue
+        filtered.append(item)
+    for hostname in expected_hostnames:
+        filtered.append(
             {
-                "hostname": f"*.{domain_name}",
+                "hostname": hostname,
                 "service": "http://traefik.kube-system.svc.cluster.local:80",
                 "originRequest": {"noTLSVerify": True},
-            },
-            {
-                "hostname": domain_name,
-                "service": "http://traefik.kube-system.svc.cluster.local:80",
-                "originRequest": {"noTLSVerify": True},
-            },
-            {"service": "http_status:404"},
-        ]
-    )
+            }
+        )
+    filtered.append({"service": "http_status:404"})
     update_payload = {"config": {**current_config_payload, "ingress": filtered}}
     updated = cloudflare_request("PUT", config_url, env["CLOUDFLARE_API_TOKEN"], update_payload)
     if not updated.get("success"):
         raise HaaCError(f"Failed to update Cloudflare tunnel configuration: {updated}")
-    print(f"[ok] Cloudflare tunnel ingress reconciled for {domain_name}")
+    print(f"[ok] Cloudflare tunnel ingress reconciled for declared hosts: {', '.join(expected_hostnames)}")
 
     dns_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records?per_page=100"
     all_records = cloudflare_request("GET", dns_url, env["CLOUDFLARE_API_TOKEN"])
@@ -2442,35 +2440,46 @@ def sync_cloudflare() -> None:
         raise HaaCError(f"Failed to retrieve Cloudflare DNS records: {all_records}")
 
     expected_target = f"{tunnel_id}.cfargotunnel.com"
-    for record_name in (f"*.{domain_name}", domain_name):
-        existing = [item for item in all_records.get("result", []) if item.get("name") == record_name]
-        valid = False
-        for record in existing:
-            if record.get("type") == "CNAME" and record.get("content") == expected_target:
-                valid = True
-                continue
-            delete_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records/{record['id']}"
-            deleted = cloudflare_request("DELETE", delete_url, env["CLOUDFLARE_API_TOKEN"])
-            if not deleted.get("success"):
-                raise HaaCError(f"Failed to delete conflicting DNS record: {deleted}")
+    managed_domain_records = [
+        item
+        for item in all_records.get("result", [])
+        if item.get("type") == "CNAME"
+        and item.get("name")
+        and (
+            item.get("name") == domain_name
+            or str(item.get("name")).endswith(f".{domain_name}")
+        )
+    ]
+    for record in managed_domain_records:
+        name = str(record.get("name"))
+        should_keep = name in expected_hostnames and record.get("content") == expected_target and record.get("proxied") is True
+        if should_keep:
+            continue
+        delete_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records/{record['id']}"
+        deleted = cloudflare_request("DELETE", delete_url, env["CLOUDFLARE_API_TOKEN"])
+        if not deleted.get("success"):
+            raise HaaCError(f"Failed to delete conflicting DNS record {name}: {deleted}")
 
-        if not valid:
-            create_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records"
-            created = cloudflare_request(
-                "POST",
-                create_url,
-                env["CLOUDFLARE_API_TOKEN"],
-                {
-                    "type": "CNAME",
-                    "name": record_name,
-                    "content": expected_target,
-                    "proxied": True,
-                    "ttl": 1,
-                },
-            )
-            if not created.get("success"):
-                raise HaaCError(f"Failed to create DNS record {record_name}: {created}")
-    print(f"[ok] Cloudflare DNS reconciled: {domain_name}, *.{domain_name} -> {expected_target}")
+    existing_names = {str(item.get("name")) for item in managed_domain_records if item.get("content") == expected_target and item.get("proxied") is True}
+    for record_name in expected_hostnames:
+        if record_name in existing_names:
+            continue
+        create_url = f"https://api.cloudflare.com/client/v4/zones/{env['CLOUDFLARE_ZONE_ID']}/dns_records"
+        created = cloudflare_request(
+            "POST",
+            create_url,
+            env["CLOUDFLARE_API_TOKEN"],
+            {
+                "type": "CNAME",
+                "name": record_name,
+                "content": expected_target,
+                "proxied": True,
+                "ttl": 1,
+            },
+        )
+        if not created.get("success"):
+            raise HaaCError(f"Failed to create DNS record {record_name}: {created}")
+    print(f"[ok] Cloudflare DNS reconciled for declared hosts -> {expected_target}")
 
 
 def restart_cloudflared_rollout(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
