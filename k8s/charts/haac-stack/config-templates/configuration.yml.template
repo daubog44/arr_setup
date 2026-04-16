@@ -15,6 +15,17 @@ identity_validation:
 access_control:
   default_policy: deny
   rules:
+    - domain:
+        - "headlamp.${DOMAIN_NAME}"
+        - "ansible.${DOMAIN_NAME}"
+        - "argocd.${DOMAIN_NAME}"
+        - "grafana.${DOMAIN_NAME}"
+        - "longhorn.${DOMAIN_NAME}"
+        - "litmus.${DOMAIN_NAME}"
+        - "falco.${DOMAIN_NAME}"
+      policy: one_factor
+      subject:
+        - "group:admins"
     - domain: "*.${DOMAIN_NAME}"
       policy: one_factor
 session:
@@ -81,20 +92,6 @@ identity_providers:
         authorization_policy: one_factor
         redirect_uris:
           - https://argocd.${DOMAIN_NAME}/auth/callback
-        scopes:
-          - openid
-          - profile
-          - groups
-          - email
-        userinfo_signed_response_alg: none
-      - client_id: headlamp
-        client_name: Headlamp
-        client_secret: "$plaintext$${HEADLAMP_OIDC_SECRET}"
-        public: false
-        token_endpoint_auth_method: client_secret_basic
-        authorization_policy: one_factor
-        redirect_uris:
-          - https://headlamp.${DOMAIN_NAME}/oidc-callback
         scopes:
           - openid
           - profile

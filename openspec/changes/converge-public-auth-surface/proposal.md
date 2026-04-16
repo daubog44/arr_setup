@@ -18,7 +18,7 @@ The public UI surface already derives from one ingress catalog, but the live bro
 
 ### Modified Capabilities
 
-- `public-ui-surface`: tighten the auth-strategy contract so the declared matrix matches the live browser-auth behavior, including Headlamp OIDC, Homepage alias visibility, and browser verification fallback rules.
+- `public-ui-surface`: tighten the auth-strategy contract so the declared matrix matches the live browser-auth behavior, including the Headlamp fallback contract, Homepage alias visibility, and browser verification fallback rules.
 
 ## Impact
 

@@ -36,6 +36,8 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 - **THEN** `headlamp` MUST NOT remain declared as `native_oidc`
 - **AND** the route MUST fall back to `edge_forward_auth`
 - **AND** the deployment MUST provide a repo-managed in-cluster kubeconfig so the browser lands on the Headlamp application without a second token prompt
+- **AND** stale Headlamp OIDC client and secret artifacts MUST be removed from the repo-managed IdP configuration
+- **AND** the mounted Kubernetes access level MUST be repo-managed and default to a non-admin read-only role
 
 #### Scenario: Browser verification runs for an app-native route
 

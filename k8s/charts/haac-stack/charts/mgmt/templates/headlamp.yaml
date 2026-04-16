@@ -1,3 +1,4 @@
+{{- $headlampAccessLevel := default "readonly" .Values.global.auth.headlampAccessLevel -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,7 +18,7 @@ spec:
       labels:
         app.kubernetes.io/name: headlamp
     spec:
-      serviceAccountName: headlamp-admin
+      serviceAccountName: headlamp-access
       volumes:
         - name: headlamp-kubeconfig
           configMap:
@@ -68,27 +69,80 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: headlamp-viewer
+  name: headlamp-access
   namespace: mgmt
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: headlamp-admin
-  namespace: mgmt
----
+{{- if eq $headlampAccessLevel "admin" }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: headlamp-admin
+  name: headlamp-access-admin
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: cluster-admin
 subjects:
   - kind: ServiceAccount
-    name: headlamp-admin
+    name: headlamp-access
     namespace: mgmt
+---
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: headlamp-readonly-cluster-extras
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - namespaces
+      - persistentvolumes
+      - events
+      - endpoints
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - nodes
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - csinodes
+      - csidrivers
+      - volumeattachments
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources:
+      - customresourcedefinitions
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-access-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: headlamp-access
+    namespace: mgmt
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-access-extras
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: headlamp-readonly-cluster-extras
+subjects:
+  - kind: ServiceAccount
+    name: headlamp-access
+    namespace: mgmt
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap

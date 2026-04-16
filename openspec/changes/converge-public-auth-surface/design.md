@@ -79,10 +79,10 @@ This change does not add separate Homepage entries for Litmus and ChaosTest by h
 ## Implementation Plan
 
 1. Update OpenSpec delta spec for `public-ui-surface`.
-2. Add Headlamp OIDC client generation and secret rendering.
-3. Update Headlamp deployment to use the shared in-cluster kubeconfig fallback.
-5. Tighten browser verification for Headlamp and the overall route matrix.
-6. Reconcile the cluster, verify live routes, and archive the change if review passes.
+2. Remove stale Headlamp OIDC client and secret rendering from the repo-managed Authelia configuration.
+3. Update Headlamp deployment to use the shared in-cluster kubeconfig fallback with a repo-managed, non-admin default Kubernetes access level.
+4. Tighten browser verification for Headlamp and the overall route matrix.
+5. Reconcile the cluster, verify live routes, and archive the change if review passes.
 
 ## Risks And Mitigations
 
@@ -92,6 +92,7 @@ Mitigation:
 
 - keep Headlamp behind the shared Authelia edge gate
 - keep this fallback explicit in the route contract
+- keep the mounted Kubernetes credential on a repo-managed, non-admin default role
 - revisit native OIDC only when the upstream browser flow is proven stable in this repo
 
 ### Risk: Homepage links are correct in source but stale in runtime

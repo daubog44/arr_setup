@@ -2968,6 +2968,7 @@ def doctor() -> None:
         ("python", "python"),
         ("git", "git"),
         ("ssh", "ssh"),
+        ("node", "node"),
         ("kubectl", "kubectl"),
         ("task", "task"),
         ("tofu", "tofu"),

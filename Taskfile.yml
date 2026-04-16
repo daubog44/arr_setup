@@ -164,10 +164,11 @@ tasks:
       - task: configure-os
 
   verify-all:
-    desc: Verify cluster health, then print the final public URL summary and fail if any endpoint is still unreachable.
+    desc: Verify cluster health, then enforce both HTTP-level and browser-level public URL checks.
     cmds:
       - task: verify-cluster
       - task: verify-endpoints
+      - task: verify-browser-auth
 
   monitor:
     desc: Open a K9s session against the remote cluster through an SSH tunnel.

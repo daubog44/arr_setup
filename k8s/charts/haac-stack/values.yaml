@@ -40,7 +40,8 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "23be544c1f84bc1f10d0860a61a848b3cf54f4fc396e5ba741d2b674326b2951"
+    autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
+    headlampAccessLevel: "readonly"
   images:
     gluetun:
       repository: qmcgaw/gluetun
@@ -323,7 +324,7 @@ homepage:
   bookmarks:
     Infrastructure:
       - name: Proxmox
-        href: "https://100.94.77.28:8006"
+        href: "https://192.168.0.200:8006"
         icon: proxmox.png
       - name: GitHub
         href: "https://github.com"

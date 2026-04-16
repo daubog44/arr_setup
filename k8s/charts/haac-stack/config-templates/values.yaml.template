@@ -41,6 +41,7 @@ global:
       enabled: ${HAAC_ENABLE_CLOUDFLARED_AUTOUPDATE}
   auth:
     autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
+    headlampAccessLevel: "readonly"
   images:
     gluetun:
       repository: qmcgaw/gluetun

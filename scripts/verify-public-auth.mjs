@@ -246,17 +246,23 @@ async function verifyHeadlamp(page, env) {
   const expectedHost = `headlamp.${env.DOMAIN_NAME}`;
   await verifyEdgeRoute(page, env, "headlamp", "headlamp");
   await ensureHost(page, expectedHost, env);
+  await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await page.waitForTimeout(1000);
     const body = String((await page.textContent("body").catch(() => "")) || "");
-    if (body.includes("Use A Token")) {
-      continue;
-    }
+    const url = page.url();
     if (body.includes("Unauthorized")) {
       await screenshot(page, "headlamp-main-unauthorized");
       throw new Error("Headlamp rendered an unauthorized cluster state behind edge auth");
     }
-    if (body.includes("Headlamp")) {
+    if (
+      (body.includes("All Clusters") || body.includes("Projects")) &&
+      (body.includes("in-cluster") || body.includes("main"))
+    ) {
+      await screenshot(page, "headlamp-main");
+      return;
+    }
+    if (!url.includes("/login") && body.includes("Headlamp") && !body.includes("Use A Token")) {
       await screenshot(page, "headlamp-main");
       return;
     }

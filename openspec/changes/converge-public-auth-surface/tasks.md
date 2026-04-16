@@ -5,9 +5,9 @@
 
 ## 2. Headlamp Native OIDC
 
-- [ ] 2.1 Add Headlamp OIDC client generation and Authelia configuration, including the `/oidc-callback` redirect URI and sealed secret handling.
-- [ ] 2.2 Replace the broken Headlamp OIDC attempt with the documented shared-deployment fallback: edge forward-auth plus a repo-managed in-cluster kubeconfig that removes the second login prompt.
-- [ ] 2.3 Update the Headlamp deployment and route metadata so the declared auth strategy matches the live browser flow.
+- [ ] 2.1 Remove stale Headlamp OIDC client and secret artifacts, and replace them with the documented shared-deployment fallback.
+- [ ] 2.2 Replace the broken Headlamp OIDC attempt with edge forward-auth plus a repo-managed in-cluster kubeconfig that removes the second login prompt.
+- [ ] 2.3 Update the Headlamp deployment and route metadata so the declared auth strategy, Authelia protection, and repo-managed access level match the live browser flow.
 
 ## 3. Verification And Reconcile
 
