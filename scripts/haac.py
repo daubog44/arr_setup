@@ -876,15 +876,19 @@ def tunnel_failure_detail(process: subprocess.Popen[str], command: list[str]) ->
 def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None, remote_port: int = 6443):
     resolved_local_port = local_port or allocate_local_port()
     env = merged_env()
-    command = proxmox_tunnel_command(
-        proxmox_host,
-        master_ip=master_ip,
-        local_port=resolved_local_port,
-        remote_port=remote_port,
-        connect_timeout=10,
-    )
     last_error = ""
+    last_command: list[str] | None = None
     for attempt in range(1, 4):
+        # On Windows the WSL runtime-backed key material is recreated per attempt.
+        # Rebuild the command after any previous cleanup so retries do not reuse stale paths.
+        command = proxmox_tunnel_command(
+            proxmox_host,
+            master_ip=master_ip,
+            local_port=resolved_local_port,
+            remote_port=remote_port,
+            connect_timeout=10,
+        )
+        last_command = command
         process = subprocess.Popen(
             command,
             cwd=str(ROOT),
@@ -916,7 +920,7 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None,
                         process.kill()
             if is_windows():
                 cleanup_wsl_runtime(env)
-    raise HaaCError(f"SSH tunnel failed to start: {last_error or command_label(command)}")
+    raise HaaCError(f"SSH tunnel failed to start: {last_error or command_label(last_command or [])}")
 
 
 @contextmanager

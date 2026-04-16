@@ -133,8 +133,6 @@ spec:
                   path: /metrics
                   interval: 30s
           prometheusSpec:
-            externalLabels:
-              cluster: "nucleoautogenerativo.it"
             securityContext:
               runAsNonRoot: false
               runAsUser: 0
