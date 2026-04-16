@@ -324,7 +324,7 @@ homepage:
   bookmarks:
     Infrastructure:
       - name: Proxmox
-        href: "https://100.94.77.28:8006"
+        href: "https://192.168.0.200:8006"
         icon: proxmox.png
       - name: GitHub
         href: "https://github.com"

@@ -4,60 +4,33 @@ metadata:
   name: falco
   namespace: argocd
   annotations:
-    renovate/helm-chart: "falco"
+    renovate/helm-chart: "falcosidekick"
 spec:
   project: platform
   source:
     repoURL: https://falcosecurity.github.io/charts
-    chart: falco
-    # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falco
-    targetRevision: "8.0.1"
+    chart: falcosidekick
+    # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falcosidekick
+    targetRevision: "0.13.1"
     helm:
       values: |
-        # Keep the Falco UI published and bind the runtime DaemonSet only to repo-declared
-        # compatible workers. On this unprivileged LXC environment the legacy ebpf path
-        # forces in-guest probe compilation, which breaks against the host toolchain and
-        # libc version. Use the chart's embedded modern_ebpf probe instead.
-        driver:
-          enabled: true
-          kind: modern_ebpf
-          modernEbpf:
-            leastPrivileged: false
-            sysfsMount: true
-        containerSecurityContext:
-          privileged: true
-          allowPrivilegeEscalation: true
-        nodeSelector:
-          haac.io/falco-runtime: "true"
+        replicaCount: 1
 
-        # Collect metrics for kube-prometheus-stack
-        metrics:
+        serviceMonitor:
           enabled: true
 
-        # Falco rules configuration
-        customRules:
-          my_rules.yaml: |-
-            - rule: Detect bash in container
-              desc: A shell was spawned by a container (might be normal, but good to know)
-              condition: container.id != host and spawned_process and proc.name in (bash, sh, zsh)
-              output: "Shell %proc.name spawned in container (user=%user.name container_id=%container.id container_name=%container.name)"
-              priority: WARNING
-              tags: [container, shell]
+        config:
+          ntfy:
+            url: "https://ntfy.nucleoautogenerativo.it/haac-alerts"
+            checkcert: false
 
-        # Use Falcosidekick to route alerts and provide a WebUI
-        falcosidekick:
+        webui:
           enabled: true
-          webui:
+          replicaCount: 1
+          disableauth: true
+          redis:
             enabled: true
-            disableauth: true
-            redis:
-              enabled: true
-              storageEnabled: false
-          config:
-            # Route Falco alerts directly to Ntfy
-            ntfy:
-              url: "https://ntfy.nucleoautogenerativo.it/haac-alerts"
-              checkcert: false
+            storageEnabled: false
 
   destination:
     server: https://kubernetes.default.svc
