@@ -323,16 +323,49 @@ async function fetchJson(page, relativePath) {
   }
 }
 
-async function resolvePrometheusDatasource(page) {
-  const datasources = await fetchJson(page, "/api/datasources");
-  if (!Array.isArray(datasources)) {
-    throw new Error(`Grafana datasources endpoint returned an unexpected payload: ${JSON.stringify(datasources)}`);
+async function tryFetchJson(page, relativePath) {
+  const response = await page.evaluate(async (targetPath) => {
+    const result = await fetch(targetPath, { credentials: "same-origin" });
+    return {
+      status: result.status,
+      text: await result.text(),
+    };
+  }, relativePath);
+  try {
+    return {
+      status: response.status,
+      body: JSON.parse(response.text),
+    };
+  } catch {
+    return {
+      status: response.status,
+      body: response.text,
+    };
   }
-  const prometheusDatasources = datasources.filter(item => item?.type === "prometheus");
-  if (!prometheusDatasources.length) {
-    throw new Error(`Grafana has no Prometheus datasource configured: ${JSON.stringify(datasources)}`);
+}
+
+async function resolvePrometheusDatasourceCandidates(page) {
+  const candidates = ["prometheus"];
+  const datasourcesResponse = await tryFetchJson(page, "/api/datasources");
+  if (datasourcesResponse.status >= 200 && datasourcesResponse.status < 300 && Array.isArray(datasourcesResponse.body)) {
+    for (const datasource of datasourcesResponse.body) {
+      if (datasource?.type === "prometheus" && datasource?.uid) {
+        candidates.push(datasource.uid);
+      }
+    }
   }
-  return prometheusDatasources.find(item => item?.isDefault) || prometheusDatasources[0];
+  return [...new Set(candidates)];
+}
+
+async function queryPrometheus(page, datasourceUid, promql) {
+  const response = await tryFetchJson(
+    page,
+    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query?query=${encodeURIComponent(promql)}`,
+  );
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Datasource UID ${datasourceUid} query failed with status ${response.status}: ${JSON.stringify(response.body)}`);
+  }
+  return response.body;
 }
 
 function prometheusScalar(result) {
@@ -345,11 +378,7 @@ function prometheusScalar(result) {
 }
 
 async function verifyGrafanaObservability(page) {
-  const dataSource = await resolvePrometheusDatasource(page);
-  const datasourceUid = dataSource.uid;
-  if (!datasourceUid) {
-    throw new Error(`Grafana Prometheus datasource is missing a UID: ${JSON.stringify(dataSource)}`);
-  }
+  const datasourceCandidates = await resolvePrometheusDatasourceCandidates(page);
   const dashboardResults = await fetchJson(page, "/api/search?query=Kubernetes%20API%20server");
   const dashboardTitlePattern = new RegExp("Kubernetes\\s*/\\s*API server", "i");
   const dashboard = dashboardResults.find(
@@ -359,24 +388,26 @@ async function verifyGrafanaObservability(page) {
     throw new Error(`Grafana could not find the official Kubernetes / API server dashboard: ${JSON.stringify(dashboardResults)}`);
   }
 
-  const clusterCount = await fetchJson(
-    page,
-    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query?query=${encodeURIComponent(
-      'count(count by (cluster) (up{job="apiserver",cluster!=""}))',
-    )}`,
-  );
-  if (prometheusScalar(clusterCount) < 1) {
-    throw new Error(`Grafana Prometheus datasource resolved no cluster selector values for job="apiserver": ${JSON.stringify(clusterCount)}`);
+  const errors = [];
+  let resolved = false;
+  for (const datasourceUid of datasourceCandidates) {
+    try {
+      const clusterCount = await queryPrometheus(page, datasourceUid, 'count(count by (cluster) (up{job="apiserver",cluster!=""}))');
+      if (prometheusScalar(clusterCount) < 1) {
+        throw new Error(`Datasource UID ${datasourceUid} resolved no cluster selector values for job="apiserver": ${JSON.stringify(clusterCount)}`);
+      }
+      const instanceCount = await queryPrometheus(page, datasourceUid, 'count(count by (instance) (up{job="apiserver",cluster!=""}))');
+      if (prometheusScalar(instanceCount) < 1) {
+        throw new Error(`Datasource UID ${datasourceUid} resolved no instance selector values for job="apiserver": ${JSON.stringify(instanceCount)}`);
+      }
+      resolved = true;
+      break;
+    } catch (error) {
+      errors.push(String(error.message || error));
+    }
   }
-
-  const instanceCount = await fetchJson(
-    page,
-    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query?query=${encodeURIComponent(
-      'count(count by (instance) (up{job="apiserver",cluster!=""}))',
-    )}`,
-  );
-  if (prometheusScalar(instanceCount) < 1) {
-    throw new Error(`Grafana Prometheus datasource resolved no instance selector values for job="apiserver": ${JSON.stringify(instanceCount)}`);
+  if (!resolved) {
+    throw new Error(`Grafana Prometheus datasource contract is unusable for the API server dashboard. Tried UIDs ${JSON.stringify(datasourceCandidates)}. Errors: ${errors.join(" | ")}`);
   }
 
   await page.goto(`https://${new URL(page.url()).host}${dashboard.url}`, {
