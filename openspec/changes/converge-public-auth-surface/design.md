@@ -24,34 +24,33 @@ No new route catalog is introduced. The existing `ingresses` map remains the sou
 
 This avoids a second control plane for route metadata.
 
-### 2. Converge Headlamp to real native OIDC instead of keeping a misleading edge-auth declaration
+### 2. Keep Headlamp on a single-login edge-auth path until upstream OIDC is trustworthy
 
-Headlamp's official documentation requires:
+Headlamp's official documentation supports OIDC, but the current Headlamp plus Authelia browser flow for this repo reproduces an upstream failure mode: the popup completes Authelia login and consent, then the main page returns to the local `Use A Token` screen instead of converging to the dashboard. The same failure signature is tracked upstream in the Headlamp project.
 
-- a client ID
-- a client secret
-- an issuer URL
-- a callback URL at `/oidc-callback`
+So the robust choice for this repo is:
 
-Headlamp native OIDC also requires the Kubernetes API server to accept the tokens that Headlamp presents after the browser login. This repo does not currently configure K3s API-server OIDC, so Headlamp cannot be treated as native OIDC without adding that cluster-side prerequisite.
+- keep `headlamp` on `edge_forward_auth`
+- keep the single shared Authelia gate at the edge
+- mount a repo-managed in-cluster kubeconfig into Headlamp so the UI lands directly on the cluster instead of prompting for a second token
 
 Implementation shape:
 
-- add an Authelia OIDC client for `headlamp`
-- generate a sealed secret for the Headlamp OIDC client secret
-- configure Headlamp with OIDC env vars and keep `-in-cluster`
-- configure K3s server OIDC flags for the same issuer and client ID
-- bind the `admins` group to the Headlamp-required cluster access level
+- remove the attempted native OIDC route declaration for Headlamp
+- create a dedicated Headlamp service account and static kubeconfig config map
+- mount that kubeconfig at the location Headlamp already probes on startup
+- bind that service account to the cluster access level chosen by the repo
 
-The cluster OIDC contract is intentionally limited to this repo's Headlamp flow. It does not attempt to redesign workstation `kubectl` auth in the same change.
+This is not a shortcut. It is a product-level fallback chosen from evidence, and it is aligned with Headlamp's documented shared-deployment model.
 
 ### 3. Preserve single-login behavior per route
 
 The route matrix after this change is:
 
 - `public`: Authelia
-- `native_oidc`: Headlamp, Semaphore, Grafana, ArgoCD
+- `native_oidc`: Semaphore, Grafana, ArgoCD
 - `edge_forward_auth`: Homepage, Ntfy, Litmus, Falco, Longhorn
+- `edge_forward_auth`: Headlamp
 - `app_native`: Jellyfin, Radarr, Sonarr, Prowlarr, Autobrr, qBittorrent/QUI
 
 Longhorn intentionally remains `edge_forward_auth` because the repo does not provide a first-party native login flow for it. The change is about converged and truthful auth behavior, not forcing every route into OIDC regardless of product support.
@@ -81,27 +80,19 @@ This change does not add separate Homepage entries for Litmus and ChaosTest by h
 
 1. Update OpenSpec delta spec for `public-ui-surface`.
 2. Add Headlamp OIDC client generation and secret rendering.
-3. Configure K3s API-server OIDC flags and RBAC for the `admins` group.
-4. Update Headlamp deployment to use native OIDC.
+3. Update Headlamp deployment to use the shared in-cluster kubeconfig fallback.
 5. Tighten browser verification for Headlamp and the overall route matrix.
 6. Reconcile the cluster, verify live routes, and archive the change if review passes.
 
 ## Risks And Mitigations
 
-### Risk: K3s API server OIDC breaks cluster access
+### Risk: Shared Headlamp kubeconfig creates a broader cluster credential than per-user OIDC would
 
 Mitigation:
 
-- add only additive OIDC flags
-- keep the existing service-account-based Headlamp deployment shape
-- validate `task -n up` and live `task up`
-
-### Risk: Headlamp callback still mismatches because of reverse-proxy headers
-
-Mitigation:
-
-- keep the shared `force-https` middleware
-- browser-verify the real callback URL
+- keep Headlamp behind the shared Authelia edge gate
+- keep this fallback explicit in the route contract
+- revisit native OIDC only when the upstream browser flow is proven stable in this repo
 
 ### Risk: Homepage links are correct in source but stale in runtime
 

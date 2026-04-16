@@ -167,10 +167,6 @@ def endpoint_verification_success(endpoint: dict[str, str], response: dict[str, 
         return parsed.netloc == urlparse(auth_url).netloc
 
     if auth_strategy == "native_oidc":
-        if endpoint["name"] == "headlamp":
-            if status != 200:
-                return False
-            return any(marker in body for marker in ("Headlamp", "Use A Token", "Sign in", "Kubernetes"))
         if endpoint["name"] == "semaphore":
             return semaphore_login_metadata_success(endpoint["url"])
         if endpoint["name"] == "argocd":

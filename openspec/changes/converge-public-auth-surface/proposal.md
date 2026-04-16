@@ -6,7 +6,7 @@ The public UI surface already derives from one ingress catalog, but the live bro
 
 - Converge the declared public auth matrix with the live browser behavior for official UIs.
 - Enable and verify native Authelia OIDC where the repo already supports it cleanly, and keep edge forward-auth only for UIs that do not have a working native flow in this cluster.
-- Add the missing cluster-side prerequisites for Headlamp native OIDC so the browser flow completes after Authelia login instead of falling back to the internal login page or an invalid request.
+- Replace Headlamp's broken OIDC attempt with a single-login edge-auth path backed by a repo-managed in-cluster kubeconfig, so the browser no longer falls back to the internal token prompt.
 - Keep Homepage links, aliases, HTTPRoutes, and browser verification derived from the same ingress catalog so Litmus, ChaosTest, Falco, and the other published UIs stay visible when enabled.
 - Require browser verification to use Playwright MCP when available and the repo-local Playwright CLI fallback when MCP is unavailable.
 
@@ -23,11 +23,9 @@ The public UI surface already derives from one ingress catalog, but the live bro
 ## Impact
 
 - `k8s/charts/haac-stack/config-templates/values.yaml.template`
-- `k8s/charts/haac-stack/config-templates/configuration.yml.template`
 - `k8s/charts/haac-stack/charts/mgmt/templates/headlamp.yaml`
 - `k8s/charts/haac-stack/templates/httproutes.yaml`
 - `scripts/verify-public-auth.mjs`
 - `scripts/haac.py`
 - `scripts/haaclib/endpoints.py`
-- `ansible/playbook.yml`
 - `openspec/specs/public-ui-surface/spec.md`

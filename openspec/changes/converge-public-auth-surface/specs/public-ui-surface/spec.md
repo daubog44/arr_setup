@@ -19,7 +19,8 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 - **WHEN** the official public UI catalog is rendered
 - **THEN** `authelia` MUST be `public`
 - **AND** `homepage`, `ntfy`, `litmus`, `falco`, and `longhorn` MUST be `edge_forward_auth`
-- **AND** `headlamp`, `semaphore`, `grafana`, and `argocd` MUST be `native_oidc`
+- **AND** `headlamp` MUST be `edge_forward_auth`
+- **AND** `semaphore`, `grafana`, and `argocd` MUST be `native_oidc`
 - **AND** `jellyfin`, `radarr`, `sonarr`, `prowlarr`, `autobrr`, and `qbittorrent` MUST be `app_native`
 
 #### Scenario: Browser verification runs for a native-OIDC route
@@ -29,12 +30,12 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 - **AND** a bare `302` redirect MUST NOT be considered sufficient proof of correctness
 - **AND** the registered OIDC client MUST allow the token endpoint auth method used by the deployed application build
 
-#### Scenario: Headlamp native OIDC is cluster-converged
+#### Scenario: Headlamp uses a single-login fallback when native OIDC is not converged
 
-- **WHEN** `headlamp` is declared as `native_oidc`
-- **THEN** Headlamp MUST be configured with an OIDC client ID, client secret, issuer URL, and `/oidc-callback` redirect URI
-- **AND** the K3s API server MUST be configured to trust the same OIDC issuer and client audience that Headlamp uses for browser login
-- **AND** the browser verification flow MUST land on the Headlamp application instead of the internal login page or an invalid request page
+- **WHEN** Headlamp native OIDC does not converge to the authenticated application in this repo
+- **THEN** `headlamp` MUST NOT remain declared as `native_oidc`
+- **AND** the route MUST fall back to `edge_forward_auth`
+- **AND** the deployment MUST provide a repo-managed in-cluster kubeconfig so the browser lands on the Headlamp application without a second token prompt
 
 #### Scenario: Browser verification runs for an app-native route
 

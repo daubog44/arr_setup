@@ -17,25 +17,24 @@ spec:
       labels:
         app.kubernetes.io/name: headlamp
     spec:
-      serviceAccountName: headlamp-viewer
+      serviceAccountName: headlamp-admin
+      volumes:
+        - name: headlamp-kubeconfig
+          configMap:
+            name: headlamp-kubeconfig
       containers:
         - name: headlamp
           image: >-
             {{ .Values.global.images.headlamp.repository }}:{{ .Values.global.images.headlamp.tag }}
           env:
-            - name: HEADLAMP_CONFIG_OIDC_CLIENT_ID
-              value: headlamp
-            - name: HEADLAMP_CONFIG_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: headlamp-oidc-secret
-                  key: clientSecret
-            - name: HEADLAMP_CONFIG_OIDC_IDP_ISSUER_URL
-              value: "https://auth.{{ .Values.global.domainName }}"
-            - name: HEADLAMP_CONFIG_OIDC_SCOPES
-              value: "openid,profile,email,groups"
+            - name: KUBECONFIG
+              value: /home/headlamp/.config/Headlamp/kubeconfigs/config
           ports:
             - containerPort: 4466
+          volumeMounts:
+            - name: headlamp-kubeconfig
+              mountPath: /home/headlamp/.config/Headlamp/kubeconfigs/config
+              subPath: config
           livenessProbe:
             httpGet:
               path: /
@@ -73,36 +72,45 @@ metadata:
   namespace: mgmt
 ---
 apiVersion: v1
-kind: Secret
+kind: ServiceAccount
 metadata:
-  name: headlamp-viewer-token
+  name: headlamp-admin
   namespace: mgmt
-  annotations:
-    kubernetes.io/service-account.name: headlamp-viewer
-type: kubernetes.io/service-account-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: headlamp-viewer
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: view
-subjects:
-  - kind: ServiceAccount
-    name: headlamp-viewer
-    namespace: mgmt
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: headlamp-oidc-admins
+  name: headlamp-admin
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: cluster-admin
 subjects:
-  - kind: Group
-    apiGroup: rbac.authorization.k8s.io
-    name: admins
+  - kind: ServiceAccount
+    name: headlamp-admin
+    namespace: mgmt
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-kubeconfig
+  namespace: mgmt
+data:
+  config: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: in-cluster
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: headlamp
+    current-context: in-cluster
+    users:
+      - name: headlamp
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
