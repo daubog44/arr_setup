@@ -149,6 +149,11 @@ def merged_env() -> dict[str, str]:
     if not merged.get("PROXMOX_HOST_PASSWORD") and merged.get("LXC_PASSWORD"):
         merged["PROXMOX_HOST_PASSWORD"] = merged["LXC_PASSWORD"]
     merged.setdefault("HAAC_FALCO_INGEST_NODEPORT", "32081")
+    if merged.get("GRAFANA_OIDC_SECRET"):
+        merged.setdefault(
+            "GRAFANA_OIDC_SECRET_SHA256",
+            hashlib.sha256(merged["GRAFANA_OIDC_SECRET"].encode("utf-8")).hexdigest(),
+        )
     return merged
 
 
@@ -1453,7 +1458,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "grafana-oidc-secret",
             "monitoring",
             SECRETS_DIR / "grafana-oidc-sealed-secret.yaml",
-            {"clientSecret": env["GRAFANA_OIDC_SECRET"]},
+            {"GRAFANA_OIDC_SECRET": env["GRAFANA_OIDC_SECRET"]},
             None,
         ),
         (
@@ -1992,7 +1997,6 @@ def cleanup_legacy_default_argocd_install(kubectl: str, kubeconfig: Path) -> Non
 
 def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
-    render_gitops_manifests(env)
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         run(
             [

@@ -133,6 +133,7 @@ tasks:
       - task: wait-for-argocd-sync
       - task: sync-cloudflare
       - task: verify-endpoints
+      - task: verify-browser-auth
 
   reconcile:gitops:
     desc: "Reconcile the full remote GitOps layer without reprovisioning infra: secrets, ArgoCD bootstrap, workloads, Cloudflare, and public URLs."
@@ -143,6 +144,7 @@ tasks:
       - task: wait-for-argocd-sync
       - task: sync-cloudflare
       - task: verify-endpoints
+      - task: verify-browser-auth
 
   reconcile:infra:
     desc: "Reconcile remote infra and node configuration without re-running the full final verification path."

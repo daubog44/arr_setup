@@ -46,6 +46,8 @@ spec:
 
         grafana:
           enabled: true
+          podAnnotations:
+            checksum/grafana-oidc-secret: "${GRAFANA_OIDC_SECRET_SHA256}"
           admin:
             existingSecret: grafana-admin-secret
             userKey: admin-user

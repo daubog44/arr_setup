@@ -155,8 +155,23 @@ const routeChecks = {
   grafana: {
     type: "native_oidc",
     async preAuthAction() {},
-    async waitForSuccess(currentPage) {
-      await currentPage.waitForSelector('text=/Home|Dashboards|Welcome to Grafana/', { timeout: 30000 });
+    async waitForSuccess(currentPage, env) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await currentPage.waitForTimeout(1000);
+        const body = String((await currentPage.textContent("body").catch(() => "")) || "");
+        const currentUrl = new URL(currentPage.url());
+        if (body.includes("Failed to get token from provider") || body.includes("Login failed")) {
+          throw new Error(`Grafana OIDC callback failed: ${body}`);
+        }
+        if (
+          currentUrl.host === `grafana.${env.DOMAIN_NAME}` &&
+          !currentUrl.pathname.startsWith("/login") &&
+          (body.includes("Dashboards") || body.includes("Explore") || body.includes("Connections") || body.includes("Administration"))
+        ) {
+          return;
+        }
+      }
+      throw new Error(`Grafana did not reach an authenticated landing page: ${currentPage.url()}`);
     },
   },
   semaphore: {
