@@ -1,0 +1,18 @@
+# HaaC-managed Falco host sensor profile.
+# The Proxmox host is the supported syscall sensor surface for this repo; cluster-side
+# Falcosidekick receives alerts and exposes the protected UI.
+engine:
+  kind: modern_ebpf
+
+json_output: true
+json_include_output_property: true
+
+stdout_output:
+  enabled: true
+
+syslog_output:
+  enabled: true
+
+http_output:
+  enabled: true
+  url: "http://{{ falco_ingest_host }}:{{ falco_ingest_nodeport }}/"

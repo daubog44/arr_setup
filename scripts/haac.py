@@ -62,10 +62,12 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "platform" / "argocd" / "argocd-app.yaml",
     K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-cm.yaml",
     K8S_DIR / "platform" / "applications" / "falco-app.yaml",
+    K8S_DIR / "platform" / "falco-ingest-service.yaml",
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
     K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
 )
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
+FALCO_INGEST_SERVICE_OUTPUT = K8S_DIR / "platform" / "falco-ingest-service.yaml"
 DISABLED_GITOPS_LIST = "apiVersion: v1\nkind: List\nitems: []\n"
 HOOKS_DIR = ROOT / ".git" / "hooks"
 KUBESEAL_VERSION = "0.36.1"
@@ -146,6 +148,7 @@ def merged_env() -> dict[str, str]:
         merged.setdefault(key, value)
     if not merged.get("PROXMOX_HOST_PASSWORD") and merged.get("LXC_PASSWORD"):
         merged["PROXMOX_HOST_PASSWORD"] = merged["LXC_PASSWORD"]
+    merged.setdefault("HAAC_FALCO_INGEST_NODEPORT", "32081")
     return merged
 
 
@@ -1066,7 +1069,7 @@ def render_gitops_manifests(env: dict[str, str]) -> None:
         gitopslib.render_gitops_manifests(
             env=env,
             outputs=GITOPS_RENDERED_OUTPUTS,
-            falco_output=FALCO_APP_OUTPUT,
+            falco_outputs=(FALCO_APP_OUTPUT, FALCO_INGEST_SERVICE_OUTPUT),
             disabled_gitops_list=DISABLED_GITOPS_LIST,
         )
     except RuntimeError as exc:

@@ -90,19 +90,19 @@ The system MUST validate the minimum local and environment prerequisites needed 
 
 ### Requirement: Safe Default Git Publication
 
-`task up` MUST default to publishing only generated GitOps artifacts, not arbitrary local repo changes.
+`task up` MUST publish only generated GitOps artifacts, not arbitrary local repo changes.
 
 #### Scenario: Clean workspace and default publication
 
-- **WHEN** the operator runs `task up` with the default `PUSH_ALL` value
+- **WHEN** the operator runs `task up`
 - **THEN** only generated GitOps artifacts are staged and committed during publication
 - **AND** unrelated local work is not auto-committed
 
-#### Scenario: Dirty workspace with unrelated changes and safe default
+#### Scenario: Dirty workspace with unrelated changes
 
-- **WHEN** the operator runs `task up` with `PUSH_ALL=false` and the repo has unrelated local changes
-- **THEN** the bootstrap MUST fail before publication with an explicit message
-- **AND** the operator MAY rerun with `PUSH_ALL=true` if they intentionally want wide publication
+- **WHEN** the operator runs `task up` and the repo has unrelated local changes
+- **THEN** the bootstrap MUST preserve those changes outside the staged publication set
+- **AND** the operator MAY use an explicit wide-publication command instead of changing the default bootstrap contract
 
 ### Requirement: Redacted Failure Output
 
@@ -172,4 +172,3 @@ The bootstrap path MUST gate GitOps bootstrap on K3s networking conditions that 
 
 - **WHEN** all expected Kubernetes nodes report `Ready`
 - **THEN** the cluster-wide pre-GitOps gate validates only essential kube-system workload readiness and not a flannel daemonset or pod contract that is not guaranteed by this cluster
-

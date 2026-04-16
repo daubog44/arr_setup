@@ -1,18 +1,25 @@
 # falco-lxc-readiness Specification
 
 ## Purpose
-TBD - created by archiving change close-task-up-residual-findings. Update Purpose after archive.
-## Requirements
-### Requirement: Falco does not degrade platform health on unsupported unprivileged LXC nodes
-The platform GitOps configuration MUST avoid deploying a permanently crash-looping Falco application onto the repository's unprivileged Proxmox LXC-based K3s nodes when the required `modern_ebpf` prerequisites are not satisfied.
+Keep the Falco public surface healthy while delivering supported runtime coverage in this homelab environment.
 
-#### Scenario: Falco is skipped by default on unsupported LXC workers
+## Requirements
+### Requirement: Falco runtime is delivered through a supported host-side sensor path
+The platform GitOps configuration MUST avoid deploying an unsupported Falco runtime DaemonSet onto the repository's unprivileged Proxmox LXC-based K3s nodes, while still keeping the Falco UI and alert pipeline healthy in-cluster.
+
+#### Scenario: Falco is skipped cleanly when disabled
 - **GIVEN** the homelab uses the default unprivileged Proxmox LXC worker model
 - **AND** Falco is not explicitly enabled through the operator inputs
 - **WHEN** the platform GitOps manifests are rendered
 - **THEN** the rendered Falco application manifest MUST become a clean no-op instead of an ArgoCD application that will crash-loop in-cluster
 
-#### Scenario: Enabled Falco keeps the compatible `modern_ebpf` driver path documented
-- **WHEN** Falco is explicitly enabled for a supported environment
-- **THEN** the enabled manifest MUST render the supported `modern_ebpf` driver path
-- **AND** the stable documentation MUST describe the required host `/usr/lib/modules`, `/usr/src`, and `/sys/kernel/*` exposure on the declared runtime-capable workers
+#### Scenario: Enabled Falco deploys only the cluster-side alert surface
+- **WHEN** Falco is explicitly enabled for this environment
+- **THEN** the enabled manifest MUST render a healthy cluster-side `falcosidekick` application
+- **AND** the platform layer MUST provide a stable in-cluster UI service plus a stable internal ingest endpoint for host-side Falco events
+- **AND** it MUST NOT render an in-cluster Falco DaemonSet for the unprivileged LXC workers
+
+#### Scenario: Enabled Falco configures a supported host-side sensor
+- **WHEN** Falco is explicitly enabled through operator inputs
+- **THEN** the Proxmox host configuration MUST install and enable a Falco sensor using the supported `modern_ebpf` host path
+- **AND** that sensor MUST forward events to the cluster-side ingest endpoint through `http_output`

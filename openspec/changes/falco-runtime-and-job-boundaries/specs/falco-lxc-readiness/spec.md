@@ -1,25 +1,26 @@
 ## MODIFIED Requirements
 
-### Requirement: Falco does not degrade platform health on unsupported unprivileged LXC nodes
-The platform GitOps configuration MUST avoid deploying a permanently crash-looping Falco runtime onto the repository's unprivileged Proxmox LXC-based K3s nodes, while still supporting runtime coverage on explicitly declared compatible workers.
+### Requirement: Falco runtime is delivered through a supported host-side sensor path
+The platform GitOps configuration MUST avoid deploying an unsupported Falco runtime DaemonSet onto the repository's unprivileged Proxmox LXC-based K3s nodes, while still keeping the Falco UI and alert pipeline healthy in-cluster.
 
-#### Scenario: Falco is skipped by default on unsupported LXC workers
+#### Scenario: Falco is skipped cleanly when disabled
 - **GIVEN** the homelab uses the default unprivileged Proxmox LXC worker model
 - **AND** Falco is not explicitly enabled through the operator inputs
 - **WHEN** the platform GitOps manifests are rendered
 - **THEN** the rendered Falco application manifest MUST become a clean no-op instead of an ArgoCD application that will crash-loop in-cluster
 
-#### Scenario: Enabled Falco uses the compatible `modern_ebpf` driver path
+#### Scenario: Enabled Falco deploys only the cluster-side alert surface
 - **WHEN** Falco is explicitly enabled for this environment
-- **THEN** the enabled manifest MUST render the upstream-supported `modern_ebpf` driver path
-- **AND** the declared runtime-capable workers MUST expose host `/usr/lib/modules`, `/usr/src`, and `/sys/kernel/*` metadata into the guest before the Falco daemonset is reconciled
+- **THEN** the enabled manifest MUST render a healthy cluster-side `falcosidekick` application
+- **AND** the platform layer MUST provide a stable in-cluster UI service plus a stable internal ingest endpoint for host-side Falco events
+- **AND** it MUST NOT render an in-cluster Falco DaemonSet for the unprivileged LXC workers
 
-#### Scenario: Enabled Falco requires at least one repo-managed runtime node
+#### Scenario: Enabled Falco configures a supported host-side sensor
 - **WHEN** Falco is explicitly enabled through operator inputs
-- **THEN** the repo MUST require at least one worker to be declared runtime-capable through source-of-truth node labels
-- **AND** the operator workflow MUST fail closed if Falco is enabled without any declared runtime-capable worker
+- **THEN** the Proxmox host configuration MUST install and enable a Falco sensor using the supported `modern_ebpf` host path
+- **AND** that sensor MUST forward events to the cluster-side ingest endpoint through `http_output`
 
-#### Scenario: Enabled Falco schedules only onto declared runtime-capable workers
-- **WHEN** Falco is enabled and the runtime-capable worker set is declared
-- **THEN** the Falco daemonset MUST schedule only onto those declared workers
-- **AND** the node-selection mechanism MUST derive from repo-managed operator inputs rather than an undocumented manual cluster label
+#### Scenario: Falco enablement no longer depends on worker runtime labels
+- **WHEN** Falco is enabled through operator inputs
+- **THEN** the repo MUST NOT require `WORKER_NODES_JSON` entries with `haac.io/falco-runtime=true`
+- **AND** bootstrap validation MUST derive Falco readiness from the host-side sensor path instead of an undocumented manual cluster label

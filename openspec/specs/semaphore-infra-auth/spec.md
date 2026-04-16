@@ -1,7 +1,7 @@
 # semaphore-infra-auth Specification
 
 ## Purpose
-TBD - created by archiving change least-privilege-semaphore-infra-auth. Update Purpose after archive.
+Define the stable least-privilege contract for Semaphore infrastructure maintenance so cluster-held credentials are not root-equivalent, repository access stays separate from host access, and maintenance sudo remains bounded.
 ## Requirements
 ### Requirement: Semaphore infrastructure access MUST not rely on a root-equivalent cluster-held SSH key
 
@@ -54,4 +54,3 @@ The maintenance principal MUST not receive unrestricted passwordless sudo.
 - **WHEN** the maintenance principal runs the repo-managed maintenance playbooks
 - **THEN** privilege escalation MUST be limited to explicit repo-managed maintenance wrapper commands
 - **AND** the maintenance playbooks MUST be compatible with that bounded sudo surface
-

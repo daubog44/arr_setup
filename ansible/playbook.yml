@@ -206,6 +206,7 @@
   gather_facts: true
   vars:
     haac_enable_falco: "{{ (lookup('env', 'HAAC_ENABLE_FALCO') | default('', true) | lower) in ['1', 'true', 'yes', 'on'] }}"
+    falco_ingest_nodeport: "{{ lookup('env', 'HAAC_FALCO_INGEST_NODEPORT') | default('32081', true) }}"
   tasks:
     - name: Ensure Proxmox kernel headers are installed when Falco runtime is enabled
       ansible.builtin.apt:
@@ -213,6 +214,129 @@
         state: present
         update_cache: true
       when: haac_enable_falco
+
+    - name: Ensure Falco package prerequisites are installed on Proxmox
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+      when: haac_enable_falco
+
+    - name: Download or refresh the Falco package signing key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        tmp_key="$(mktemp)"
+        trap 'rm -f "$tmp_key"' EXIT
+        curl --fail --location --silent --show-error \
+          https://falco.org/repo/falcosecurity-packages.asc \
+          --output "$tmp_key"
+        if [ -f /usr/share/keyrings/falco-archive-keyring.asc ] && cmp -s "$tmp_key" /usr/share/keyrings/falco-archive-keyring.asc; then
+          exit 0
+        fi
+        install -m 0644 "$tmp_key" /usr/share/keyrings/falco-archive-keyring.asc
+        echo changed
+      args:
+        executable: /bin/bash
+      register: falco_signing_key_fetch
+      changed_when: "'changed' in falco_signing_key_fetch.stdout"
+      when: haac_enable_falco
+
+    - name: Check whether the dearmored Falco package keyring already exists
+      ansible.builtin.stat:
+        path: /usr/share/keyrings/falco-archive-keyring.gpg
+      register: falco_signing_keyring
+      when: haac_enable_falco
+
+    - name: Install the dearmored Falco package keyring
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --dearmor
+          - --yes
+          - --output
+          - /usr/share/keyrings/falco-archive-keyring.gpg
+          - /usr/share/keyrings/falco-archive-keyring.asc
+      when:
+        - haac_enable_falco
+        - falco_signing_key_fetch.changed or not falco_signing_keyring.stat.exists
+
+    - name: Ensure the Falco apt repository is configured
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main"
+        filename: falcosecurity
+        state: present
+      when: haac_enable_falco
+
+    - name: Install the Falco host sensor package on Proxmox
+      ansible.builtin.apt:
+        name: falco
+        state: present
+        update_cache: true
+      environment:
+        FALCO_FRONTEND: noninteractive
+        FALCO_DRIVER_CHOICE: modern_ebpf
+      when: haac_enable_falco
+
+    - name: Ensure Falco config drop-in directory exists on Proxmox
+      ansible.builtin.file:
+        path: /etc/falco/config.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: haac_enable_falco
+
+    - name: Configure the HAAC Falco host sensor forwarding profile
+      ansible.builtin.template:
+        src: templates/falco-host.yaml.j2
+        dest: /etc/falco/config.d/haac-host.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      vars:
+        falco_ingest_host: "{{ groups['k3s_master'][0] }}"
+      when: haac_enable_falco
+
+    - name: Stop legacy Falco runtime services that are not used by HaaC
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      failed_when: false
+      loop:
+        - falco.service
+        - falco-kmod-inject.service
+        - falco-bpf.service
+      when: haac_enable_falco
+
+    - name: Enable and start the Falco modern eBPF sensor service
+      ansible.builtin.systemd:
+        name: falco-modern-bpf.service
+        state: started
+        enabled: true
+      when: haac_enable_falco
+
+    - name: Remove the HAAC Falco host profile when Falco is disabled
+      ansible.builtin.file:
+        path: /etc/falco/config.d/haac-host.yaml
+        state: absent
+      when: not haac_enable_falco
+
+    - name: Stop Falco host-side services when Falco is disabled
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      failed_when: false
+      loop:
+        - falco.service
+        - falco-modern-bpf.service
+        - falco-kmod-inject.service
+        - falco-bpf.service
+      when: not haac_enable_falco
 
     - name: Detect NVIDIA GPU
       ansible.builtin.shell: lspci | grep -i "NVIDIA" | grep -i "VGA" || true

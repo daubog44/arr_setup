@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - argocd
   - applications
+  - falco-ingest-service.yaml
   - traefik/traefik-gateway-rbac.yaml
   - traefik/traefik-gatewayclass.yaml
   - traefik/traefik-config.yaml

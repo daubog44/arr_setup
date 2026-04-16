@@ -273,8 +273,9 @@ That split is deliberate. Cluster-local jobs stay in Kubernetes; infra maintenan
 - LXC should remain `unprivileged` by default; K3s, GPU, TUN, and eBPF exceptions are centrally gated with env flags.
 - `task up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.
 - GPU workload scheduling uses standard Kubernetes GPU resources; Node Feature Discovery is used for infrastructure-side GPU discovery.
-- Falco runtime is supported on declared compatible unprivileged LXC workers through the chart's `modern_ebpf` driver path. When `HAAC_ENABLE_FALCO=true`, at least one worker in `WORKER_NODES_JSON` must declare `{"haac.io/falco-runtime":"true"}` or preflight fails closed.
-- Compatible Falco runtime workers receive a dedicated LXC sensor path: the host `/sys/kernel/*` mounts already used for eBPF plus bind mounts for host `/usr/lib/modules` and `/usr/src`, and the Proxmox host guarantees `proxmox-headers-$(uname -r)` before those workers are restarted. That keeps Falco runtime support source-of-truth driven instead of relying on manual host tweaks or legacy in-guest probe compilation.
+- Falco runtime is supported through a dedicated host-side sensor on the Proxmox node, not through an in-cluster DaemonSet on unprivileged LXC workers.
+- When `HAAC_ENABLE_FALCO=true`, the platform layer deploys `falcosidekick` in-cluster for alert ingest plus the protected UI, and the Proxmox host installs the Falco package with the `modern_ebpf` engine and forwards events to the cluster-side ingest service on the declared K3s master IP.
+- Falco no longer depends on `haac.io/falco-runtime` worker labels to become healthy. Those labels can remain for future experiments, but they are not part of the supported runtime path anymore.
 - `task -n up` is a Task dry-run flag. It is not implemented in `scripts/haac.py`; it comes from Task itself and shows what would run without executing it.
 
 See `ARCHITECTURE.md` for the full architecture and `HOMELAB_SERVICES.md` for the service inventory.

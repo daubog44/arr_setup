@@ -159,3 +159,4 @@ For `task up`, success means:
 - When fixing the pipeline, preserve resumability and idempotence.
 - When in doubt, improve observability before adding more automation.
 - When adding loop behavior, keep the runner thin and move policy into docs, specs, and skills.
+- Temporary operator-created artifacts MUST live under `.tmp/`, not in the repo root or ad hoc side directories.

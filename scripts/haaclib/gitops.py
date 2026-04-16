@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -32,47 +31,28 @@ def falco_enabled(env: dict[str, str]) -> bool:
     return value.strip().lower() in TRUTHY_VALUES
 
 
-def load_worker_nodes(env: dict[str, str]) -> dict[str, dict]:
-    raw_value = env.get("WORKER_NODES_JSON", "").strip()
-    if not raw_value:
-        raise RuntimeError("Missing required environment variable: WORKER_NODES_JSON")
+def falco_ingest_nodeport(env: dict[str, str]) -> int:
+    raw_value = env.get("HAAC_FALCO_INGEST_NODEPORT", "32081").strip() or "32081"
     try:
-        data = json.loads(raw_value)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"WORKER_NODES_JSON is not valid JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise RuntimeError("WORKER_NODES_JSON must decode to an object keyed by worker name")
-    return data
-
-
-def falco_runtime_workers(env: dict[str, str]) -> list[str]:
-    runtime_workers: list[str] = []
-    for worker_name, worker_config in load_worker_nodes(env).items():
-        labels = worker_config.get("labels", {})
-        if not isinstance(labels, dict):
-            raise RuntimeError(f"WORKER_NODES_JSON worker '{worker_name}' has non-object labels")
-        value = labels.get("haac.io/falco-runtime")
-        if value is not None and str(value).strip().lower() in TRUTHY_VALUES:
-            runtime_workers.append(worker_name)
-    return runtime_workers
+        node_port = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError("HAAC_FALCO_INGEST_NODEPORT must be a valid integer node port") from exc
+    if not 30000 <= node_port <= 32767:
+        raise RuntimeError("HAAC_FALCO_INGEST_NODEPORT must be within the Kubernetes NodePort range 30000-32767")
+    return node_port
 
 
 def validate_falco_runtime_inputs(env: dict[str, str]) -> None:
     if not falco_enabled(env):
         return
-    runtime_workers = falco_runtime_workers(env)
-    if not runtime_workers:
-        raise RuntimeError(
-            "HAAC_ENABLE_FALCO=true requires at least one WORKER_NODES_JSON labels entry with "
-            '"haac.io/falco-runtime":"true" so the Falco daemonset has a declared runtime target.'
-        )
+    falco_ingest_nodeport(env)
 
 
 def render_gitops_manifests(
     *,
     env: dict[str, str],
     outputs: tuple[Path, ...],
-    falco_output: Path,
+    falco_outputs: tuple[Path, ...],
     disabled_gitops_list: str,
 ) -> None:
     validate_falco_runtime_inputs(env)
@@ -80,7 +60,7 @@ def render_gitops_manifests(
         template_path = gitops_template_path(output_path)
         if not template_path.exists():
             raise RuntimeError(f"Missing GitOps manifest template: {template_path}")
-        if output_path == falco_output and not falco_enabled(env):
+        if output_path in falco_outputs and not falco_enabled(env):
             output_path.write_text(disabled_gitops_list, encoding="utf-8")
             continue
         content = render_env_placeholders(template_path.read_text(encoding="utf-8"), env)
