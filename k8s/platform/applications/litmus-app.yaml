@@ -4,6 +4,7 @@ metadata:
   name: litmus
   namespace: argocd
   annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
     renovate/helm-chart: "litmus"
 spec:
   project: platform

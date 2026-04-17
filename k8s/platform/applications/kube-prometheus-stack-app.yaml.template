@@ -4,6 +4,7 @@ metadata:
   name: kube-prometheus-stack
   namespace: argocd
   annotations:
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
     renovate/helm-chart: "kube-prometheus-stack"
 spec:
   project: platform
@@ -200,7 +201,8 @@ spec:
         kubeApiServer:
           serviceMonitor:
             relabelings:
-              - targetLabel: cluster
+              - action: replace
+                targetLabel: cluster
                 replacement: "${LXC_MASTER_HOSTNAME}"
         kubeEtcd:
           enabled: false
