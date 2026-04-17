@@ -1,0 +1,6 @@
+- [x] 1.1 Add a repo-managed `.env`/Terraform contract for K3s master memory and remove the hardcoded master memory value
+- [x] 1.2 Apply the higher master memory limit to the live Proxmox container and verify it inside the running master
+- [x] 1.3 Refresh repo-managed K3s node host keys after capacity-driven container replacement so `configure-os` can continue without manual known_hosts edits
+- [x] 1.4 Refresh apt metadata on freshly recreated K3s nodes before the first baseline package install after a capacity-driven replacement
+- [x] 1.5 Reset stale K3s worker registration when a recreated master changes the control-plane token/CA hash
+- [x] 1.6 Re-check K3s control-plane health and public operator surfaces after the capacity bump

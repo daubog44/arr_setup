@@ -44,6 +44,11 @@ variable "lxc_master_hostname" {
   type        = string
 }
 
+variable "lxc_master_memory" {
+  description = "Memory, in MiB, assigned to the K3s master container."
+  type        = number
+}
+
 variable "worker_nodes" {
   description = "Map of worker nodes with their configurations"
   type = map(object({

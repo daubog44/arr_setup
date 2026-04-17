@@ -38,7 +38,7 @@ module "k3s_master" {
   hostname         = var.lxc_master_hostname
   vmid             = 100
   cores            = 2
-  memory           = 4096
+  memory           = var.lxc_master_memory
   ip_address       = var.k3s_master_ip
   gateway          = var.lxc_gateway != "" ? var.lxc_gateway : cidrhost(var.k3s_master_ip, 1)
   lxc_password     = var.lxc_password

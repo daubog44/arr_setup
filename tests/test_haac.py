@@ -168,6 +168,42 @@ class KnownHostsRefreshTests(unittest.TestCase):
             )
 
 
+class TofuEnvMappingTests(unittest.TestCase):
+    def test_tofu_tf_vars_includes_master_memory_input(self) -> None:
+        env = {
+            "LXC_PASSWORD": "demo-secret",
+            "LXC_ROOTFS_DATASTORE": "local-zfs",
+            "LXC_MASTER_HOSTNAME": "haacarr-master",
+            "LXC_MASTER_MEMORY": "6144",
+            "LXC_UNPRIVILEGED": "true",
+            "LXC_NESTING": "true",
+            "MASTER_TARGET_NODE": "pve",
+            "K3S_MASTER_IP": "192.168.0.211/24",
+            "WORKER_NODES_JSON": "{}",
+            "HOST_NAS_PATH": "/mnt/pve/HaaC-Storage",
+            "CLOUDFLARE_TUNNEL_TOKEN": "token",
+            "DOMAIN_NAME": "example.com",
+            "PROTONVPN_OPENVPN_USERNAME": "user",
+            "PROTONVPN_OPENVPN_PASSWORD": "password",
+            "SMB_USER": "smb-user",
+            "SMB_PASSWORD": "smb-password",
+            "NAS_ADDRESS": "192.168.0.50",
+            "NAS_SHARE_NAME": "media",
+            "STORAGE_UID": "1000",
+            "STORAGE_GID": "1000",
+            "PYTHON_CMD": "python",
+        }
+
+        with mock.patch.object(haac, "proxmox_access_host", return_value="192.168.0.200"):
+            with mock.patch.object(haac, "resolve_default_gateway", return_value="192.168.0.1"):
+                with mock.patch.object(haac, "maintenance_user", return_value="haac-maint"):
+                    mapped = haac.tofu_tf_vars(env)
+
+        self.assertEqual(mapped["TF_VAR_lxc_master_memory"], "6144")
+        self.assertEqual(mapped["TF_VAR_proxmox_access_host"], "192.168.0.200")
+        self.assertEqual(mapped["TF_VAR_lxc_gateway"], "192.168.0.1")
+
+
 class GitopsStagePathTests(unittest.TestCase):
     def test_gitops_stage_paths_include_platform_generated_secrets(self) -> None:
         stage_paths = haac.gitops_stage_paths()

@@ -729,6 +729,8 @@
       ansible.builtin.apt:
         name: sudo
         state: present
+        update_cache: true
+        cache_valid_time: 3600
 
     - name: Ensure maintenance user exists on K3s nodes
       ansible.builtin.user:
@@ -1076,10 +1078,29 @@
         path: /etc/systemd/system/k3s-agent.service
       register: k3s_agent_service_unit_before_write
 
+    - name: Check if the K3s agent environment file already exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service.env
+      register: k3s_agent_service_env_before_write
+
     - name: Check if the K3s agent containerd config already exists
       ansible.builtin.stat:
         path: /var/lib/rancher/k3s/agent/etc/containerd/config.toml
       register: k3s_agent_containerd_config_before_write
+
+    - name: Read the existing K3s agent token when the worker was already bootstrapped
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f /etc/systemd/system/k3s-agent.service.env ]; then
+          . /etc/systemd/system/k3s-agent.service.env
+          printf '%s' "${K3S_TOKEN:-}"
+        fi
+      args:
+        executable: /bin/bash
+      register: k3s_agent_existing_token
+      changed_when: false
+      failed_when: false
+      when: k3s_agent_service_env_before_write.stat.exists | default(false)
 
     - name: Detect partial K3s worker bootstrap state
       ansible.builtin.set_fact:
@@ -1092,11 +1113,19 @@
               or not (k3s_agent_containerd_config_before_write.stat.exists | default(false))
             )
           }}
+        k3s_worker_token_mismatch: >-
+          {{
+            (k3s_agent_service_env_before_write.stat.exists | default(false))
+            and ((k3s_agent_existing_token.stdout | default('') | trim) != '')
+            and ((hostvars[groups['k3s_master'][0]]['k3s_token'] | default('') | trim) != '')
+            and ((k3s_agent_existing_token.stdout | trim) != (hostvars[groups['k3s_master'][0]]['k3s_token'] | trim))
+          }}
         k3s_agent_registration_reset: false
 
     - name: Reset stale K3s worker registration before reinstall
       ansible.builtin.include_tasks: tasks/reset_stale_k3s_agent_registration.yml
-      when: k3s_worker_partial_bootstrap | bool
+      when:
+        - (k3s_worker_partial_bootstrap | bool) or (k3s_worker_token_mismatch | bool)
 
     - name: Ensure K3s config directory exists on workers
       ansible.builtin.file:
