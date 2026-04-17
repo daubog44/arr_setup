@@ -66,7 +66,10 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-cm.yaml",
     K8S_DIR / "platform" / "applications" / "falco-app.yaml",
     K8S_DIR / "platform" / "falco-ingest-service.yaml",
+    K8S_DIR / "platform" / "applications" / "kyverno-app.yaml",
+    K8S_DIR / "platform" / "applications" / "kyverno-policies-app.yaml",
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
+    K8S_DIR / "platform" / "applications" / "policy-reporter-app.yaml",
     K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
 )
 GITOPS_GENERATED_OUTPUTS = (

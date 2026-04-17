@@ -1,0 +1,50 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    renovate/helm-chart: "kyverno"
+spec:
+  project: platform
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    # renovate: registryUrl=https://kyverno.github.io/kyverno chart=kyverno
+    targetRevision: "3.7.1"
+    helm:
+      values: |
+        admissionController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+
+        backgroundController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+
+        cleanupController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+
+        reportsController:
+          replicas: 1
+          serviceMonitor:
+            enabled: true
+
+        grafana:
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

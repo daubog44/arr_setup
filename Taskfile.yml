@@ -2,6 +2,10 @@ version: "3"
 
 dotenv: [".env"]
 
+includes:
+  security:
+    taskfile: ./Taskfile.security.yml
+
 vars:
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   TOFU_DIR: tofu
@@ -116,6 +120,7 @@ tasks:
       - task: push-changes
       - task: deploy-argocd
       - task: wait-for-argocd-sync
+      - task: security:post-install
       - task: sync-cloudflare
 
   reconcile:sealed-secrets:
@@ -131,6 +136,7 @@ tasks:
       - task: push-changes
       - task: deploy-argocd
       - task: wait-for-argocd-sync
+      - task: security:post-install
       - task: sync-cloudflare
       - task: repair-litmus-admin
       - task: repair-litmus-chaos
@@ -144,6 +150,7 @@ tasks:
       - task: push-changes
       - task: deploy-argocd
       - task: wait-for-argocd-sync
+      - task: security:post-install
       - task: sync-cloudflare
       - task: repair-litmus-admin
       - task: repair-litmus-chaos

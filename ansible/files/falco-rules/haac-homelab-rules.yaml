@@ -1,0 +1,136 @@
+- list: haac_sensitive_maintenance_processes
+  items:
+    - ansible
+    - ansible-playbook
+    - bash
+    - cat
+    - cp
+    - falco
+    - grep
+    - haac-proxmox-maintenance
+    - k3s
+    - mv
+    - nano
+    - python
+    - python3
+    - rsync
+    - scp
+    - sed
+    - sftp-server
+    - ssh
+    - ssh-keygen
+    - sshd
+    - sudo
+    - systemd
+    - tar
+    - tee
+    - vi
+    - vim
+
+- list: haac_package_managers
+  items:
+    - apk
+    - apt
+    - apt-get
+    - aptitude
+    - dnf
+    - dpkg
+    - microdnf
+    - pacman
+    - yum
+    - zypper
+
+- list: haac_allowed_package_manager_parents
+  items:
+    - apt
+    - apt-get
+    - bash
+    - dpkg
+    - haac-proxmox-maintenance
+    - sh
+    - sudo
+    - systemd
+    - unattended-upgrade
+    - unattended-upgrades
+
+- list: haac_socket_tools
+  items:
+    - nc
+    - ncat
+    - socat
+
+- macro: haac_sensitive_material_access
+  condition: >
+    fd.name exists and (
+      fd.name startswith "/root/.ssh" or
+      fd.name contains "/.ssh/" or
+      fd.name startswith "/etc/ssh" or
+      fd.name startswith "/etc/rancher/k3s" or
+      fd.name startswith "/var/lib/rancher/k3s/server/cred"
+    )
+
+- macro: haac_sensitive_config_write
+  condition: >
+    fd.name exists and (
+      fd.name startswith "/etc/falco" or
+      fd.name startswith "/etc/ssh" or
+      fd.name startswith "/etc/rancher/k3s" or
+      fd.name startswith "/var/lib/rancher/k3s/server"
+    )
+
+- rule: HAAC Sensitive Access To SSH Or K3s Material
+  desc: Detect reads of SSH or K3s credential material outside the expected maintenance path.
+  condition: >
+    evt.type in (open, openat, openat2) and evt.is_open_read=true and
+    haac_sensitive_material_access and
+    not proc.name in (haac_sensitive_maintenance_processes)
+  output: >
+    Sensitive credential material accessed outside the HAAC maintenance allowlist
+    (user=%user.name command=%proc.cmdline file=%fd.name parent=%proc.pname)
+  priority: WARNING
+  tags: [maturity_stable, haac, homelab, filesystem, credential_access]
+
+- rule: HAAC Sensitive Config Write
+  desc: Detect writes to SSH, K3s, or Falco configuration paths outside the expected maintenance path.
+  condition: >
+    evt.type in (open, openat, openat2, creat) and evt.is_open_write=true and
+    haac_sensitive_config_write and
+    not proc.name in (haac_sensitive_maintenance_processes)
+  output: >
+    Sensitive host configuration modified outside the HAAC maintenance allowlist
+    (user=%user.name command=%proc.cmdline file=%fd.name parent=%proc.pname)
+  priority: WARNING
+  tags: [maturity_stable, haac, homelab, filesystem, config_integrity]
+
+- rule: HAAC Package Manager Execution
+  desc: Detect package manager execution outside the bounded maintenance wrapper path.
+  condition: >
+    spawned_process and proc.name in (haac_package_managers) and
+    not proc.pname in (haac_allowed_package_manager_parents)
+  output: >
+    Package manager executed outside the HAAC maintenance allowlist
+    (user=%user.name command=%proc.cmdline parent=%proc.pname)
+  priority: NOTICE
+  tags: [maturity_stable, haac, homelab, package_management]
+
+- rule: HAAC Socket Tool Execution
+  desc: Detect interactive socket tooling commonly used for pivots and reverse shells.
+  condition: >
+    spawned_process and proc.name in (haac_socket_tools)
+  output: >
+    Interactive socket tooling executed on the Proxmox host
+    (user=%user.name command=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [maturity_stable, haac, homelab, networking, remote_shell]
+
+- rule: HAAC Piped Remote Shell Execution
+  desc: Detect shell pipelines that fetch remote content and pipe it directly to a shell.
+  condition: >
+    spawned_process and proc.name in (bash, sh, zsh, dash, ash) and
+    (proc.cmdline contains "curl " or proc.cmdline contains "wget ") and
+    proc.cmdline contains "|"
+  output: >
+    Remote content piped directly into a shell on the Proxmox host
+    (user=%user.name command=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [maturity_stable, haac, homelab, execution, remote_shell]

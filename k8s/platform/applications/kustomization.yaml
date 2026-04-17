@@ -4,6 +4,8 @@ resources:
   - alloy-app.yaml
   - descheduler-app.yaml
   - falco-app.yaml
+  - kyverno-app.yaml
+  - kyverno-policies-app.yaml
   - kube-prometheus-stack-app.yaml
   - kured-app.yaml
   - litmus-app.yaml
@@ -11,5 +13,6 @@ resources:
   - longhorn.yaml
   - node-feature-discovery-app.yaml
   - node-problem-detector-app.yaml
+  - policy-reporter-app.yaml
   - semaphore-app.yaml
   - trivy-operator-app.yaml

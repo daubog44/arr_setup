@@ -1,0 +1,51 @@
+---
+- name: Reconcile Falco homelab security assets
+  hosts: proxmox_host
+  gather_facts: false
+  vars:
+    haac_enable_falco: "{{ (lookup('env', 'HAAC_ENABLE_FALCO') | default('', true) | lower) in ['1', 'true', 'yes', 'on'] }}"
+  tasks:
+    - name: Wait for Proxmox host to be reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+
+    - name: Ensure the Falco rules directory exists on the supported host-side sensor
+      ansible.builtin.file:
+        path: /etc/falco/rules.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: haac_enable_falco
+
+    - name: Reconcile the HAAC Falco homelab rule bundle
+      ansible.builtin.copy:
+        src: files/falco-rules/haac-homelab-rules.yaml
+        dest: /etc/falco/rules.d/haac-homelab-rules.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      register: falco_rule_bundle
+      when: haac_enable_falco
+
+    - name: Restart the Falco modern eBPF service when the rule bundle changes
+      ansible.builtin.systemd:
+        name: falco-modern-bpf.service
+        state: restarted
+        enabled: true
+      when:
+        - haac_enable_falco
+        - falco_rule_bundle.changed
+
+    - name: Verify that the Falco modern eBPF service is active
+      ansible.builtin.command: systemctl is-active falco-modern-bpf.service
+      register: falco_service_state
+      changed_when: false
+      failed_when: falco_service_state.stdout.strip() != "active"
+      when: haac_enable_falco
+
+    - name: Remove the HAAC Falco homelab rule bundle when Falco is disabled
+      ansible.builtin.file:
+        path: /etc/falco/rules.d/haac-homelab-rules.yaml
+        state: absent
+      when: not haac_enable_falco
