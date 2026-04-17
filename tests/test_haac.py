@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
-import io
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +34,30 @@ class MergedEnvTests(unittest.TestCase):
 
         self.assertEqual(merged["LXC_PASSWORD"], "demo-secret")
         self.assertEqual(merged["PROXMOX_HOST_PASSWORD"], "explicit-secret")
+
+    def test_qui_password_derives_qbittorrent_hash_and_secret_checksums(self) -> None:
+        with mock.patch.object(haac, "load_env_file", return_value={"QUI_PASSWORD": "demo-secret"}):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertTrue(merged["QBITTORRENT_PASSWORD_PBKDF2"].startswith("@ByteArray("))
+        self.assertEqual(
+            merged["QBITTORRENT_PASSWORD_PBKDF2"],
+            haac.qbittorrent_password_pbkdf2("demo-secret"),
+        )
+        self.assertIn("DOWNLOADERS_AUTH_SECRET_SHA256", merged)
+        self.assertIn("HOMEPAGE_WIDGETS_SECRET_SHA256", merged)
+
+
+class QbittorrentPasswordHashTests(unittest.TestCase):
+    def test_qbittorrent_password_pbkdf2_is_deterministic(self) -> None:
+        first = haac.qbittorrent_password_pbkdf2("MySecretPassword123!")
+        second = haac.qbittorrent_password_pbkdf2("MySecretPassword123!")
+        third = haac.qbittorrent_password_pbkdf2("different-secret")
+
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, third)
+        self.assertRegex(first, r"^@ByteArray\([A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+\)$")
 
 
 class SshTunnelRetryTests(unittest.TestCase):
@@ -70,6 +96,86 @@ class SshTunnelRetryTests(unittest.TestCase):
         self.assertEqual([instance.command for instance in popen_instances], built_commands)
         self.assertEqual(cleanup_runtime.call_count, 3)
         self.assertIn("permission denied", str(ctx.exception))
+
+
+class TaskRunStreamingTests(unittest.TestCase):
+    def test_task_run_streams_with_utf8_replace(self) -> None:
+        observed_kwargs: dict[str, object] = {}
+
+        class FakeStream:
+            def __iter__(self):
+                yield "TASK: one\n"
+                yield "TASK: two\n"
+
+        class FakeProcess:
+            stdout = FakeStream()
+
+            def wait(self) -> int:
+                return 0
+
+        def fake_popen(*args, **kwargs):
+            observed_kwargs.update(kwargs)
+            return FakeProcess()
+
+        with mock.patch.object(haac.subprocess, "Popen", side_effect=fake_popen):
+            with mock.patch("builtins.print") as fake_print:
+                returncode, output_lines = haac.run_task_with_output("task", ["up"], {})
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(output_lines, ["TASK: one", "TASK: two"])
+        self.assertEqual(observed_kwargs["encoding"], "utf-8")
+        self.assertEqual(observed_kwargs["errors"], "replace")
+        fake_print.assert_any_call("TASK: one\n", end="")
+        fake_print.assert_any_call("TASK: two\n", end="")
+
+
+class KnownHostsRefreshTests(unittest.TestCase):
+    def test_cluster_node_hosts_strips_cidr_and_preserves_worker_order(self) -> None:
+        env = {
+            "K3S_MASTER_IP": "192.168.0.211/24",
+            "WORKER_NODES_JSON": json.dumps(
+                {
+                    "worker1": {"hostname": "haacarr-worker1", "ip": "192.168.0.212/24"},
+                    "worker2": {"hostname": "haacarr-worker2", "ip": "192.168.0.213"},
+                }
+            ),
+        }
+
+        self.assertEqual(
+            haac.cluster_node_hosts(env),
+            ["192.168.0.211", "192.168.0.212", "192.168.0.213"],
+        )
+
+    def test_replace_known_host_entries_replaces_matching_host_and_keeps_others(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "known_hosts"
+            path.write_text(
+                "192.168.0.211 ssh-ed25519 OLDMASTER\n"
+                "192.168.0.212 ssh-ed25519 WORKER\n",
+                encoding="utf-8",
+            )
+
+            haac.replace_known_host_entries(
+                path,
+                "192.168.0.211",
+                "192.168.0.211 ssh-ed25519 NEWMASTER\n",
+            )
+
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                "192.168.0.212 ssh-ed25519 WORKER\n"
+                "192.168.0.211 ssh-ed25519 NEWMASTER\n",
+            )
+
+
+class GitopsStagePathTests(unittest.TestCase):
+    def test_gitops_stage_paths_include_platform_generated_secrets(self) -> None:
+        stage_paths = haac.gitops_stage_paths()
+
+        self.assertIn(str(haac.SECRETS_DIR), stage_paths)
+        self.assertIn(str(haac.ARGOCD_OIDC_SECRET_OUTPUT), stage_paths)
+        self.assertIn(str(haac.LITMUS_ADMIN_SECRET_OUTPUT), stage_paths)
+        self.assertIn(str(haac.VALUES_OUTPUT), stage_paths)
 
 
 class ArgocdRevisionGateTests(unittest.TestCase):
@@ -114,6 +220,43 @@ class ArgocdRevisionGateTests(unittest.TestCase):
 
         with mock.patch.object(haac, "wait_for_resource"):
             with mock.patch.object(haac, "kubectl_json", side_effect=[stale_app, fresh_app]):
+                with mock.patch.object(haac, "recover_stale_argocd_operation", return_value=False):
+                    with mock.patch.object(haac, "recover_stalled_downloaders_rollout", return_value=False):
+                        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                            with mock.patch.object(haac.time, "sleep"):
+                                with mock.patch.object(haac.time, "time", side_effect=[0, 0, 1]):
+                                    haac.wait_for_argocd_application_ready(
+                                        "kubectl",
+                                        Path("demo-kubeconfig"),
+                                        application="haac-platform",
+                                        stage_label="Platform root gate",
+                                        deadline=60,
+                                        expected_revision="new-sha",
+                                        gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                    )
+
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
+
+    def test_wait_for_argocd_application_refreshes_stale_failed_repo_app(self) -> None:
+        stale_failed = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"status": "OutOfSync", "revision": "old-sha"},
+                "health": {"status": "Degraded"},
+                "operationState": {"phase": "Failed", "message": "old failure"},
+            },
+        }
+        fresh = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"status": "Synced", "revision": "new-sha"},
+                "health": {"status": "Healthy"},
+                "operationState": {"phase": ""},
+            },
+        }
+
+        with mock.patch.object(haac, "wait_for_resource"):
+            with mock.patch.object(haac, "kubectl_json", side_effect=[stale_failed, fresh]):
                 with mock.patch.object(haac, "recover_stale_argocd_operation", return_value=False):
                     with mock.patch.object(haac, "recover_stalled_downloaders_rollout", return_value=False):
                         with mock.patch.object(haac, "refresh_argocd_application") as refresh:

@@ -16,6 +16,7 @@ spec:
         app: homepage
       annotations:
         checksum/homepage-config: {{ include "haac-stack.homepage.configChecksum" . | quote }}
+        checksum/homepage-widgets-secret: {{ .Values.global.auth.homepageWidgetsChecksum | quote }}
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"

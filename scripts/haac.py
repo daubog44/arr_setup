@@ -69,6 +69,12 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
     K8S_DIR / "platform" / "applications" / "semaphore-app.yaml",
 )
+GITOPS_GENERATED_OUTPUTS = (
+    VALUES_OUTPUT,
+    ARGOCD_OIDC_SECRET_OUTPUT,
+    LITMUS_ADMIN_SECRET_OUTPUT,
+    *GITOPS_RENDERED_OUTPUTS,
+)
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
 FALCO_INGEST_SERVICE_OUTPUT = K8S_DIR / "platform" / "falco-ingest-service.yaml"
 DISABLED_GITOPS_LIST = "apiVersion: v1\nkind: List\nitems: []\n"
@@ -157,10 +163,43 @@ def merged_env() -> dict[str, str]:
             "GRAFANA_OIDC_SECRET_SHA256",
             hashlib.sha256(merged["GRAFANA_OIDC_SECRET"].encode("utf-8")).hexdigest(),
         )
+    if merged.get("QUI_PASSWORD"):
+        merged.setdefault("QBITTORRENT_PASSWORD_PBKDF2", qbittorrent_password_pbkdf2(merged["QUI_PASSWORD"]))
+        merged.setdefault(
+            "DOWNLOADERS_AUTH_SECRET_SHA256",
+            stable_secret_checksum(
+                {
+                    "QUI_PASSWORD": merged["QUI_PASSWORD"],
+                    "QBITTORRENT_PASSWORD_PBKDF2": merged["QBITTORRENT_PASSWORD_PBKDF2"],
+                }
+            ),
+        )
+        merged.setdefault(
+            "HOMEPAGE_WIDGETS_SECRET_SHA256",
+            stable_secret_checksum(
+                {
+                    "HOMEPAGE_VAR_GRAFANA_USERNAME": "admin",
+                    "HOMEPAGE_VAR_GRAFANA_PASSWORD": merged.get("GRAFANA_ADMIN_PASSWORD", merged["QUI_PASSWORD"]),
+                    "HOMEPAGE_VAR_QBITTORRENT_USERNAME": "admin",
+                    "HOMEPAGE_VAR_QBITTORRENT_PASSWORD": merged["QUI_PASSWORD"],
+                }
+            ),
+        )
     merged.setdefault("LITMUS_ADMIN_USERNAME", "admin")
     if merged.get("AUTHELIA_ADMIN_PASSWORD"):
         merged.setdefault("LITMUS_ADMIN_PASSWORD", merged["AUTHELIA_ADMIN_PASSWORD"])
     return merged
+
+
+def stable_secret_checksum(values: dict[str, str]) -> str:
+    payload = "\n".join(f"{key}={values[key]}" for key in sorted(values))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def qbittorrent_password_pbkdf2(password: str) -> str:
+    salt = hashlib.sha256(f"haac-qbittorrent:{password}".encode("utf-8")).digest()[:16]
+    derived = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, 100000, dklen=64)
+    return f"@ByteArray({base64.b64encode(salt).decode()}:{base64.b64encode(derived).decode()})"
 
 
 def proxmox_node_name(env: dict[str, str]) -> str:
@@ -259,6 +298,90 @@ def redact_text(text: str, env: dict[str, str] | None = None) -> str:
 
 def known_hosts_path(env: dict[str, str] | None = None) -> Path:
     return ensure_known_hosts_file(resolve_known_hosts_path(ROOT, env or merged_env()))
+
+
+def strip_ip_cidr(value: str) -> str:
+    return value.strip().split("/", 1)[0].strip()
+
+
+def cluster_node_hosts(env: dict[str, str]) -> list[str]:
+    hosts: list[str] = []
+    master_host = strip_ip_cidr(env.get("K3S_MASTER_IP", ""))
+    if master_host:
+        hosts.append(master_host)
+
+    worker_nodes_raw = env.get("WORKER_NODES_JSON", "").strip()
+    if not worker_nodes_raw:
+        return hosts
+
+    try:
+        worker_nodes = json.loads(worker_nodes_raw)
+    except json.JSONDecodeError as exc:
+        raise HaaCError("WORKER_NODES_JSON must be valid JSON before bootstrap can refresh SSH trust") from exc
+
+    if isinstance(worker_nodes, dict):
+        entries = list(worker_nodes.values())
+    elif isinstance(worker_nodes, list):
+        entries = worker_nodes
+    else:
+        raise HaaCError("WORKER_NODES_JSON must decode to a JSON object or array")
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        worker_host = strip_ip_cidr(str(entry.get("ip", "")))
+        if worker_host:
+            hosts.append(worker_host)
+
+    return hosts
+
+
+def replace_known_host_entries(path: Path, host: str, entries: str) -> None:
+    existing_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    retained: list[str] = []
+    for line in existing_lines:
+        if not line or line.startswith("#"):
+            retained.append(line)
+            continue
+        marker = line.split(" ", 1)[0]
+        if marker.startswith("|1|"):
+            retained.append(line)
+            continue
+        known_markers = marker.split(",")
+        if host in known_markers or f"[{host}]:22" in known_markers:
+            continue
+        retained.append(line)
+
+    for entry in entries.splitlines():
+        cleaned = entry.strip()
+        if cleaned:
+            retained.append(cleaned)
+
+    rendered = "\n".join(retained)
+    if rendered:
+        rendered += "\n"
+    path.write_text(rendered, encoding="utf-8")
+
+
+def refresh_cluster_known_hosts(env: dict[str, str], *, timeout_seconds: int = 120) -> None:
+    access_host = proxmox_access_host(env)
+    local_known_hosts = known_hosts_path(env)
+    for host in cluster_node_hosts(env):
+        deadline = time.time() + timeout_seconds
+        scanned_entries = ""
+        while time.time() < deadline:
+            scanned_entries = run_proxmox_ssh_stdout(
+                access_host,
+                f"ssh-keyscan -T 5 -t ed25519 {shlex.quote(host)} 2>/dev/null || true",
+                connect_timeout=10,
+                check=False,
+            )
+            if scanned_entries.strip():
+                replace_known_host_entries(local_known_hosts, host, scanned_entries)
+                break
+            time.sleep(2)
+        else:
+            raise HaaCError(f"Timed out refreshing SSH host key for K3s node {host}")
 
 
 def ssh_host_key_checking_mode(env: dict[str, str] | None = None) -> str:
@@ -660,6 +783,8 @@ def run_task_with_output(task_binary: str, task_args: list[str], env: dict[str, 
         cwd=str(ROOT),
         env=env,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=1,
@@ -1091,6 +1216,10 @@ def render_gitops_manifests(env: dict[str, str]) -> None:
         raise HaaCError(str(exc)) from exc
 
 
+def gitops_stage_paths() -> list[str]:
+    return [str(SECRETS_DIR), *[str(path) for path in GITOPS_GENERATED_OUTPUTS]]
+
+
 def tool_version(env: dict[str, str], env_key: str, default: str) -> str:
     return env.get(env_key, default).strip() or default
 
@@ -1451,6 +1580,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             SECRETS_DIR / "downloaders-auth-sealed-secret.yaml",
             {
                 "QUI_PASSWORD": env["QUI_PASSWORD"],
+                "QBITTORRENT_PASSWORD_PBKDF2": env["QBITTORRENT_PASSWORD_PBKDF2"],
             },
             None,
         ),
@@ -1761,16 +1891,17 @@ def wait_for_argocd_application_ready(
             expected_revision=expected_revision,
             gitops_repo_url=gitops_repo_url,
         )
+        current_revision = argocd_application_sync_revision(app) or "unknown"
 
         if sync_status == "Synced" and health_status == "Healthy" and revision_current:
             print(f"[ok] {stage_label}: {application} synced and healthy")
             return
-        if sync_status == "Synced" and health_status == "Healthy" and not revision_current:
-            current_revision = argocd_application_sync_revision(app) or "unknown"
+        if not revision_current:
             refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
             print(
-                f"[wait] {stage_label}: {application} healthy on stale revision "
-                f"{current_revision[:12]} while waiting for {expected_revision[:12]}"
+                f"[wait] {stage_label}: {application} on stale revision "
+                f"{current_revision[:12]} (sync={sync_status or 'Unknown'} health={health_status or 'Unknown'}) "
+                f"while waiting for {expected_revision[:12]}"
             )
             time.sleep(10)
             continue
@@ -1992,7 +2123,7 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
     if push_all:
         stage_git_paths()
     else:
-        stage_git_paths([str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]])
+        stage_git_paths(gitops_stage_paths())
 
     if not git_has_staged_changes():
         print("[ok] GitOps output already converged; nothing new to publish.")
@@ -2041,10 +2172,7 @@ def pre_commit_hook() -> None:
         if health.returncode == 0:
             generate_secrets_core(kubeconfig, kubectl, fetch_cert=True)
             if gitstatelib.is_git_repo(ROOT):
-                run(
-                    ["git", "add", str(SECRETS_DIR), str(VALUES_OUTPUT), *[str(path) for path in GITOPS_RENDERED_OUTPUTS]],
-                    check=False,
-                )
+                run(["git", "add", *gitops_stage_paths()], check=False)
             return
 
     print("K3s is not reachable from the pre-commit hook. Skipping secret regeneration.")
@@ -3501,17 +3629,19 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                         "exec",
                         "-n",
                         "media",
-                        pod_name,
-                        "-c",
-                        "port-sync",
-                        "--",
-                        "/bin/sh",
-                        "-ec",
-                        "curl -fsS http://127.0.0.1:7476/api/auth/me >/dev/null && curl -fsS http://127.0.0.1:8080/api/v2/app/version >/dev/null",
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
+                pod_name,
+                "-c",
+                "port-sync",
+                "--",
+                "/bin/sh",
+                "-ec",
+                "curl -fsS http://127.0.0.1:7476/api/auth/me >/dev/null && "
+                "version_code=$(curl -sS -o /tmp/qbit-version.txt -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version || true) && "
+                "[ \"$version_code\" = \"200\" ] || [ \"$version_code\" = \"403\" ]",
+            ],
+            check=False,
+            capture_output=True,
+        )
                 if health.returncode == 0:
                     break
             time.sleep(5)
@@ -4104,6 +4234,7 @@ def tofu_tf_vars(env: dict[str, str]) -> dict[str, str]:
         "lxc_password": "LXC_PASSWORD",
         "lxc_rootfs_datastore": "LXC_ROOTFS_DATASTORE",
         "lxc_master_hostname": "LXC_MASTER_HOSTNAME",
+        "lxc_master_memory": "LXC_MASTER_MEMORY",
         "lxc_unprivileged": "LXC_UNPRIVILEGED",
         "lxc_nesting": "LXC_NESTING",
         "master_target_node": "MASTER_TARGET_NODE",
@@ -4222,7 +4353,9 @@ def cmd_pre_commit_hook(_: argparse.Namespace) -> None:
 
 def cmd_run_ansible(args: argparse.Namespace) -> None:
     env = merged_env()
+    ensure_repo_ssh_keypair()
     ensure_semaphore_ssh_keypair()
+    refresh_cluster_known_hosts(env)
     inventory = ROOT / args.inventory
     playbook = ROOT / args.playbook
     extra_args = shlex.split(args.extra_args) if args.extra_args else []

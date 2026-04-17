@@ -16,7 +16,7 @@ The bootstrap path already knows which Git branch is the GitOps source of truth.
 - resolve the expected GitOps revision from the configured remote branch
 - refresh `haac-root` immediately after applying the root app manifest
 - require repo-managed ArgoCD applications to report `status.sync.revision == <expected git sha>` before the readiness gate succeeds
-- when a repo-managed app is healthy but stale, request a hard refresh and keep waiting instead of returning success
+- when a repo-managed app is stale, request a hard refresh and keep waiting instead of returning success or surfacing an old failed revision as the current truth
 
 This stays narrow because it changes neither the public operator command nor the application topology. It only tightens the definition of "GitOps ready" to match the real commit that `push-changes` published.
 

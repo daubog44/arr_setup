@@ -400,6 +400,28 @@ async function verifyGrafanaObservability(page) {
   }
 }
 
+async function verifyHomepageWidgets(page) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const bodyText = await page.locator("body").innerText();
+    if (!bodyText.includes("Grafana") || !bodyText.includes("qBittorrent")) {
+      await page.waitForTimeout(1000);
+      continue;
+    }
+    if (/HTTP status 500/i.test(bodyText) || /API Error Information/i.test(bodyText)) {
+      if (attempt === 29) {
+        if (/HTTP status 500/i.test(bodyText)) {
+          throw new Error("Homepage still rendered an operator widget with HTTP status 500.");
+        }
+        throw new Error("Homepage still rendered widget API errors for one or more official service cards.");
+      }
+      await page.waitForTimeout(1000);
+      continue;
+    }
+    return;
+  }
+  throw new Error("Homepage did not render the expected Grafana and qBittorrent cards before widget verification.");
+}
+
 async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedText = null, unexpectedText = null) {
   const expectedHost = `${subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}`, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -420,6 +442,9 @@ async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedTex
     if (refreshedBody.includes(unexpectedText)) {
       throw new Error(`${screenshotName} rendered unexpected text: ${unexpectedText}`);
     }
+  }
+  if (subdomain === "home") {
+    await verifyHomepageWidgets(page);
   }
   await screenshot(page, screenshotName);
 }

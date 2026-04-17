@@ -7,7 +7,7 @@ That stale-success path directly breaks the `task up` contract: later verificati
 ## What Changes
 
 - Make the ArgoCD readiness gate compare repo-managed application sync revisions against the expected GitOps commit, not only `Synced` and `Healthy`.
-- Force a hard refresh for stale repo-managed applications during bootstrap/reconcile so ArgoCD re-resolves the branch head it should be applying.
+- Force a hard refresh for stale repo-managed applications during bootstrap/reconcile so ArgoCD re-resolves the branch head it should be applying, even when the stale application is currently degraded or failed on an older revision.
 - Record the revision-freshness contract in OpenSpec so future loop rounds cannot treat stale GitOps state as healthy convergence.
 
 ## Capabilities
