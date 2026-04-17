@@ -404,12 +404,20 @@ async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedTex
   const expectedHost = `${subdomain}.${env.DOMAIN_NAME}`;
   await page.goto(`https://${expectedHost}`, { waitUntil: "domcontentloaded", timeout: 60000 });
   await ensureHost(page, expectedHost, env);
+  const routeErrorMarkers = ["Bad gateway", "502", "Application is not available", "Internal Server Error", "404 page not found"];
+  const body = String((await page.textContent("body").catch(() => "")) || "");
+  for (const marker of routeErrorMarkers) {
+    if (body.includes(marker)) {
+      await screenshot(page, `${screenshotName}-gateway-error`);
+      throw new Error(`${screenshotName} rendered a route-level failure after auth: ${marker}`);
+    }
+  }
   if (expectedText) {
     await page.waitForSelector(`text=${expectedText}`, { timeout: 30000 });
   }
   if (unexpectedText) {
-    const body = String((await page.textContent("body").catch(() => "")) || "");
-    if (body.includes(unexpectedText)) {
+    const refreshedBody = String((await page.textContent("body").catch(() => "")) || "");
+    if (refreshedBody.includes(unexpectedText)) {
       throw new Error(`${screenshotName} rendered unexpected text: ${unexpectedText}`);
     }
   }

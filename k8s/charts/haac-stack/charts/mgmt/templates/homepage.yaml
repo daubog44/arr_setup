@@ -56,6 +56,7 @@ spec:
               path: /api/healthcheck
               port: 3000
             initialDelaySeconds: 15
+            timeoutSeconds: 5
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
@@ -63,6 +64,7 @@ spec:
               path: /api/healthcheck
               port: 3000
             initialDelaySeconds: 5
+            timeoutSeconds: 5
             periodSeconds: 10
           env:
             - name: NODE_ENV
