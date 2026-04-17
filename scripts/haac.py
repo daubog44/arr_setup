@@ -191,12 +191,40 @@ def merged_env() -> dict[str, str]:
     merged.setdefault("LITMUS_ADMIN_USERNAME", "admin")
     if merged.get("AUTHELIA_ADMIN_PASSWORD"):
         merged.setdefault("LITMUS_ADMIN_PASSWORD", merged["AUTHELIA_ADMIN_PASSWORD"])
+    merged.setdefault("HOMEPAGE_CONFIG_CHECKSUM", homepage_config_checksum(merged))
     return merged
 
 
 def stable_secret_checksum(values: dict[str, str]) -> str:
     payload = "\n".join(f"{key}={values[key]}" for key in sorted(values))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def extract_top_level_yaml_section(content: str, section_name: str) -> str:
+    lines = content.splitlines()
+    header = f"{section_name}:"
+    capture = False
+    captured: list[str] = []
+    top_level_key = re.compile(r"^[A-Za-z0-9_-]+:\s*(?:#.*)?$")
+    for line in lines:
+        if not capture:
+            if line.startswith(header):
+                capture = True
+                captured.append(line)
+            continue
+        if line and not line.startswith((" ", "\t")) and top_level_key.match(line):
+            break
+        captured.append(line)
+    return "\n".join(captured).strip()
+
+
+def homepage_config_checksum(env: dict[str, str]) -> str:
+    rendered_values = gitopslib.render_env_placeholders(VALUES_TEMPLATE.read_text(encoding="utf-8"), env)
+    inputs = [
+        extract_top_level_yaml_section(rendered_values, "ingresses"),
+        extract_top_level_yaml_section(rendered_values, "homepage"),
+    ]
+    return hashlib.sha256("\n---\n".join(inputs).encode("utf-8")).hexdigest()
 
 
 def qbittorrent_password_pbkdf2(password: str) -> str:

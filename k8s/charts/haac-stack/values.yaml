@@ -43,6 +43,7 @@ global:
     autheliaConfigChecksum: "25e846a93500744f56b3b46ff278c4a314520c91cc0821139991d272c055184e"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "ad940ef78538aceaef482b0716e68c61465a20974235a90003195029ddd6ebdb"
+    homepageConfigChecksum: "a8d1d79edd70a03265d9fe46fb5adef7a640c4ddf6abcfcaabbb8f8a39e15839"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:

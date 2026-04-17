@@ -403,7 +403,7 @@ async function verifyGrafanaObservability(page) {
 async function verifyHomepageWidgets(page) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const bodyText = await page.locator("body").innerText();
-    if (!bodyText.includes("Grafana") || !bodyText.includes("qBittorrent")) {
+    if (!bodyText.includes("Grafana") || !bodyText.includes("qBittorrent") || !bodyText.includes("Kyverno")) {
       await page.waitForTimeout(1000);
       continue;
     }
@@ -419,7 +419,7 @@ async function verifyHomepageWidgets(page) {
     }
     return;
   }
-  throw new Error("Homepage did not render the expected Grafana and qBittorrent cards before widget verification.");
+  throw new Error("Homepage did not render the expected Grafana, qBittorrent, and Kyverno cards before widget verification.");
 }
 
 async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedText = null, unexpectedText = null) {
