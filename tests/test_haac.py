@@ -97,6 +97,15 @@ class SshTunnelRetryTests(unittest.TestCase):
         self.assertEqual(cleanup_runtime.call_count, 3)
         self.assertIn("permission denied", str(ctx.exception))
 
+    def test_wsl_runtime_dir_is_scoped_per_process_and_thread(self) -> None:
+        env = {"HAAC_WSL_DISTRO": "Debian"}
+
+        with mock.patch.object(haac.os, "getpid", return_value=4242):
+            with mock.patch.object(haac.threading, "get_ident", return_value=99):
+                runtime_dir = haac.wsl_runtime_dir(env)
+
+        self.assertEqual(runtime_dir, "/tmp/haac-runtime/Debian/pid-4242-tid-99")
+
 
 class TaskRunStreamingTests(unittest.TestCase):
     def test_task_run_streams_with_utf8_replace(self) -> None:

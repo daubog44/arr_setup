@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -858,7 +859,11 @@ def wsl_home_dir(env: dict[str, str]) -> str:
 
 def wsl_runtime_dir(env: dict[str, str]) -> str:
     runtime_root = env.get("HAAC_WSL_RUNTIME_ROOT", "/tmp/haac-runtime").strip() or "/tmp/haac-runtime"
-    return f"{runtime_root.rstrip('/')}/{wsl_distro(env)}"
+    runtime_id = env.get("HAAC_WSL_RUNTIME_ID", "").strip()
+    if not runtime_id:
+        runtime_id = f"pid-{os.getpid()}-tid-{threading.get_ident()}"
+    safe_runtime_id = re.sub(r"[^A-Za-z0-9._-]+", "-", runtime_id)
+    return f"{runtime_root.rstrip('/')}/{wsl_distro(env)}/{safe_runtime_id}"
 
 
 def ensure_wsl_runtime_dir(env: dict[str, str]) -> str:

@@ -1,8 +1,9 @@
 ## 1. Retry safety
 
-- [ ] 1.1 Recreate the Windows/WSL-backed SSH tunnel command on every retry attempt
-- [ ] 1.2 Add a regression test for the retry path
+- [x] 1.1 Recreate the Windows/WSL-backed SSH tunnel command on every retry attempt
+- [x] 1.2 Isolate runtime-backed SSH materials per Windows-side session so parallel calls do not share the same WSL temp directory
+- [x] 1.3 Add regression tests for the retry path and runtime isolation
 
 ## 2. Verification
 
-- [ ] 2.1 Validate with OpenSpec, targeted tests, and the official reconcile dry-run/live path
+- [x] 2.1 Validate with OpenSpec, targeted tests, and the official reconcile dry-run/live path
