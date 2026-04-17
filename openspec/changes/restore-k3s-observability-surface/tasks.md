@@ -7,4 +7,4 @@
 ## 2. Verification
 
 - [x] 2.1 Tighten Grafana verification so empty official dashboards fail the operator contract
-- [ ] 2.2 Validate with OpenSpec, Helm, Kustomize, dry-run bootstrap, and browser checks when the cluster is reachable
+- [x] 2.2 Validate with OpenSpec, Helm, Kustomize, dry-run bootstrap, and browser checks when the cluster is reachable

@@ -168,7 +168,7 @@ const routeChecks = {
   jellyfin: { appNativeSelector: 'text=/Jellyfin|Sign In|Username|Password/' },
   radarr: { appNativeSelector: 'text=/Radarr|Login|Username|Password/' },
   sonarr: { appNativeSelector: 'text=/Sonarr|Login|Username|Password/' },
-  prowlarr: { appNativeSelector: 'text=/Prowlarr|Login|Username|Password/' },
+  prowlarr: { appNativeSelector: 'text=/Prowlarr|Login|Username|Password|Authentication Required|Indexers/' },
   autobrr: { appNativeSelector: 'text=/autobrr|Login|Username|Password/i' },
   qbittorrent: { appNativeSelector: 'text=/qBittorrent|Username|Password|Web UI/' },
   argocd: {
