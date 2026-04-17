@@ -761,6 +761,35 @@ def checkpoint_git_changes(commit_message: str, *, empty_message: str, paths: li
     return True
 
 
+def stash_tracked_git_changes(paths: list[str], *, message: str) -> str | None:
+    if not paths:
+        return None
+    stashed = run(
+        ["git", "stash", "push", "--message", message, "--", *paths],
+        check=False,
+        capture_output=True,
+    )
+    require_success(stashed, "Unable to preserve local tracked changes before sync")
+    combined_output = "\n".join(part for part in ((stashed.stdout or "").strip(), (stashed.stderr or "").strip()) if part)
+    if "No local changes to save" in combined_output:
+        return None
+    return "stash@{0}"
+
+
+def restore_tracked_git_changes(stash_ref: str) -> None:
+    applied = run(["git", "stash", "apply", "--index", stash_ref], check=False, capture_output=True)
+    if applied.returncode != 0:
+        detail = (applied.stderr or applied.stdout or "").strip()
+        if detail:
+            detail = f" Git reported: {detail}"
+        raise HaaCError(
+            "Sync updated the branch but could not restore the preserved local tracked changes cleanly. "
+            f"Resolve the worktree manually and recover the preserved changes from `{stash_ref}` before rerunning `task sync`.{detail}"
+        )
+    dropped = run(["git", "stash", "drop", stash_ref], check=False, capture_output=True)
+    require_success(dropped, "Unable to drop the temporary sync stash after restore")
+
+
 def bootstrap_recovery_summary(
     *,
     failing_phase: str,
@@ -2109,22 +2138,54 @@ def sync_repo() -> None:
     remote_ref = f"origin/{revision}"
     fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
     require_success(fetch, f"Git fetch failed for {remote_ref}")
-
-    checkpoint_git_changes(
-        "Auto-save before sync [skip ci]",
-        empty_message="[ok] GitOps repo already checkpointed before sync.",
-    )
-
     ref_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
+    tracked_dirty_paths = gitstatelib.git_tracked_dirty_paths(ROOT)
     if ref_state == "equal":
+        if tracked_dirty_paths:
+            checkpoint_git_changes(
+                "Auto-save before sync [skip ci]",
+                empty_message="[ok] GitOps repo already checkpointed before sync.",
+                paths=tracked_dirty_paths,
+            )
+        else:
+            print("[ok] GitOps repo already checkpointed before sync.")
         print(f"[ok] GitOps repo already matches {remote_ref}; no merge needed.")
         return
     if ref_state == "behind":
-        fast_forward = run(["git", "merge", "--ff-only", remote_ref], check=False, capture_output=True)
-        require_success(fast_forward, f"Fast-forward sync failed for {remote_ref}")
+        preserved_stash: str | None = None
+        fast_forward_applied = False
+        if tracked_dirty_paths:
+            preserved_stash = stash_tracked_git_changes(
+                tracked_dirty_paths,
+                message="haac-sync-preserve-tracked",
+            )
+        try:
+            fast_forward = run(["git", "merge", "--ff-only", remote_ref], check=False, capture_output=True)
+            require_success(fast_forward, f"Fast-forward sync failed for {remote_ref}")
+            fast_forward_applied = True
+            if preserved_stash:
+                restore_tracked_git_changes(preserved_stash)
+                checkpoint_git_changes(
+                    "Auto-save before sync [skip ci]",
+                    empty_message="[ok] GitOps repo already checkpointed before sync.",
+                    paths=tracked_dirty_paths,
+                )
+        except HaaCError:
+            if preserved_stash and not fast_forward_applied:
+                restore = run(["git", "stash", "pop", "--index", preserved_stash], check=False, capture_output=True)
+                require_success(restore, "Unable to restore preserved local tracked changes after a failed fast-forward sync")
+            raise
         print(f"[ok] GitOps repo fast-forwarded to {remote_ref}")
         return
     if ref_state == "ahead":
+        if tracked_dirty_paths:
+            checkpoint_git_changes(
+                "Auto-save before sync [skip ci]",
+                empty_message="[ok] GitOps repo already checkpointed before sync.",
+                paths=tracked_dirty_paths,
+            )
+        else:
+            print("[ok] GitOps repo already checkpointed before sync.")
         print(f"[ok] Local branch is already ahead of {remote_ref}; no merge needed.")
         return
     raise HaaCError(

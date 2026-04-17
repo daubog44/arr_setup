@@ -223,6 +223,119 @@ class GitopsStagePathTests(unittest.TestCase):
         self.assertIn(str(haac.VALUES_OUTPUT), stage_paths)
 
 
+class SyncRepoTests(unittest.TestCase):
+    def test_sync_repo_fast_forwards_before_checkpoint_when_remote_is_ahead(self) -> None:
+        fetch_result = mock.Mock(returncode=0, stdout="", stderr="")
+        merge_result = mock.Mock(returncode=0, stdout="", stderr="")
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            run_calls.append(command)
+            if command[:3] == ["git", "fetch", "origin"]:
+                return fetch_result
+            if command[:3] == ["git", "merge", "--ff-only"]:
+                return merge_result
+            self.fail(f"unexpected run call: {command}")
+
+        with mock.patch.object(haac, "merged_env", return_value={"GITOPS_REPO_URL": "https://github.com/daubog44/arr_setup.git", "GITOPS_REPO_REVISION": "main"}):
+            with mock.patch.object(haac, "require_git_bootstrap_repo"):
+                with mock.patch.object(haac, "run", side_effect=fake_run):
+                    with mock.patch.object(haac.gitstatelib, "git_ref_state", return_value="behind"):
+                        with mock.patch.object(haac.gitstatelib, "git_tracked_dirty_paths", return_value=["k8s/demo.yaml"]):
+                            with mock.patch.object(haac, "stash_tracked_git_changes", return_value="stash@{0}") as stash:
+                                with mock.patch.object(haac, "restore_tracked_git_changes") as restore:
+                                    with mock.patch.object(haac, "checkpoint_git_changes") as checkpoint:
+                                        haac.sync_repo()
+
+        self.assertEqual(run_calls[0][:3], ["git", "fetch", "origin"])
+        self.assertEqual(run_calls[1][:3], ["git", "merge", "--ff-only"])
+        stash.assert_called_once_with(["k8s/demo.yaml"], message="haac-sync-preserve-tracked")
+        restore.assert_called_once_with("stash@{0}")
+        checkpoint.assert_called_once_with(
+            "Auto-save before sync [skip ci]",
+            empty_message="[ok] GitOps repo already checkpointed before sync.",
+            paths=["k8s/demo.yaml"],
+        )
+
+    def test_sync_repo_checkpoint_only_stages_tracked_paths_when_equal(self) -> None:
+        fetch_result = mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(haac, "merged_env", return_value={"GITOPS_REPO_URL": "https://github.com/daubog44/arr_setup.git", "GITOPS_REPO_REVISION": "main"}):
+            with mock.patch.object(haac, "require_git_bootstrap_repo"):
+                with mock.patch.object(haac, "run", return_value=fetch_result):
+                    with mock.patch.object(haac.gitstatelib, "git_ref_state", return_value="equal"):
+                        with mock.patch.object(haac.gitstatelib, "git_tracked_dirty_paths", return_value=["k8s/demo.yaml"]):
+                            with mock.patch.object(haac, "checkpoint_git_changes") as checkpoint:
+                                haac.sync_repo()
+
+        checkpoint.assert_called_once_with(
+            "Auto-save before sync [skip ci]",
+            empty_message="[ok] GitOps repo already checkpointed before sync.",
+            paths=["k8s/demo.yaml"],
+        )
+
+    def test_sync_repo_equal_with_only_untracked_paths_skips_checkpoint(self) -> None:
+        fetch_result = mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(haac, "merged_env", return_value={"GITOPS_REPO_URL": "https://github.com/daubog44/arr_setup.git", "GITOPS_REPO_REVISION": "main"}):
+            with mock.patch.object(haac, "require_git_bootstrap_repo"):
+                with mock.patch.object(haac, "run", return_value=fetch_result):
+                    with mock.patch.object(haac.gitstatelib, "git_ref_state", return_value="equal"):
+                        with mock.patch.object(haac.gitstatelib, "git_tracked_dirty_paths", return_value=[]):
+                            with mock.patch.object(haac, "checkpoint_git_changes") as checkpoint:
+                                haac.sync_repo()
+
+        checkpoint.assert_not_called()
+
+    def test_sync_repo_restore_conflict_keeps_stash_and_raises(self) -> None:
+        fetch_result = mock.Mock(returncode=0, stdout="", stderr="")
+        merge_result = mock.Mock(returncode=0, stdout="", stderr="")
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            run_calls.append(command)
+            if command[:3] == ["git", "fetch", "origin"]:
+                return fetch_result
+            if command[:3] == ["git", "merge", "--ff-only"]:
+                return merge_result
+            self.fail(f"unexpected run call: {command}")
+
+        with mock.patch.object(haac, "merged_env", return_value={"GITOPS_REPO_URL": "https://github.com/daubog44/arr_setup.git", "GITOPS_REPO_REVISION": "main"}):
+            with mock.patch.object(haac, "require_git_bootstrap_repo"):
+                with mock.patch.object(haac, "run", side_effect=fake_run):
+                    with mock.patch.object(haac.gitstatelib, "git_ref_state", return_value="behind"):
+                        with mock.patch.object(haac.gitstatelib, "git_tracked_dirty_paths", return_value=["k8s/demo.yaml"]):
+                            with mock.patch.object(haac, "stash_tracked_git_changes", return_value="stash@{0}") as stash:
+                                with mock.patch.object(haac, "restore_tracked_git_changes", side_effect=haac.HaaCError("restore-conflict")) as restore:
+                                    with mock.patch.object(haac, "checkpoint_git_changes") as checkpoint:
+                                        with self.assertRaisesRegex(haac.HaaCError, "restore-conflict"):
+                                            haac.sync_repo()
+
+        self.assertEqual(run_calls[0][:3], ["git", "fetch", "origin"])
+        self.assertEqual(run_calls[1][:3], ["git", "merge", "--ff-only"])
+        stash.assert_called_once_with(["k8s/demo.yaml"], message="haac-sync-preserve-tracked")
+        restore.assert_called_once_with("stash@{0}")
+        checkpoint.assert_not_called()
+
+
+class GitStateHelperTests(unittest.TestCase):
+    def test_git_status_helpers_split_tracked_and_untracked_paths(self) -> None:
+        completed = mock.Mock(
+            returncode=0,
+            stdout=" M tracked.yaml\nR  old.yaml -> renamed.yaml\n?? scratch.txt\n",
+            stderr="",
+        )
+
+        with mock.patch.object(haac.gitstatelib.subprocess, "run", return_value=completed):
+            entries = haac.gitstatelib.git_status_entries(ROOT)
+            tracked = haac.gitstatelib.git_tracked_dirty_paths(ROOT)
+            untracked = haac.gitstatelib.git_untracked_paths(ROOT)
+
+        self.assertEqual(entries, [(" M", "tracked.yaml"), ("R ", "renamed.yaml"), ("??", "scratch.txt")])
+        self.assertEqual(tracked, ["tracked.yaml", "renamed.yaml"])
+        self.assertEqual(untracked, ["scratch.txt"])
+
+
 class ArgocdRevisionGateTests(unittest.TestCase):
     def test_repo_managed_application_revision_must_match_expected_sha(self) -> None:
         app = {

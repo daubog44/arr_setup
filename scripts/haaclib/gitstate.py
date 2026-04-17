@@ -53,7 +53,7 @@ def normalize_git_remote_url(url: str) -> str:
     return f"https://{host}{port}{path}"
 
 
-def git_dirty_paths(root: Path) -> list[str]:
+def git_status_entries(root: Path) -> list[tuple[str, str]]:
     completed = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=str(root),
@@ -62,15 +62,28 @@ def git_dirty_paths(root: Path) -> list[str]:
         check=False,
     )
     status = completed.stdout or ""
-    paths: list[str] = []
+    entries: list[tuple[str, str]] = []
     for line in status.splitlines():
         if not line.strip():
             continue
+        state = line[:2]
         path = line[3:] if len(line) > 3 else line
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        paths.append(path.strip())
-    return paths
+        entries.append((state, path.strip()))
+    return entries
+
+
+def git_dirty_paths(root: Path) -> list[str]:
+    return [path for _, path in git_status_entries(root)]
+
+
+def git_tracked_dirty_paths(root: Path) -> list[str]:
+    return [path for state, path in git_status_entries(root) if state != "??"]
+
+
+def git_untracked_paths(root: Path) -> list[str]:
+    return [path for state, path in git_status_entries(root) if state == "??"]
 
 
 def git_head(root: Path, ref: str) -> str:
