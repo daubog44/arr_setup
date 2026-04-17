@@ -26,18 +26,27 @@ spec:
         # Enable Prometheus metrics for Vulnerability counts
         serviceMonitor:
           enabled: true
+          interval: 30s
+          endpointAdditionalProperties:
+            relabelings:
+              - action: replace
+                targetLabel: cluster
+                replacement: "haacarr-master"
           
         operator:
           scanJobTimeout: 3m
           scanJobsConcurrentLimit: 1
           vulnerabilityScannerEnabled: true
           sbomGenerationEnabled: false
-          configAuditScannerEnabled: false
-          rbacAssessmentScannerEnabled: false
-          infraAssessmentScannerEnabled: false
-          clusterComplianceEnabled: false
-          exposedSecretScannerEnabled: false
+          configAuditScannerEnabled: true
+          rbacAssessmentScannerEnabled: true
+          infraAssessmentScannerEnabled: true
+          clusterComplianceEnabled: true
+          exposedSecretScannerEnabled: true
           scannerReportTTL: "6h"
+
+        trivyOperator:
+          reportRecordFailedChecksOnly: false
           
   destination:
     server: https://kubernetes.default.svc

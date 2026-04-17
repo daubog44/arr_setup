@@ -337,6 +337,9 @@ async function fetchJson(page, relativePath) {
 }
 
 const GRAFANA_API_SERVER_DASHBOARD_UID = "09ec8aa1e996d6ffcd6817bbaff4db1b";
+const GRAFANA_ARGOCD_DASHBOARD_UID = "qPkgGHg7k";
+const GRAFANA_TRIVY_DASHBOARD_UID = "ycwPj724k";
+const GRAFANA_ALLOY_DASHBOARD_UID = "haac-alloy-overview";
 const GRAFANA_PROMETHEUS_DATASOURCE_UID = "prometheus";
 
 function prometheusScalar(result) {
@@ -348,6 +351,10 @@ function prometheusScalar(result) {
   return numeric;
 }
 
+function prometheusHasSamples(result) {
+  return Array.isArray(result?.data?.result) && result.data.result.length > 0;
+}
+
 async function queryGrafanaPrometheus(page, query) {
   return fetchJson(
     page,
@@ -355,17 +362,30 @@ async function queryGrafanaPrometheus(page, query) {
   );
 }
 
-async function verifyGrafanaObservability(page) {
+async function openGrafanaDashboard(page, uid, slug, titlePattern) {
   const grafanaHost = new URL(page.url()).host;
-  await page.goto(
-    `https://${grafanaHost}/d/${GRAFANA_API_SERVER_DASHBOARD_UID}/kubernetes-api-server?orgId=1&from=now-1h&to=now&timezone=utc`,
-    {
+  await page.goto(`https://${grafanaHost}/d/${uid}/${slug}?orgId=1&from=now-1h&to=now&timezone=utc`, {
     waitUntil: "domcontentloaded",
     timeout: 60000,
-    },
-  );
-  await page.waitForSelector('text=/Kubernetes\\s*\\/\\s*API server/i', { timeout: 30000 });
+  });
+  await page.waitForSelector(`text=${titlePattern}`, { timeout: 30000 });
   await page.waitForTimeout(8000);
+  const bodyText = await page.locator("body").innerText();
+  if (/Unable to find datasource|Datasource not found/i.test(bodyText)) {
+    throw new Error(`Grafana rendered ${slug}, but the Prometheus datasource is still missing.`);
+  }
+  return bodyText;
+}
+
+async function assertGrafanaMetricPresent(page, metricName) {
+  const absentResult = await queryGrafanaPrometheus(page, `absent(${metricName})`);
+  if (prometheusHasSamples(absentResult)) {
+    throw new Error(`Grafana reached the dashboard, but the ${metricName} metric family is still absent from Prometheus.`);
+  }
+}
+
+async function verifyGrafanaObservability(page) {
+  await openGrafanaDashboard(page, GRAFANA_API_SERVER_DASHBOARD_UID, "kubernetes-api-server", '/Kubernetes\\s*\\/\\s*API server/i');
 
   const apiserverTargetCount = await queryGrafanaPrometheus(page, 'count(up{job="apiserver"})');
   if (prometheusScalar(apiserverTargetCount) < 1) {
@@ -391,12 +411,66 @@ async function verifyGrafanaObservability(page) {
     );
   }
 
-  const bodyText = await page.locator("body").innerText();
-  if (/Unable to find datasource|Datasource not found/i.test(bodyText)) {
-    throw new Error("Grafana rendered the API server dashboard, but the Prometheus datasource is still missing.");
-  }
-  if (/No data/i.test(bodyText)) {
+  const apiServerBodyText = await page.locator("body").innerText();
+  if (/No data/i.test(apiServerBodyText)) {
     throw new Error("Grafana rendered the API server dashboard, but one or more panels still report 'No data'.");
+  }
+
+  await openGrafanaDashboard(page, GRAFANA_ARGOCD_DASHBOARD_UID, "argocd", "/ArgoCD/i");
+  const argoTargetCount = await queryGrafanaPrometheus(page, 'count(up{namespace="argocd",job=~"argocd.*"})');
+  if (prometheusScalar(argoTargetCount) < 1) {
+    throw new Error(
+      `Grafana rendered the ArgoCD dashboard, but Prometheus exposed no ArgoCD scrape targets: ${JSON.stringify(argoTargetCount)}`,
+    );
+  }
+  const argoAppInfoCount = await queryGrafanaPrometheus(page, 'count(argocd_app_info{namespace="argocd"})');
+  if (prometheusScalar(argoAppInfoCount) < 1) {
+    throw new Error(
+      `Grafana rendered the ArgoCD dashboard, but argocd_app_info is still empty: ${JSON.stringify(argoAppInfoCount)}`,
+    );
+  }
+  const argoClusterInfoCount = await queryGrafanaPrometheus(page, 'count(argocd_cluster_info{namespace="argocd"})');
+  if (prometheusScalar(argoClusterInfoCount) < 1) {
+    throw new Error(
+      `Grafana rendered the ArgoCD dashboard, but argocd_cluster_info is still empty: ${JSON.stringify(argoClusterInfoCount)}`,
+    );
+  }
+
+  await openGrafanaDashboard(page, GRAFANA_TRIVY_DASHBOARD_UID, "trivy-operator-dashboard", "/Trivy Operator Dashboard|Trivy/i");
+  await assertGrafanaMetricPresent(page, "trivy_image_vulnerabilities");
+  await assertGrafanaMetricPresent(page, "trivy_resource_configaudits");
+  await assertGrafanaMetricPresent(page, "trivy_role_rbacassessments");
+  await assertGrafanaMetricPresent(page, "trivy_clusterrole_clusterrbacassessments");
+  await assertGrafanaMetricPresent(page, "trivy_image_exposedsecrets");
+
+  await openGrafanaDashboard(page, GRAFANA_ALLOY_DASHBOARD_UID, "alloy-overview", "/Alloy Overview/i");
+  await assertGrafanaMetricPresent(page, "alloy_build_info");
+  const alloyTargetCount = await queryGrafanaPrometheus(page, 'count(up{job=~"alloy.*"})');
+  if (prometheusScalar(alloyTargetCount) < 1) {
+    throw new Error(
+      `Grafana rendered the Alloy dashboard, but Prometheus exposed no Alloy scrape targets: ${JSON.stringify(alloyTargetCount)}`,
+    );
+  }
+
+  const alloyComponentCount = await queryGrafanaPrometheus(page, "sum(alloy_component_controller_running_components)");
+  if (prometheusScalar(alloyComponentCount) < 1) {
+    throw new Error(
+      `Grafana rendered the Alloy dashboard, but Alloy reported no running components: ${JSON.stringify(alloyComponentCount)}`,
+    );
+  }
+
+  await openGrafanaDashboard(page, "Rg8lWBG7k", "kyverno", "/Kyverno/i");
+  const kyvernoTargetCount = await queryGrafanaPrometheus(page, 'count(up{namespace="kyverno"})');
+  if (prometheusScalar(kyvernoTargetCount) < 1) {
+    throw new Error(
+      `Grafana rendered the Kyverno dashboard, but Prometheus exposed no Kyverno scrape targets: ${JSON.stringify(kyvernoTargetCount)}`,
+    );
+  }
+  const kyvernoRuleCount = await queryGrafanaPrometheus(page, 'count(kyverno_policy_rule_info_total)');
+  if (prometheusScalar(kyvernoRuleCount) < 1) {
+    throw new Error(
+      `Grafana rendered the Kyverno dashboard, but kyverno_policy_rule_info_total is still empty: ${JSON.stringify(kyvernoRuleCount)}`,
+    );
   }
 }
 

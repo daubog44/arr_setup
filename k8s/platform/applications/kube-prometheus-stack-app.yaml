@@ -52,7 +52,7 @@ spec:
           defaultDashboardsEnabled: true
           podAnnotations:
             checksum/grafana-oidc-secret: "60e2c2a547257c9cc43176895eee24667aaa3dffe6546a978eaf4002dc4d378f"
-            checksum/grafana-observability-surface: "v2-haacarr-master"
+            checksum/grafana-observability-surface: "v3-haacarr-master"
           admin:
             existingSecret: grafana-admin-secret
             userKey: admin-user
@@ -123,9 +123,17 @@ spec:
                   path: /var/lib/grafana/dashboards/default
           dashboards:
             default:
+              argocd:
+                gnetId: 14584
+                revision: 1
+                datasource: Prometheus
+              kyverno:
+                gnetId: 15987
+                revision: 2
+                datasource: Prometheus
               trivy-operator:
                 gnetId: 17813
-                revision: 1
+                revision: 2
                 datasource: Prometheus
               qbittorrent:
                 gnetId: 17897
@@ -134,6 +142,22 @@ spec:
 
         prometheus:
           additionalServiceMonitors:
+            - name: argocd
+              namespaceSelector:
+                matchNames:
+                  - argocd
+              jobLabel: app.kubernetes.io/name
+              selector:
+                matchLabels:
+                  app.kubernetes.io/part-of: argocd
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
             - name: qbittorrent
               namespace: media
               selector:

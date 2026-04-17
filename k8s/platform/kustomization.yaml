@@ -5,6 +5,7 @@ resources:
   - applications
   - chaos/litmus-admin-credentials-sealed-secret.yaml
   - falco-ingest-service.yaml
+  - observability
   - traefik/traefik-gateway-rbac.yaml
   - traefik/traefik-gatewayclass.yaml
   - traefik/traefik-config.yaml
