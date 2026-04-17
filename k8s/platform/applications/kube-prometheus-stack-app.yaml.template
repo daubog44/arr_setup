@@ -81,21 +81,32 @@ spec:
           envFromSecret: "grafana-oidc-secret"
           ingress:
             enabled: false
+          datasources:
+            datasources.yaml:
+              apiVersion: 1
+              datasources:
+                - name: Prometheus
+                  type: prometheus
+                  uid: prometheus
+                  url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+                  access: proxy
+                  isDefault: true
+                  jsonData:
+                    httpMethod: POST
+                    timeInterval: 30s
+                - name: Alertmanager
+                  type: alertmanager
+                  uid: alertmanager
+                  url: http://kube-prometheus-stack-alertmanager.monitoring:9093/
+                  access: proxy
+                  jsonData:
+                    handleGrafanaManagedAlerts: false
+                    implementation: prometheus
           sidecar:
             dashboards:
               enabled: true
             datasources:
-              enabled: true
-              defaultDatasourceEnabled: true
-              defaultDatasourceScrapeInterval: 30s
-              httpMethod: POST
-              initDatasources: true
-              isDefaultDatasource: true
-              name: Prometheus
-              restartPolicy: Always
-              skipReload: true
-              uid: prometheus
-              url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+              enabled: false
 
           dashboardProviders:
             dashboardproviders.yaml:
