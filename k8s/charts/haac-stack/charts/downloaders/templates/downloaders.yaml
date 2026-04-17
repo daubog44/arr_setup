@@ -29,6 +29,11 @@ spec:
           image: >-
             {{ printf "%s:%s" .Values.global.images.busybox.repository .Values.global.images.busybox.tag }}
           env:
+            - name: QBITTORRENT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: downloaders-auth
+                  key: QBITTORRENT_USERNAME
             - name: QBITTORRENT_PASSWORD_PBKDF2
               valueFrom:
                 secretKeyRef:
@@ -45,7 +50,7 @@ spec:
               mkdir -p "$config_dir"
               touch "$config_file"
 
-              awk -v qhash="$QBITTORRENT_PASSWORD_PBKDF2" '
+              awk -v quser="$QBITTORRENT_USERNAME" -v qhash="$QBITTORRENT_PASSWORD_PBKDF2" '
                 BEGIN {
                   in_preferences = 0
                   preferences_found = 0
@@ -60,7 +65,7 @@ spec:
                   }
                   if (in_preferences && $0 ~ /^\[/) {
                     if (!wrote_credentials) {
-                      print "WebUI\\Username=admin"
+                      print "WebUI\\Username=" quser
                       print "WebUI\\Password_PBKDF2=" qhash
                       wrote_credentials = 1
                     }
@@ -76,7 +81,7 @@ spec:
                     print "[Preferences]"
                   }
                   if (!wrote_credentials) {
-                    print "WebUI\\Username=admin"
+                    print "WebUI\\Username=" quser
                     print "WebUI\\Password_PBKDF2=" qhash
                   }
                 }
@@ -149,7 +154,10 @@ spec:
             {{ printf "%s:%s" .Values.global.images.curl.repository .Values.global.images.curl.tag }}
           env:
             - name: QBIT_USER
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: downloaders-auth
+                  key: QBITTORRENT_USERNAME
             - name: QBIT_PASS
               valueFrom:
                 secretKeyRef:
@@ -241,7 +249,8 @@ spec:
 
               echo "qBittorrent credentials reconciled. Upserting QUI instance..."
               ESCAPED_QBIT_PASS=$(printf '%s' "$QBIT_PASS" | sed 's/\\/\\\\/g; s/"/\\"/g')
-              INSTANCE_PAYLOAD=$(printf '{"name":"qBittorrent","host":"http://127.0.0.1:8080","username":"admin","password":"%s","hasLocalFilesystemAccess":true}' "$ESCAPED_QBIT_PASS")
+              ESCAPED_QBIT_USER=$(printf '%s' "$QBIT_USER" | sed 's/\\/\\\\/g; s/"/\\"/g')
+              INSTANCE_PAYLOAD=$(printf '{"name":"qBittorrent","host":"http://127.0.0.1:8080","username":"%s","password":"%s","hasLocalFilesystemAccess":true}' "$ESCAPED_QBIT_USER" "$ESCAPED_QBIT_PASS")
               INSTANCES=$(curl_common -fsS http://127.0.0.1:7476/api/instances)
               INSTANCES_COMPACT=$(printf '%s' "$INSTANCES" | tr -d '\n ')
               INSTANCE_ID=$(extract_instance_id "$INSTANCES_COMPACT")
@@ -390,7 +399,10 @@ spec:
             - name: QBITTORRENT_PORT
               value: "8080" # Localhost since it's a sidecar
             - name: QBITTORRENT_USERNAME
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: downloaders-auth
+                  key: QBITTORRENT_USERNAME
             - name: QBITTORRENT_PASSWORD
               valueFrom:
                 secretKeyRef:

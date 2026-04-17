@@ -86,6 +86,30 @@ def git_untracked_paths(root: Path) -> list[str]:
     return [path for state, path in git_status_entries(root) if state == "??"]
 
 
+def git_paths_at_ref(root: Path, ref: str) -> set[str]:
+    completed = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", ref],
+        cwd=str(root),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return {line.strip() for line in (completed.stdout or "").splitlines() if line.strip()}
+
+
+def git_tracked_paths_under(root: Path, relative_path: str) -> set[str]:
+    if not is_git_repo(root):
+        return set()
+    completed = subprocess.run(
+        ["git", "ls-files", "--", relative_path],
+        cwd=str(root),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return {line.strip() for line in (completed.stdout or "").splitlines() if line.strip()}
+
+
 def git_head(root: Path, ref: str) -> str:
     completed = subprocess.run(
         ["git", "rev-parse", ref],

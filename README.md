@@ -145,7 +145,20 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 - infra and storage: `LXC_PASSWORD`, `LXC_MASTER_HOSTNAME`, `NAS_ADDRESS`, `HOST_NAS_PATH`, `NAS_PATH`, `NAS_SHARE_NAME`, `SMB_USER`, `SMB_PASSWORD`, `STORAGE_UID`, `STORAGE_GID`
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
-- local auth bootstrap: `AUTHELIA_ADMIN_PASSWORD` as the explicit source of truth for the local Authelia admin account
+- operator identity defaults: `HAAC_MAIN_USERNAME`, `HAAC_MAIN_PASSWORD`, `HAAC_MAIN_EMAIL`, `HAAC_MAIN_NAME`
+- optional downloader credential sharing: `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS`
+- downloader local auth: `QBITTORRENT_USERNAME`, `QUI_PASSWORD`
+
+The main operator identity is the default login layer for local Authelia auth, ArgoCD local auth, Grafana local admin, Semaphore admin, and Litmus admin. The downloader local auth stays explicit by default. If you want one main username/password across qBittorrent and QUI too, set `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true` and leave the dedicated downloader vars unset, or override them explicitly if you need separate values.
+
+Opaque machine secrets stay separate. OIDC client secrets, cookie keys, encryption keys, DB passwords, and similar bootstrap internals do not derive from `HAAC_MAIN_PASSWORD`. Grafana no longer falls back to downloader credentials either; it uses the effective admin identity layer only.
+
+The supported login model is:
+
+- `HAAC_MAIN_*`: default human operator identity for Authelia, ArgoCD, Grafana, Semaphore, and Litmus
+- `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true`: optional opt-in to let qBittorrent and QUI inherit `HAAC_MAIN_*`
+- `QBITTORRENT_USERNAME` and `QUI_PASSWORD`: dedicated downloader auth when you want a lower-trust boundary
+- `*_OIDC_SECRET`, `*_COOKIE_*`, DB passwords, encryption keys: opaque bootstrap secrets that must stay separate from the human login defaults
 
 `LXC_PASSWORD` remains the documented password source of truth. Supporting `scripts/haac.py` bootstrap commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
 

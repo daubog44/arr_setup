@@ -36,7 +36,11 @@ class MergedEnvTests(unittest.TestCase):
         self.assertEqual(merged["PROXMOX_HOST_PASSWORD"], "explicit-secret")
 
     def test_qui_password_derives_qbittorrent_hash_and_secret_checksums(self) -> None:
-        with mock.patch.object(haac, "load_env_file", return_value={"QUI_PASSWORD": "demo-secret"}):
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={"QUI_PASSWORD": "demo-secret", "GRAFANA_ADMIN_PASSWORD": "grafana-secret"},
+        ):
             with mock.patch.dict(os.environ, {}, clear=True):
                 merged = haac.merged_env()
 
@@ -47,6 +51,98 @@ class MergedEnvTests(unittest.TestCase):
         )
         self.assertIn("DOWNLOADERS_AUTH_SECRET_SHA256", merged)
         self.assertIn("HOMEPAGE_WIDGETS_SECRET_SHA256", merged)
+
+    def test_main_identity_derives_supported_login_defaults(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={
+                "DOMAIN_NAME": "example.com",
+                "HAAC_MAIN_USERNAME": "haacadmin",
+                "HAAC_MAIN_PASSWORD": "demo-secret",
+                "HAAC_MAIN_EMAIL": "ops@example.com",
+                "HAAC_MAIN_NAME": "Ops Admin",
+            },
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertEqual(merged["AUTHELIA_ADMIN_USERNAME"], "haacadmin")
+        self.assertEqual(merged["AUTHELIA_ADMIN_PASSWORD"], "demo-secret")
+        self.assertEqual(merged["ARGOCD_USERNAME"], "haacadmin")
+        self.assertEqual(merged["ARGOCD_PASSWORD"], "demo-secret")
+        self.assertEqual(merged["GRAFANA_ADMIN_USERNAME"], "haacadmin")
+        self.assertEqual(merged["SEMAPHORE_ADMIN_USERNAME"], "haacadmin")
+        self.assertEqual(merged["LITMUS_ADMIN_USERNAME"], "haacadmin")
+        self.assertNotIn("QBITTORRENT_USERNAME", merged)
+        self.assertNotIn("QUI_PASSWORD", merged)
+        self.assertEqual(merged["SEMAPHORE_ADMIN_EMAIL"], "ops@example.com")
+        self.assertEqual(merged["SEMAPHORE_ADMIN_NAME"], "Ops Admin")
+
+    def test_shared_downloader_flag_derives_qbit_and_qui_from_main(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={
+                "HAAC_MAIN_USERNAME": "haacadmin",
+                "HAAC_MAIN_PASSWORD": "demo-secret",
+                "HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS": "true",
+            },
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertEqual(merged["QBITTORRENT_USERNAME"], "haacadmin")
+        self.assertEqual(merged["QUI_PASSWORD"], "demo-secret")
+
+    def test_authelia_admin_password_seeds_other_control_plane_passwords(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={
+                "AUTHELIA_ADMIN_USERNAME": "opsadmin",
+                "AUTHELIA_ADMIN_PASSWORD": "demo-secret",
+            },
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertEqual(merged["GRAFANA_ADMIN_PASSWORD"], "demo-secret")
+        self.assertEqual(merged["SEMAPHORE_ADMIN_PASSWORD"], "demo-secret")
+        self.assertEqual(merged["LITMUS_ADMIN_PASSWORD"], "demo-secret")
+
+    def test_service_specific_identity_overrides_win_over_main_defaults_even_if_blank(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={
+                "DOMAIN_NAME": "example.com",
+                "HAAC_MAIN_USERNAME": "haacadmin",
+                "HAAC_MAIN_PASSWORD": "demo-secret",
+                "GRAFANA_ADMIN_USERNAME": "",
+                "GRAFANA_ADMIN_PASSWORD": "grafana-secret",
+                "SEMAPHORE_ADMIN_USERNAME": "semaphore-admin",
+            },
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertEqual(merged["GRAFANA_ADMIN_USERNAME"], "haacadmin")
+        self.assertEqual(merged["GRAFANA_ADMIN_PASSWORD"], "grafana-secret")
+        self.assertEqual(merged["SEMAPHORE_ADMIN_USERNAME"], "semaphore-admin")
+
+    def test_invalid_identity_username_raises(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={
+                "HAAC_MAIN_USERNAME": "bad user",
+                "HAAC_MAIN_PASSWORD": "demo-secret",
+            },
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(ValueError, "unsupported characters"):
+                    haac.merged_env()
 
 
 class QbittorrentPasswordHashTests(unittest.TestCase):
@@ -317,6 +413,19 @@ class SyncRepoTests(unittest.TestCase):
         restore.assert_called_once_with("stash@{0}")
         checkpoint.assert_not_called()
 
+    def test_sync_repo_stops_on_untracked_collision_with_remote(self) -> None:
+        fetch_result = mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(haac, "merged_env", return_value={"GITOPS_REPO_URL": "https://github.com/daubog44/arr_setup.git", "GITOPS_REPO_REVISION": "main"}):
+            with mock.patch.object(haac, "require_git_bootstrap_repo"):
+                with mock.patch.object(haac, "run", return_value=fetch_result):
+                    with mock.patch.object(haac.gitstatelib, "git_ref_state", return_value="behind"):
+                        with mock.patch.object(haac.gitstatelib, "git_tracked_dirty_paths", return_value=[]):
+                            with mock.patch.object(haac.gitstatelib, "git_paths_at_ref", return_value={"incoming.yaml"}):
+                                with mock.patch.object(haac.gitstatelib, "git_untracked_paths", return_value=["incoming.yaml", "scratch.txt"]):
+                                    with self.assertRaisesRegex(haac.HaaCError, "incoming.yaml"):
+                                        haac.sync_repo()
+
 
 class GitStateHelperTests(unittest.TestCase):
     def test_git_status_helpers_split_tracked_and_untracked_paths(self) -> None:
@@ -334,6 +443,134 @@ class GitStateHelperTests(unittest.TestCase):
         self.assertEqual(entries, [(" M", "tracked.yaml"), ("R ", "renamed.yaml"), ("??", "scratch.txt")])
         self.assertEqual(tracked, ["tracked.yaml", "renamed.yaml"])
         self.assertEqual(untracked, ["scratch.txt"])
+
+    def test_git_paths_at_ref_returns_tracked_paths(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="k8s/demo.yaml\nREADME.md\n", stderr="")
+
+        with mock.patch.object(haac.gitstatelib.subprocess, "run", return_value=completed):
+            paths = haac.gitstatelib.git_paths_at_ref(ROOT, "origin/main")
+
+        self.assertEqual(paths, {"k8s/demo.yaml", "README.md"})
+
+    def test_git_tracked_paths_under_returns_matching_entries(self) -> None:
+        completed = mock.Mock(returncode=0, stdout=".playwright-cli/page.yml\n.playwright-cli/state.json\n", stderr="")
+
+        with mock.patch.object(haac.gitstatelib.subprocess, "run", return_value=completed):
+            paths = haac.gitstatelib.git_tracked_paths_under(ROOT, ".playwright-cli")
+
+        self.assertEqual(paths, {".playwright-cli/page.yml", ".playwright-cli/state.json"})
+
+
+class PushChangesTests(unittest.TestCase):
+    def test_push_changes_unwinds_generated_commit_when_remote_moves_during_push(self) -> None:
+        ok = mock.Mock(returncode=0, stdout="", stderr="")
+        push_fail = mock.Mock(returncode=1, stdout="", stderr="! [rejected] main -> main (fetch first)")
+        run_calls: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            run_calls.append(command)
+            if command[:3] == ["git", "fetch", "origin"]:
+                return ok
+            if command[:3] == ["git", "commit", "-m"]:
+                return ok
+            if command[:3] == ["git", "push", "origin"]:
+                return push_fail
+            if command[:3] == ["git", "reset", "--mixed"]:
+                return ok
+            self.fail(f"unexpected run call: {command}")
+
+        with mock.patch.object(
+            haac,
+            "merged_env",
+            return_value={"GITOPS_REPO_URL": "https://github.com/daubog44/arr_setup.git", "GITOPS_REPO_REVISION": "main"},
+        ):
+            with mock.patch.object(haac, "require_git_bootstrap_repo"):
+                with mock.patch.object(haac, "run", side_effect=fake_run):
+                    with mock.patch.object(haac.gitstatelib, "git_ref_state", side_effect=["equal", "equal", "diverged"]):
+                        with mock.patch.object(haac, "generate_secrets_core"):
+                            with mock.patch.object(haac, "stage_git_paths"):
+                                with mock.patch.object(haac, "git_has_staged_changes", return_value=True):
+                                    with mock.patch.object(haac, "run_stdout", return_value="deadbeef"):
+                                        with self.assertRaisesRegex(haac.HaaCError, "remote branch moved during the final push"):
+                                            haac.push_changes(False, "kubectl", Path("demo-kubeconfig"))
+
+        self.assertIn(["git", "reset", "--mixed", "HEAD~1"], run_calls)
+
+
+class CleanLocalArtifactsTests(unittest.TestCase):
+    def test_clean_local_artifacts_removes_disposable_roots_and_prunes_empty_tmp_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            playwright_cli = root / ".playwright-cli"
+            playwright_cli.mkdir()
+            (playwright_cli / "page.yml").write_text("snapshot", encoding="utf-8")
+            tmp_root = root / ".tmp"
+            empty_scratch = tmp_root / "kube-sessions" / "old"
+            empty_scratch.mkdir(parents=True)
+            populated_scratch = tmp_root / "secrets-runtime" / "keep"
+            populated_scratch.mkdir(parents=True)
+            (populated_scratch / "secret.txt").write_text("keep", encoding="utf-8")
+            tracked_file = root / "keep.txt"
+            tracked_file.write_text("keep", encoding="utf-8")
+
+            with mock.patch.object(haac, "ROOT", root):
+                with mock.patch.object(haac, "LEGACY_ARTIFACT_DIRS", (playwright_cli,)):
+                    with mock.patch.object(haac, "SANCTIONED_SCRATCH_ROOTS", (tmp_root,)):
+                        with mock.patch.object(haac, "LEGACY_ARTIFACT_PATTERNS", ()):
+                            haac.clean_local_artifacts()
+
+            self.assertFalse(playwright_cli.exists())
+            self.assertTrue(tmp_root.exists())
+            self.assertFalse(empty_scratch.exists())
+            self.assertTrue(populated_scratch.exists())
+            self.assertEqual(tracked_file.read_text(encoding="utf-8"), "keep")
+
+    def test_clean_local_artifacts_does_not_remove_regular_repo_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            microsoft_root = root / "Microsoft"
+            (microsoft_root / "docs").mkdir(parents=True)
+            kept_file = microsoft_root / "docs" / "keep.txt"
+            kept_file.write_text("keep", encoding="utf-8")
+
+            with mock.patch.object(haac, "ROOT", root):
+                with mock.patch.object(haac, "LEGACY_ARTIFACT_DIRS", ()):
+                    with mock.patch.object(haac, "SANCTIONED_SCRATCH_ROOTS", (root / ".tmp",)):
+                        with mock.patch.object(haac, "LEGACY_ARTIFACT_PATTERNS", ()):
+                            haac.clean_local_artifacts()
+
+            self.assertTrue(microsoft_root.exists())
+            self.assertEqual(kept_file.read_text(encoding="utf-8"), "keep")
+
+    def test_clean_local_artifacts_skips_listed_roots_if_git_still_tracks_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tracked_root = root / ".playwright-cli"
+            tracked_root.mkdir()
+            tracked_file = tracked_root / "page.yml"
+            tracked_file.write_text("tracked", encoding="utf-8")
+
+            with mock.patch.object(haac, "ROOT", root):
+                with mock.patch.object(haac, "LEGACY_ARTIFACT_DIRS", (tracked_root,)):
+                    with mock.patch.object(haac, "SANCTIONED_SCRATCH_ROOTS", (root / ".tmp",)):
+                        with mock.patch.object(haac, "LEGACY_ARTIFACT_PATTERNS", ()):
+                            with mock.patch.object(haac.gitstatelib, "git_tracked_paths_under", return_value={".playwright-cli/page.yml"}):
+                                haac.clean_local_artifacts()
+
+            self.assertTrue(tracked_root.exists())
+            self.assertEqual(tracked_file.read_text(encoding="utf-8"), "tracked")
+
+
+class DownloadersTemplateContractTests(unittest.TestCase):
+    def test_qbittorrent_exporter_uses_secret_backed_username(self) -> None:
+        template = (
+            haac.K8S_DIR / "charts" / "haac-stack" / "charts" / "downloaders" / "templates" / "downloaders.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '            - name: QBITTORRENT_USERNAME\n              valueFrom:\n                secretKeyRef:\n                  name: downloaders-auth\n                  key: QBITTORRENT_USERNAME',
+            template,
+        )
 
 
 class ArgocdRevisionGateTests(unittest.TestCase):

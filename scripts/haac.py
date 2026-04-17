@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from haaclib import endpoints as endpointlib
+from haaclib import envdefaults as envdefaultslib
 from haaclib import gitops as gitopslib
 from haaclib import gitstate as gitstatelib
 from haaclib import secrets as secretlib
@@ -95,6 +96,8 @@ PROXMOX_DOWNLOAD_FILE_ADDRESS = "proxmox_download_file.debian_container_template
 LEGACY_ARTIFACT_DIRS = (
     ROOT / "output",
     ROOT / ".tmp-falco",
+    ROOT / ".playwright",
+    ROOT / ".playwright-cli",
 )
 LEGACY_ARTIFACT_PATTERNS = (
     ".tmp-*.log",
@@ -102,6 +105,9 @@ LEGACY_ARTIFACT_PATTERNS = (
     "loop-*.log",
     "master-*.log",
     "worker*-*.log",
+)
+SANCTIONED_SCRATCH_ROOTS = (
+    TMP_DIR,
 )
 
 
@@ -159,6 +165,7 @@ def merged_env() -> dict[str, str]:
     merged = os.environ.copy()
     for key, value in env.items():
         merged.setdefault(key, value)
+    envdefaultslib.apply_identity_defaults(merged)
     if not merged.get("PROXMOX_HOST_PASSWORD") and merged.get("LXC_PASSWORD"):
         merged["PROXMOX_HOST_PASSWORD"] = merged["LXC_PASSWORD"]
     merged.setdefault("HAAC_FALCO_INGEST_NODEPORT", "32081")
@@ -173,25 +180,24 @@ def merged_env() -> dict[str, str]:
             "DOWNLOADERS_AUTH_SECRET_SHA256",
             stable_secret_checksum(
                 {
+                    "QBITTORRENT_USERNAME": merged.get("QBITTORRENT_USERNAME", "admin"),
                     "QUI_PASSWORD": merged["QUI_PASSWORD"],
                     "QBITTORRENT_PASSWORD_PBKDF2": merged["QBITTORRENT_PASSWORD_PBKDF2"],
                 }
             ),
         )
+    if merged.get("QUI_PASSWORD") and merged.get("GRAFANA_ADMIN_PASSWORD"):
         merged.setdefault(
             "HOMEPAGE_WIDGETS_SECRET_SHA256",
             stable_secret_checksum(
                 {
-                    "HOMEPAGE_VAR_GRAFANA_USERNAME": "admin",
-                    "HOMEPAGE_VAR_GRAFANA_PASSWORD": merged.get("GRAFANA_ADMIN_PASSWORD", merged["QUI_PASSWORD"]),
-                    "HOMEPAGE_VAR_QBITTORRENT_USERNAME": "admin",
+                    "HOMEPAGE_VAR_GRAFANA_USERNAME": merged.get("GRAFANA_ADMIN_USERNAME", "admin"),
+                    "HOMEPAGE_VAR_GRAFANA_PASSWORD": merged["GRAFANA_ADMIN_PASSWORD"],
+                    "HOMEPAGE_VAR_QBITTORRENT_USERNAME": merged.get("QBITTORRENT_USERNAME", "admin"),
                     "HOMEPAGE_VAR_QBITTORRENT_PASSWORD": merged["QUI_PASSWORD"],
                 }
             ),
         )
-    merged.setdefault("LITMUS_ADMIN_USERNAME", "admin")
-    if merged.get("AUTHELIA_ADMIN_PASSWORD"):
-        merged.setdefault("LITMUS_ADMIN_PASSWORD", merged["AUTHELIA_ADMIN_PASSWORD"])
     merged.setdefault("HOMEPAGE_CONFIG_CHECKSUM", homepage_config_checksum(merged))
     return merged
 
@@ -1577,6 +1583,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "NTFY_TOPIC",
             "ARGOCD_OIDC_SECRET",
             "QUI_PASSWORD",
+            "GRAFANA_ADMIN_PASSWORD",
             "GRAFANA_OIDC_SECRET",
             "SEMAPHORE_DB_PASSWORD",
             "SEMAPHORE_APP_SECRET",
@@ -1644,6 +1651,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "media",
             SECRETS_DIR / "downloaders-auth-sealed-secret.yaml",
             {
+                "QBITTORRENT_USERNAME": env.get("QBITTORRENT_USERNAME", "admin"),
                 "QUI_PASSWORD": env["QUI_PASSWORD"],
                 "QBITTORRENT_PASSWORD_PBKDF2": env["QBITTORRENT_PASSWORD_PBKDF2"],
             },
@@ -1654,9 +1662,9 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "mgmt",
             HOMEPAGE_WIDGETS_SECRET_OUTPUT,
             {
-                "HOMEPAGE_VAR_GRAFANA_USERNAME": "admin",
-                "HOMEPAGE_VAR_GRAFANA_PASSWORD": env.get("GRAFANA_ADMIN_PASSWORD", env["QUI_PASSWORD"]),
-                "HOMEPAGE_VAR_QBITTORRENT_USERNAME": "admin",
+                "HOMEPAGE_VAR_GRAFANA_USERNAME": env.get("GRAFANA_ADMIN_USERNAME", "admin"),
+                "HOMEPAGE_VAR_GRAFANA_PASSWORD": env["GRAFANA_ADMIN_PASSWORD"],
+                "HOMEPAGE_VAR_QBITTORRENT_USERNAME": env.get("QBITTORRENT_USERNAME", "admin"),
                 "HOMEPAGE_VAR_QBITTORRENT_PASSWORD": env["QUI_PASSWORD"],
             },
             None,
@@ -1666,8 +1674,8 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "monitoring",
             SECRETS_DIR / "grafana-admin-sealed-secret.yaml",
             {
-                "admin-user": "admin",
-                "admin-password": env.get("GRAFANA_ADMIN_PASSWORD", env["QUI_PASSWORD"]),
+                "admin-user": env.get("GRAFANA_ADMIN_USERNAME", "admin"),
+                "admin-password": env["GRAFANA_ADMIN_PASSWORD"],
             },
             None,
         ),
@@ -2130,14 +2138,41 @@ def require_git_bootstrap_repo(env: dict[str, str], remote_name: str = "origin")
         )
 
 
+def repo_owned_untracked_collisions(remote_ref: str) -> list[str]:
+    remote_paths = gitstatelib.git_paths_at_ref(ROOT, remote_ref)
+    return sorted(path for path in gitstatelib.git_untracked_paths(ROOT) if path in remote_paths)
+
+
+def fetch_gitops_remote_revision(revision: str) -> str:
+    remote_ref = f"origin/{revision}"
+    fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
+    require_success(fetch, f"Git fetch failed for {remote_ref}")
+    return remote_ref
+
+
+def warn_shared_credential_scope(env: dict[str, str]) -> None:
+    main_username = env.get("HAAC_MAIN_USERNAME", "").strip()
+    downloader_username = env.get("QBITTORRENT_USERNAME", "").strip()
+    main_password = env.get("HAAC_MAIN_PASSWORD", "").strip()
+    downloader_password = env.get("QUI_PASSWORD", "").strip()
+    if envdefaultslib.shared_downloader_credentials_enabled(env):
+        print(
+            "[warn] HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS is enabled: "
+            "qBittorrent and QUI inherit the main operator credentials when their dedicated downloader vars are unset."
+        )
+        return
+    if main_username and downloader_username and main_username == downloader_username:
+        print("[warn] QBITTORRENT_USERNAME currently matches HAAC_MAIN_USERNAME. This widens the auth blast radius.")
+    if main_password and downloader_password and main_password == downloader_password:
+        print("[warn] QUI_PASSWORD currently matches HAAC_MAIN_PASSWORD. This widens the auth blast radius.")
+
+
 def sync_repo() -> None:
     env = merged_env()
     require_git_bootstrap_repo(env)
     revision = gitops_revision(env)
 
-    remote_ref = f"origin/{revision}"
-    fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
-    require_success(fetch, f"Git fetch failed for {remote_ref}")
+    remote_ref = fetch_gitops_remote_revision(revision)
     ref_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
     tracked_dirty_paths = gitstatelib.git_tracked_dirty_paths(ROOT)
     if ref_state == "equal":
@@ -2152,6 +2187,14 @@ def sync_repo() -> None:
         print(f"[ok] GitOps repo already matches {remote_ref}; no merge needed.")
         return
     if ref_state == "behind":
+        colliding_untracked = repo_owned_untracked_collisions(remote_ref)
+        if colliding_untracked:
+            preview = ", ".join(colliding_untracked[:5])
+            suffix = "" if len(colliding_untracked) <= 5 else f" (+{len(colliding_untracked) - 5} more)"
+            raise HaaCError(
+                f"Git sync stopped because untracked local paths would be overwritten by {remote_ref}: {preview}{suffix}. "
+                "Move or remove those files, then rerun `task sync`."
+            )
         preserved_stash: str | None = None
         fast_forward_applied = False
         if tracked_dirty_paths:
@@ -2199,9 +2242,7 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
     require_git_bootstrap_repo(env)
     revision = gitops_revision(env)
 
-    remote_ref = f"origin/{revision}"
-    fetch = run(["git", "fetch", "origin", revision], check=False, capture_output=True)
-    require_success(fetch, f"Git fetch failed for {remote_ref}")
+    remote_ref = fetch_gitops_remote_revision(revision)
     ref_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
     if ref_state in {"behind", "diverged"}:
         raise HaaCError(
@@ -2224,12 +2265,33 @@ def push_changes(push_all: bool, kubectl: str, kubeconfig: Path) -> None:
 
     if not git_has_staged_changes():
         print("[ok] GitOps output already converged; nothing new to publish.")
+        publication_commit_created = False
     else:
+        remote_ref = fetch_gitops_remote_revision(revision)
+        ref_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
+        if ref_state in {"behind", "diverged"}:
+            raise HaaCError(
+                "GitOps publication stopped because the remote branch moved before the publication commit was created. "
+                f"Local HEAD is now {ref_state} relative to {remote_ref}. "
+                "Run `task sync` first, then rerun the publish or bootstrap command."
+            )
         published = run(["git", "commit", "-m", "Updated infrastructure [skip ci]", "--no-verify"], check=False, capture_output=True)
         require_success(published, "GitOps publication commit failed")
         print(f"[ok] GitOps publication commit: {run_stdout(['git', 'rev-parse', 'HEAD'])}")
+        publication_commit_created = True
 
     pushed = run(["git", "push", "origin", revision], check=False, capture_output=True)
+    if pushed.returncode != 0 and publication_commit_created:
+        remote_ref = fetch_gitops_remote_revision(revision)
+        race_state = gitstatelib.git_ref_state(ROOT, "HEAD", remote_ref)
+        if race_state in {"behind", "diverged"}:
+            unwind = run(["git", "reset", "--mixed", "HEAD~1"], check=False, capture_output=True)
+            require_success(unwind, "Unable to unwind the auto-generated GitOps publication commit after the remote moved")
+            raise HaaCError(
+                "GitOps publication stopped because the remote branch moved during the final push. "
+                "The auto-generated publication commit was unwound back into local generated changes. "
+                "Run `task sync`, then rerun the publish or bootstrap command."
+            )
     require_success(pushed, f"Git push failed for {revision}")
     commit = run_stdout(["git", "rev-parse", "HEAD"])
     print(f"Pushed GitOps source of truth: {commit} -> origin/{revision}")
@@ -3695,6 +3757,7 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
     env = merged_env()
     require_env(["QUI_PASSWORD"], env)
     qui_password = env["QUI_PASSWORD"]
+    qbit_username = env.get("QBITTORRENT_USERNAME", "admin")
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         deadline = time.time() + 600
@@ -3766,12 +3829,14 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 capture_output=capture_output,
             )
 
+        qbit_username_q = shlex.quote(qbit_username)
         qbit_password_q = shlex.quote(qui_password)
         qbit_login_check = (
+            f"QBIT_USERNAME={qbit_username_q}; "
             f"QBIT_PASSWORD={qbit_password_q}; "
             "login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' "
             "--connect-timeout 5 --max-time 20 "
-            "--data-urlencode \"username=admin\" "
+            "--data-urlencode \"username=${QBIT_USERNAME}\" "
             "--data-urlencode \"password=${QBIT_PASSWORD}\" "
             "http://127.0.0.1:8080/api/v2/auth/login || true); "
             "[ \"$login_code\" = \"200\" ] && grep -q 'Ok\\.' /tmp/qbit-login.txt"
@@ -3804,10 +3869,11 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 )
 
             exec_port_sync(
+                f"QBIT_USERNAME={qbit_username_q}; "
                 f"TEMP_PASSWORD={shlex.quote(temp_password)}; "
                 f"QBIT_PASSWORD={qbit_password_q}; "
                 "curl -fsS --connect-timeout 5 --max-time 20 -c /tmp/qbit-cookies.txt "
-                "--data-urlencode \"username=admin\" "
+                "--data-urlencode \"username=${QBIT_USERNAME}\" "
                 "--data-urlencode \"password=${TEMP_PASSWORD}\" "
                 "http://127.0.0.1:8080/api/v2/auth/login >/dev/null && "
                 "curl -fsS --connect-timeout 5 --max-time 20 -b /tmp/qbit-cookies.txt "
@@ -3819,6 +3885,7 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             raise HaaCError("qBittorrent did not accept the reconciled password.")
 
         upsert_instance_script = (
+            f"QBIT_USERNAME={qbit_username_q}; "
             f"QBIT_PASSWORD={qbit_password_q}; "
             "ESCAPED_QBIT_PASSWORD=$(printf '%s' \"$QBIT_PASSWORD\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
             "extract_instance_id() { "
@@ -3829,7 +3896,8 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             "fi; "
             "printf '%s' \"$instance_id\"; "
             "}; "
-            "INSTANCE_PAYLOAD=$(printf '{\"name\":\"qBittorrent\",\"host\":\"http://127.0.0.1:8080\",\"username\":\"admin\",\"password\":\"%s\",\"hasLocalFilesystemAccess\":true}' \"$ESCAPED_QBIT_PASSWORD\"); "
+            "ESCAPED_QBIT_USERNAME=$(printf '%s' \"$QBIT_USERNAME\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
+            "INSTANCE_PAYLOAD=$(printf '{\"name\":\"qBittorrent\",\"host\":\"http://127.0.0.1:8080\",\"username\":\"%s\",\"password\":\"%s\",\"hasLocalFilesystemAccess\":true}' \"$ESCAPED_QBIT_USERNAME\" \"$ESCAPED_QBIT_PASSWORD\"); "
             "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
             "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
             "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
@@ -3949,12 +4017,37 @@ def remove_file(path: Path) -> None:
         path.unlink()
 
 
+def prune_empty_dirs(root: Path, *, keep_root: bool = True) -> list[str]:
+    if not root.exists():
+        return []
+    removed: list[str] = []
+    directories = sorted((path for path in root.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True)
+    for path in directories:
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+        removed.append(str(path.relative_to(ROOT)))
+    if not keep_root:
+        try:
+            root.rmdir()
+        except OSError:
+            return removed
+        removed.append(str(root.relative_to(ROOT)))
+    return removed
+
+
 def clean_local_artifacts() -> None:
     removed: list[str] = []
+    skipped: list[str] = []
     for artifact_dir in LEGACY_ARTIFACT_DIRS:
         if artifact_dir.exists():
+            relative_dir = str(artifact_dir.relative_to(ROOT))
+            if gitstatelib.git_tracked_paths_under(ROOT, relative_dir):
+                skipped.append(relative_dir)
+                continue
             shutil.rmtree(artifact_dir, ignore_errors=True)
-            removed.append(str(artifact_dir.relative_to(ROOT)))
+            removed.append(relative_dir)
 
     for pattern in LEGACY_ARTIFACT_PATTERNS:
         for path in ROOT.glob(pattern):
@@ -3962,12 +4055,19 @@ def clean_local_artifacts() -> None:
                 path.unlink(missing_ok=True)
                 removed.append(str(path.relative_to(ROOT)))
 
+    for scratch_root in SANCTIONED_SCRATCH_ROOTS:
+        removed.extend(prune_empty_dirs(scratch_root, keep_root=True))
+
     if removed:
         print("[ok] Removed local investigation artifacts:")
         for item in sorted(removed):
             print(f"  - {item}")
     else:
         print("[ok] No stray local investigation artifacts were found outside .tmp/")
+    if skipped:
+        print("[warn] Skipped tracked legacy artifact paths; remove them with a dedicated Git cleanup instead:")
+        for item in sorted(skipped):
+            print(f"  - {item}")
 
 
 def monitor(master_ip: str, proxmox_host: str, kubeconfig: Path) -> None:
@@ -4257,6 +4357,16 @@ def cmd_check_env(_: argparse.Namespace) -> None:
         ],
         env,
     )
+    require_env(
+        [
+            "AUTHELIA_ADMIN_PASSWORD",
+            "GRAFANA_ADMIN_PASSWORD",
+            "LITMUS_ADMIN_PASSWORD",
+            "SEMAPHORE_ADMIN_PASSWORD",
+            "QUI_PASSWORD",
+        ],
+        env,
+    )
     gitopslib.validate_falco_runtime_inputs(env)
     access_host = proxmox_access_host(env)
     access_hint = (
@@ -4265,6 +4375,7 @@ def cmd_check_env(_: argparse.Namespace) -> None:
     )
     ensure_tcp_endpoint(access_host, 8006, label="Proxmox API", hint=access_hint)
     ensure_tcp_endpoint(access_host, 22, label="Proxmox SSH", hint=access_hint)
+    warn_shared_credential_scope(env)
 
 
 def cmd_kubeconfig_path(_: argparse.Namespace) -> None:

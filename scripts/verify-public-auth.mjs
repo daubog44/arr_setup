@@ -36,6 +36,77 @@ function renderEnvPlaceholders(content, env) {
   return content.replace(/\$\{([A-Z0-9_]+)\}/g, (_, key) => env[key] ?? "");
 }
 
+function envValue(env, key) {
+  return String(env[key] || "").trim();
+}
+
+function setDefault(env, key, value) {
+  if (value && !envValue(env, key)) {
+    env[key] = value;
+  }
+}
+
+function envFlag(env, key) {
+  return ["1", "true", "yes", "on"].includes(envValue(env, key).toLowerCase());
+}
+
+function applyCredentialDefaults(env) {
+  const mainUsername = envValue(env, "HAAC_MAIN_USERNAME");
+  const mainPassword = envValue(env, "HAAC_MAIN_PASSWORD");
+  const mainEmail = envValue(env, "HAAC_MAIN_EMAIL");
+  const mainName = envValue(env, "HAAC_MAIN_NAME");
+  const sharedDownloaderCredentials = envFlag(env, "HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS");
+
+  if (mainUsername) {
+    for (const key of [
+      "AUTHELIA_ADMIN_USERNAME",
+      "ARGOCD_USERNAME",
+      "GRAFANA_ADMIN_USERNAME",
+      "LITMUS_ADMIN_USERNAME",
+      "SEMAPHORE_ADMIN_USERNAME",
+    ]) {
+      setDefault(env, key, mainUsername);
+    }
+  }
+
+  if (mainPassword) {
+    for (const key of [
+      "AUTHELIA_ADMIN_PASSWORD",
+      "ARGOCD_PASSWORD",
+      "GRAFANA_ADMIN_PASSWORD",
+      "LITMUS_ADMIN_PASSWORD",
+      "SEMAPHORE_ADMIN_PASSWORD",
+    ]) {
+      setDefault(env, key, mainPassword);
+    }
+  }
+
+  setDefault(env, "AUTHELIA_ADMIN_USERNAME", "admin");
+  setDefault(env, "LITMUS_ADMIN_USERNAME", envValue(env, "AUTHELIA_ADMIN_USERNAME") || "admin");
+  if (envValue(env, "AUTHELIA_ADMIN_PASSWORD")) {
+    for (const key of [
+      "ARGOCD_PASSWORD",
+      "GRAFANA_ADMIN_PASSWORD",
+      "LITMUS_ADMIN_PASSWORD",
+      "SEMAPHORE_ADMIN_PASSWORD",
+    ]) {
+      setDefault(env, key, envValue(env, "AUTHELIA_ADMIN_PASSWORD"));
+    }
+  }
+  if (mainEmail) {
+    setDefault(env, "AUTHELIA_ADMIN_EMAIL", mainEmail);
+    setDefault(env, "SEMAPHORE_ADMIN_EMAIL", mainEmail);
+  }
+  if (mainName) {
+    setDefault(env, "AUTHELIA_ADMIN_NAME", mainName);
+    setDefault(env, "SEMAPHORE_ADMIN_NAME", mainName);
+  }
+  if (sharedDownloaderCredentials) {
+    setDefault(env, "QBITTORRENT_USERNAME", mainUsername);
+    setDefault(env, "QUI_PASSWORD", mainPassword);
+  }
+}
+
 function loadCatalogContent(env) {
   if (fs.existsSync(valuesOutputPath)) {
     return fs.readFileSync(valuesOutputPath, "utf8");
@@ -259,7 +330,7 @@ async function maybeAutheliaLogin(page, env) {
     const username = page.locator('#username-textfield, input[autocomplete="username"]').first();
     const password = page.locator('#password-textfield, input[autocomplete="current-password"]').first();
     const signIn = page.locator('#sign-in-button, button[type="submit"], input[type="submit"]').first();
-    const consentButton = page.locator('#openid-consent-accept').first();
+    const consentButton = page.locator('#openid-consent-accept, button:has-text("Accetta"), button:has-text("Accept")').first();
     for (let attempt = 0; attempt < 30; attempt += 1) {
       if ((await username.count()) || (await consentButton.count())) {
         break;
@@ -271,8 +342,8 @@ async function maybeAutheliaLogin(page, env) {
       const usernameEnabled = await username.isEnabled().catch(() => false);
       if (usernameEnabled) {
         const currentUsername = await username.inputValue().catch(() => "");
-        if (currentUsername !== "admin") {
-          await username.fill("admin");
+        if (currentUsername !== (env.AUTHELIA_ADMIN_USERNAME || "admin")) {
+          await username.fill(env.AUTHELIA_ADMIN_USERNAME || "admin");
         }
       }
       await password.waitFor({ state: "visible", timeout: 30000 });
@@ -294,6 +365,11 @@ async function maybeAutheliaLogin(page, env) {
     }
     if (await consentButton.count()) {
       await consentButton.waitFor({ state: "visible", timeout: 30000 });
+      const consentEnabled = await consentButton.isEnabled().catch(() => false);
+      if (!consentEnabled) {
+        await page.waitForTimeout(1000);
+        continue;
+      }
       await consentButton.click();
       await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
       continue;
@@ -610,11 +686,10 @@ async function verifyAppNative(page, env, endpoint, screenshotName, options = {}
 
 async function run() {
   const env = loadEnv(envPath);
+  applyCredentialDefaults(env);
   if (!env.AUTHELIA_ADMIN_PASSWORD) {
     throw new Error("AUTHELIA_ADMIN_PASSWORD is required in .env for browser auth verification");
   }
-  env.LITMUS_ADMIN_USERNAME = env.LITMUS_ADMIN_USERNAME || "admin";
-  env.LITMUS_ADMIN_PASSWORD = env.LITMUS_ADMIN_PASSWORD || env.AUTHELIA_ADMIN_PASSWORD;
   const ingressCatalog = loadIngressCatalog(loadCatalogContent(env), env.DOMAIN_NAME);
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext();

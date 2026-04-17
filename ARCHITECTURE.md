@@ -162,7 +162,9 @@ The required order is:
 
 That ingress catalog is now also the Homepage source of truth. Homepage links, public endpoint verification, `HTTPRoute` generation, and Cloudflare publication are all derived from the same declared route set. Each published route must explicitly declare one auth strategy: `public`, `edge_forward_auth`, `native_oidc`, or `app_native`. Template rendering and endpoint verification both fail closed if the strategy is missing or invalid. Unsupported hosts are not published through the Cloudflare tunnel and are not part of the supported public surface.
 
-`.env` is also the source of truth for the local Authelia admin password. `AUTHELIA_ADMIN_PASSWORD_HASH` is now a derived compatibility value: if the explicit password is present and the stored hash does not match, hydration regenerates the hash before sealing the Authelia config.
+`.env` is also the source of truth for the operator identity defaults. `HAAC_MAIN_USERNAME`, `HAAC_MAIN_PASSWORD`, `HAAC_MAIN_EMAIL`, and `HAAC_MAIN_NAME` seed the control-plane human login defaults when a service-specific override is absent. That default layer covers Authelia, ArgoCD local auth, Grafana local admin, Semaphore admin, and Litmus admin. The downloader local auth stays separate by default through `QBITTORRENT_USERNAME` and `QUI_PASSWORD`; if the operator intentionally wants one main username/password across those lower-trust apps too, `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true` makes that inheritance explicit instead of leaving it as an undocumented fallback. `AUTHELIA_ADMIN_PASSWORD_HASH` remains a derived compatibility value: if the effective Authelia admin password is present and the stored hash does not match, hydration regenerates the hash before sealing the Authelia config.
+
+That identity layer applies only to human login defaults. OIDC client secrets, cookie/encryption secrets, and database passwords remain separate opaque inputs in `.env` and are not derived from the main operator password. Control-plane services must not fall back to downloader passwords.
 
 For Proxmox connectivity, `.env` separates node identity from workstation access: `MASTER_TARGET_NODE` is the Proxmox node name used by resources and generated inventory, while `PROXMOX_ACCESS_HOST` is the API/SSH host used by preflight, OpenTofu provider access, and tunnel setup. If the node name already resolves from the operator workstation, the access host falls back to `MASTER_TARGET_NODE`.
 
@@ -170,7 +172,7 @@ For Proxmox connectivity, `.env` separates node identity from workstation access
 
 Publication scope is now explicit too: the supported Task pipeline publishes only generated GitOps artifacts.
 
-Git merge policy is separate from the main bootstrap path. `task sync` owns checkpoint plus safe fast-forward merge policy and fails closed on divergence; `task up` only publishes GitOps outputs and fails closed with guidance if the local branch is behind or diverged from the configured remote revision.
+Git merge policy is separate from the main bootstrap path. `task sync` owns checkpoint plus safe fast-forward merge policy and fails closed on divergence; `task up` only publishes GitOps outputs, unwinds its own publication race if the remote branch moves during push, and points the operator back to `task sync` when merge policy is required.
 
 ## Recurring Work Boundaries
 

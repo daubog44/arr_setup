@@ -1,8 +1,5 @@
-# bootstrap-boundaries Specification
+## MODIFIED Requirements
 
-## Purpose
-Define the stable contract that keeps `task up` publish-only on the Git boundary, moves merge policy into the explicit `task sync` path, and keeps low-level Git state helpers out of the main orchestration file.
-## Requirements
 ### Requirement: `task up` does not own Git merge policy
 
 The main bootstrap path MUST not perform remote merge policy implicitly.
@@ -58,17 +55,10 @@ Wrapper entrypoints MUST preserve the existing task argument contract while the 
 
 The explicit sync path MUST remain the only merge-policy boundary while still recovering the common fast-forward-plus-dirty-worktree case safely.
 
-#### Scenario: remote revision is ahead and local tracked worktree state is dirty
+#### Scenario: remote revision is ahead and local worktree is dirty
 
 - **WHEN** the operator runs `task sync`
 - **AND** the configured remote revision is ahead of local `HEAD`
 - **AND** local tracked worktree changes are present
 - **THEN** sync MUST update the branch to the remote revision before checkpointing recovered local changes
 - **AND** it MUST NOT create a local checkpoint that turns a clean fast-forward into divergence
-
-#### Scenario: restoring preserved local changes conflicts after a fast-forward
-
-- **WHEN** `task sync` has already updated the branch to `origin/<revision>`
-- **AND** Git reports a conflict while re-applying preserved local tracked changes
-- **THEN** sync MUST fail with explicit recovery guidance
-- **AND** it MUST leave the preserved changes recoverable instead of silently discarding them

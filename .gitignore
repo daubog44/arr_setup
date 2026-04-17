@@ -35,6 +35,8 @@ __pycache__/
 .codex-potter-home/
 .codex-appserver-runtime/
 .codexpotter/
+.playwright/
+.playwright-cli/
 docs/worklogs/*
 !docs/worklogs/README.md
 pub-sealed-secrets.pem

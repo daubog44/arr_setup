@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import base64
-import os
 import tempfile
 from pathlib import Path
 
 from haaclib.authelia import resolve_admin_password_hash
+from haaclib.envdefaults import apply_identity_defaults
 
 CURRENT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = CURRENT_DIR.parent
@@ -85,8 +85,7 @@ def main() -> None:
     args = parser.parse_args()
 
     env = load_env(Path(args.env_file))
-    if "DOMAIN_NAME" in os.environ:
-        env["DOMAIN_NAME"] = os.environ["DOMAIN_NAME"]
+    apply_identity_defaults(env)
     env["AUTHELIA_ADMIN_PASSWORD_HASH"] = resolve_admin_password_hash(
         env,
         env_file=Path(args.env_file),
