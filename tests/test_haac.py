@@ -497,6 +497,98 @@ class PushChangesTests(unittest.TestCase):
         self.assertIn(["git", "reset", "--mixed", "HEAD~1"], run_calls)
 
 
+class LitmusWorkflowCatalogTests(unittest.TestCase):
+    def test_load_litmus_workflow_catalog_reads_index_and_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            catalog_dir = Path(temp_dir)
+            (catalog_dir / "workflow.yaml").write_text("apiVersion: argoproj.io/v1alpha1\nkind: Workflow\n", encoding="utf-8")
+            (catalog_dir / "catalog.json").write_text(
+                json.dumps(
+                    {
+                        "templates": [
+                            {
+                                "name": "demo-chaos",
+                                "description": "Demo workflow",
+                                "manifest": "workflow.yaml",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = haac.load_litmus_workflow_catalog(catalog_dir / "catalog.json")
+
+        self.assertEqual(len(catalog), 1)
+        self.assertEqual(catalog[0]["name"], "demo-chaos")
+        self.assertEqual(catalog[0]["description"], "Demo workflow")
+        self.assertIn("kind: Workflow", catalog[0]["manifest"])
+        self.assertTrue(catalog[0]["manifest_path"].endswith("workflow.yaml"))
+
+    def test_ensure_litmus_workflow_catalog_seeds_missing_templates(self) -> None:
+        catalog = [
+            {
+                "name": "demo-chaos",
+                "description": "Demo workflow",
+                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
+            }
+        ]
+
+        with mock.patch.object(haac, "load_litmus_workflow_catalog", return_value=catalog):
+            with mock.patch.object(haac, "litmus_list_workflow_templates", return_value=[]):
+                with mock.patch.object(haac, "litmus_create_workflow_template", return_value={"templateID": "123"}) as create_template:
+                    with mock.patch("builtins.print") as fake_print:
+                        haac.ensure_litmus_workflow_catalog(9002, "token", "project")
+
+        create_template.assert_called_once_with(
+            9002,
+            "token",
+            project_id="project",
+            name="demo-chaos",
+            description="Demo workflow",
+            manifest="apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
+        )
+        fake_print.assert_any_call("[ok] Litmus workflow template seeded: demo-chaos")
+
+    def test_ensure_litmus_workflow_catalog_keeps_matching_or_drifting_templates_without_recreate(self) -> None:
+        matching_catalog = [
+            {
+                "name": "demo-chaos",
+                "description": "Demo workflow",
+                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow\n",
+            },
+            {
+                "name": "drifted-chaos",
+                "description": "Expected description",
+                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow\nmetadata:\n  name: expected\n",
+            },
+        ]
+        existing = [
+            {
+                "templateName": "demo-chaos",
+                "templateDescription": "Demo workflow",
+                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
+            },
+            {
+                "templateName": "drifted-chaos",
+                "templateDescription": "Portal description",
+                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow\nmetadata:\n  name: portal\n",
+            },
+        ]
+
+        with mock.patch.object(haac, "load_litmus_workflow_catalog", return_value=matching_catalog):
+            with mock.patch.object(haac, "litmus_list_workflow_templates", return_value=existing):
+                with mock.patch.object(haac, "litmus_create_workflow_template") as create_template:
+                    with mock.patch("builtins.print") as fake_print:
+                        haac.ensure_litmus_workflow_catalog(9002, "token", "project")
+
+        create_template.assert_not_called()
+        fake_print.assert_any_call("[ok] Litmus workflow template already seeded: demo-chaos")
+        fake_print.assert_any_call(
+            "[warn] Litmus workflow template drift detected for drifted-chaos; keeping the existing portal template because the API does not expose a safe in-place update path"
+        )
+
+
 class CleanLocalArtifactsTests(unittest.TestCase):
     def test_clean_local_artifacts_removes_disposable_roots_and_prunes_empty_tmp_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

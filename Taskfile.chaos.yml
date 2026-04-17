@@ -1,0 +1,20 @@
+version: "3"
+
+vars:
+  PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
+  LXC_PASSWORD_VALUE:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'
+  NAS_PATH_VALUE:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_PATH'
+
+tasks:
+  post-install:
+    desc: Reconcile the Litmus chaos center, default infra, and repo-managed workflow catalog after the platform apps are healthy.
+    env:
+      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      NAS_PATH: "{{.NAS_PATH_VALUE}}"
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-litmus-chaos'

@@ -56,6 +56,7 @@ VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
 LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
+LITMUS_WORKFLOW_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
@@ -2898,6 +2899,49 @@ def litmus_graphql(
     return data
 
 
+def normalize_multiline_text(value: str) -> str:
+    return "\n".join(line.rstrip() for line in value.strip().splitlines())
+
+
+def load_litmus_workflow_catalog(index_path: Path = LITMUS_WORKFLOW_CATALOG_INDEX) -> list[dict[str, str]]:
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HaaCError(f"Litmus workflow catalog index is missing: {index_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise HaaCError(f"Litmus workflow catalog index is invalid JSON: {index_path}\n{exc}") from exc
+
+    templates = payload.get("templates")
+    if not isinstance(templates, list) or not templates:
+        raise HaaCError(f"Litmus workflow catalog index must define a non-empty templates list: {index_path}")
+
+    catalog: list[dict[str, str]] = []
+    for item in templates:
+        if not isinstance(item, dict):
+            raise HaaCError(f"Litmus workflow catalog entry is not an object: {item!r}")
+        name = str(item.get("name") or "").strip()
+        description = str(item.get("description") or "").strip()
+        manifest_name = str(item.get("manifest") or "").strip()
+        if not name or not description or not manifest_name:
+            raise HaaCError(f"Litmus workflow catalog entry is missing name, description, or manifest: {item!r}")
+        manifest_path = index_path.parent / manifest_name
+        try:
+            manifest = manifest_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError as exc:
+            raise HaaCError(f"Litmus workflow manifest is missing: {manifest_path}") from exc
+        if not manifest:
+            raise HaaCError(f"Litmus workflow manifest is empty: {manifest_path}")
+        catalog.append(
+            {
+                "name": name,
+                "description": description,
+                "manifest": manifest,
+                "manifest_path": str(manifest_path),
+            }
+        )
+    return catalog
+
+
 def litmus_list_environments(server_port: int, token: str, project_id: str) -> list[dict[str, object]]:
     data = litmus_graphql(
         server_port,
@@ -2983,6 +3027,83 @@ def litmus_register_infra(server_port: int, token: str, project_id: str, environ
     if not manifest:
         raise HaaCError("Litmus did not return the infrastructure manifest")
     return registered
+
+
+def litmus_list_workflow_templates(server_port: int, token: str, project_id: str) -> list[dict[str, object]]:
+    data = litmus_graphql(
+        server_port,
+        token,
+        "query ListWorkflowManifests($projectID: String!) { listWorkflowManifests(projectID: $projectID) { templateID manifest templateName templateDescription projectID projectName createdAt isRemoved isCustomWorkflow } }",
+        {"projectID": project_id},
+    )
+    templates = data.get("listWorkflowManifests") or []
+    return [item for item in templates if isinstance(item, dict)]
+
+
+def litmus_create_workflow_template(
+    server_port: int,
+    token: str,
+    *,
+    project_id: str,
+    name: str,
+    description: str,
+    manifest: str,
+) -> dict[str, object]:
+    data = litmus_graphql(
+        server_port,
+        token,
+        "mutation CreateWorkflowTemplate($request: TemplateInput) { createWorkflowTemplate(request: $request) { templateID manifest templateName templateDescription projectID projectName createdAt isRemoved isCustomWorkflow } }",
+        {
+            "request": {
+                "manifest": manifest,
+                "templateName": name,
+                "templateDescription": description,
+                "projectID": project_id,
+                "isCustomWorkflow": True,
+            }
+        },
+    )
+    created = data.get("createWorkflowTemplate")
+    if not isinstance(created, dict):
+        raise HaaCError(f"Litmus did not return the created workflow template payload for {name}")
+    return created
+
+
+def ensure_litmus_workflow_catalog(server_port: int, token: str, project_id: str) -> None:
+    catalog = load_litmus_workflow_catalog()
+    existing = litmus_list_workflow_templates(server_port, token, project_id)
+    existing_by_name: dict[str, dict[str, object]] = {}
+    for item in existing:
+        name = str(item.get("templateName") or "").strip()
+        if name and name not in existing_by_name:
+            existing_by_name[name] = item
+
+    for entry in catalog:
+        name = entry["name"]
+        manifest = entry["manifest"]
+        description = entry["description"]
+        current = existing_by_name.get(name)
+        if current:
+            current_manifest = normalize_multiline_text(str(current.get("manifest") or ""))
+            current_description = str(current.get("templateDescription") or "").strip()
+            if current_manifest == normalize_multiline_text(manifest) and current_description == description:
+                print(f"[ok] Litmus workflow template already seeded: {name}")
+            else:
+                print(
+                    f"[warn] Litmus workflow template drift detected for {name}; "
+                    "keeping the existing portal template because the API does not expose a safe in-place update path"
+                )
+            continue
+
+        litmus_create_workflow_template(
+            server_port,
+            token,
+            project_id=project_id,
+            name=name,
+            description=description,
+            manifest=manifest,
+        )
+        print(f"[ok] Litmus workflow template seeded: {name}")
 
 
 def select_litmus_reconcile_targets(environments: list[dict[str, object]]) -> list[tuple[str, str, bool]]:
@@ -3240,6 +3361,7 @@ def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, 
                     print("[ok] Litmus legacy test environment hidden after canonical environment bootstrap")
                 else:
                     print("[ok] Litmus legacy test environment already hidden")
+            ensure_litmus_workflow_catalog(server_pf, token, project_id)
 
 
 def litmus_clear_initial_login(

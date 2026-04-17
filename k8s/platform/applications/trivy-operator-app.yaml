@@ -46,7 +46,15 @@ spec:
           scannerReportTTL: "6h"
 
         trivyOperator:
-          reportRecordFailedChecksOnly: false
+          reportRecordFailedChecksOnly: true
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
           
   destination:
     server: https://kubernetes.default.svc

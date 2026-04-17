@@ -1,0 +1,19 @@
+{
+  "templates": [
+    {
+      "name": "haac-homepage-pod-delete",
+      "description": "Delete the Homepage pod in the management namespace to verify the operator dashboard recovers cleanly through the gateway.",
+      "manifest": "homepage-pod-delete.yaml"
+    },
+    {
+      "name": "haac-ntfy-pod-delete",
+      "description": "Delete the Ntfy pod in the management namespace to validate notification-path recovery without touching the control plane.",
+      "manifest": "ntfy-pod-delete.yaml"
+    },
+    {
+      "name": "haac-radarr-pod-delete",
+      "description": "Delete the Radarr pod in the media namespace to validate media-helper recovery on persistent storage with low blast radius.",
+      "manifest": "radarr-pod-delete.yaml"
+    }
+  ]
+}

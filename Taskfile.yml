@@ -7,6 +7,8 @@ includes:
     taskfile: ./Taskfile.internal.yml
   security:
     taskfile: ./Taskfile.security.yml
+  chaos:
+    taskfile: ./Taskfile.chaos.yml
 
 vars:
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
@@ -120,6 +122,7 @@ tasks:
     cmds:
       - task: internal:gitops-bootstrap
       - task: security:post-install
+      - task: chaos:post-install
       - task: internal:sync-cloudflare
 
   reconcile:sealed-secrets:

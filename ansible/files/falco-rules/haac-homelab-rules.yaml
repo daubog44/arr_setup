@@ -116,7 +116,12 @@
 - rule: HAAC Socket Tool Execution
   desc: Detect interactive socket tooling commonly used for pivots and reverse shells.
   condition: >
-    spawned_process and proc.name in (haac_socket_tools)
+    spawned_process and proc.name in (haac_socket_tools) and
+    not (
+      proc.cmdline contains "localhost" or
+      proc.cmdline contains "127.0.0.1" or
+      proc.cmdline contains "::1"
+    )
   output: >
     Interactive socket tooling executed on the Proxmox host
     (user=%user.name command=%proc.cmdline parent=%proc.pname)

@@ -26,8 +26,26 @@ spec:
         mongodb:
           architecture: replicaset
           replicaCount: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 500Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+              ephemeral-storage: 1Gi
           arbiter:
             enabled: true
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+                ephemeral-storage: 250Mi
+              limits:
+                cpu: 250m
+                memory: 256Mi
+                ephemeral-storage: 500Mi
           persistence:
             storageClass: local-path
         
