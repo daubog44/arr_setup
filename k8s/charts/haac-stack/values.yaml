@@ -338,7 +338,7 @@ ingresses:
     auth_strategy: edge_forward_auth
     homepage_group: Security
     homepage_name: Falco
-    homepage_icon: mdi-shield-search-outline
+    homepage_icon: mdi-shield-bug-outline
     homepage_description: Runtime Security
 
 homepage:
