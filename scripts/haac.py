@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import json
 import os
 import platform
@@ -57,6 +58,7 @@ VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
 LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
+LITMUS_MONGODB_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-mongodb-credentials-sealed-secret.yaml"
 LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
@@ -80,6 +82,7 @@ GITOPS_GENERATED_OUTPUTS = (
     VALUES_OUTPUT,
     ARGOCD_OIDC_SECRET_OUTPUT,
     LITMUS_ADMIN_SECRET_OUTPUT,
+    LITMUS_MONGODB_SECRET_OUTPUT,
     *GITOPS_RENDERED_OUTPUTS,
 )
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
@@ -118,21 +121,51 @@ class HaaCError(RuntimeError):
 
 
 UP_TASK_LINE_PATTERN = re.compile(r"^task: \[([^\]]+)\]\s+(.*)$")
+UP_RECOVERY_FAILING_PATTERN = re.compile(r"^\[recovery\] Failing phase: (.+)$")
+UP_RECOVERY_LAST_VERIFIED_PATTERN = re.compile(r"^\[recovery\] Last verified phase: (.+)$")
+UP_RECOVERY_RERUN_PATTERN = re.compile(r"^\[recovery\] Full rerun guidance: (.+)$")
 UP_TASK_PHASES = {
+    "preflight": "Preflight",
     "check-env": "Preflight",
     "doctor": "Preflight",
     "sync": "Preflight",
     "setup-hooks": "Preflight",
     "provision-infra": "Infrastructure provisioning",
     "configure-os": "Node configuration",
+    "gitops-bootstrap": "GitOps publication",
+    "internal:gitops-bootstrap": "GitOps publication",
     "generate-secrets": "GitOps publication",
+    "internal:generate-secrets": "GitOps publication",
     "push-changes": "GitOps publication",
+    "internal:push-changes": "GitOps publication",
     "deploy-argocd": "GitOps publication",
+    "internal:deploy-argocd": "GitOps publication",
     "wait-for-argocd-sync": "GitOps readiness",
+    "internal:wait-for-argocd-sync": "GitOps readiness",
+    "security:post-install": "GitOps readiness",
+    "chaos:post-install": "GitOps readiness",
+    "internal:repair-litmus-admin": "GitOps readiness",
+    "internal:repair-litmus-chaos": "GitOps readiness",
     "sync-cloudflare": "Cloudflare publication",
+    "internal:sync-cloudflare": "Cloudflare publication",
+    "verify-all": "Cluster verification",
     "verify-cluster": "Cluster verification",
+    "internal:verify-cluster": "Cluster verification",
     "verify-endpoints": "Public URL verification",
+    "internal:verify-endpoints": "Public URL verification",
+    "internal:verify-browser-auth": "Public URL verification",
 }
+UP_PHASE_ORDER = (
+    "Preflight",
+    "Infrastructure provisioning",
+    "Node configuration",
+    "GitOps publication",
+    "GitOps readiness",
+    "Cloudflare publication",
+    "Cluster verification",
+    "Public URL verification",
+)
+UP_PHASE_RANK = {phase: index for index, phase in enumerate(UP_PHASE_ORDER)}
 UP_PHASE_RERUN_GUIDANCE = {
     "Preflight": "No remote bootstrap state changed. Fix the local prerequisite or Git issue, then rerun `task up`.",
     "Infrastructure provisioning": "OpenTofu apply is the normal recovery path. Fix the provisioning issue, then rerun `task up` without destroying converged resources.",
@@ -829,15 +862,51 @@ def infer_up_phase(task_name: str, command_text: str) -> str | None:
     return None
 
 
+def extract_up_recovery_summary(output_lines: list[str]) -> tuple[str, str, str] | None:
+    failing_phase = ""
+    last_verified_phase = ""
+    rerun_guidance = ""
+    for line in output_lines:
+        failing_match = UP_RECOVERY_FAILING_PATTERN.match(line)
+        if failing_match:
+            failing_phase = failing_match.group(1).strip()
+            continue
+        last_verified_match = UP_RECOVERY_LAST_VERIFIED_PATTERN.match(line)
+        if last_verified_match:
+            last_verified_phase = last_verified_match.group(1).strip()
+            continue
+        rerun_match = UP_RECOVERY_RERUN_PATTERN.match(line)
+        if rerun_match:
+            rerun_guidance = rerun_match.group(1).strip()
+    if failing_phase and last_verified_phase and rerun_guidance:
+        return failing_phase, last_verified_phase, rerun_guidance
+    return None
+
+
 def emit_up_failure_summary(output_lines: list[str]) -> None:
+    explicit_summary = extract_up_recovery_summary(output_lines)
+    if explicit_summary:
+        failing_phase, last_verified_phase, rerun_guidance = explicit_summary
+        print(f"[recovery] Failing phase: {failing_phase}", file=sys.stderr)
+        print(f"[recovery] Last verified phase: {last_verified_phase}", file=sys.stderr)
+        print(f"[recovery] Full rerun guidance: {rerun_guidance}", file=sys.stderr)
+        return
+
     phases: list[str] = []
+    highest_phase_rank = -1
     for line in output_lines:
         match = UP_TASK_LINE_PATTERN.match(line)
         if not match:
             continue
         phase = infer_up_phase(match.group(1), match.group(2))
-        if phase and (not phases or phases[-1] != phase):
+        if not phase:
+            continue
+        phase_rank = UP_PHASE_RANK.get(phase, -1)
+        if phase_rank < highest_phase_rank:
+            continue
+        if phase_rank > highest_phase_rank:
             phases.append(phase)
+            highest_phase_rank = phase_rank
 
     if not phases:
         return
@@ -1702,6 +1771,16 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             {
                 "ADMIN_USERNAME": env.get("LITMUS_ADMIN_USERNAME", "admin"),
                 "ADMIN_PASSWORD": env["LITMUS_ADMIN_PASSWORD"],
+            },
+            None,
+        ),
+        (
+            "litmus-mongodb-credentials",
+            "chaos",
+            LITMUS_MONGODB_SECRET_OUTPUT,
+            {
+                "mongodb-root-password": env["LITMUS_MONGODB_ROOT_PASSWORD"],
+                "mongodb-replica-set-key": env["LITMUS_MONGODB_REPLICA_SET_KEY"],
             },
             None,
         ),
@@ -2813,6 +2892,8 @@ def litmus_login_probe(port: int, username: str, password: str) -> tuple[int, st
             return response.status, response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8")
+    except (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError, TimeoutError, OSError) as exc:
+        raise HaaCError(f"Litmus login probe transport failed: {exc}") from exc
 
 
 LITMUS_DEFAULT_ENVIRONMENT_ID = "haac-default"
@@ -2840,6 +2921,41 @@ LITMUS_CORE_DEPLOYMENTS = (
     "litmus-auth-server",
     "litmus-server",
 )
+LITMUS_TRANSIENT_ERROR_SNIPPETS = (
+    "remote end closed connection without response",
+    "connection refused",
+    "connection reset by peer",
+    "lost connection to pod",
+    "timed out waiting for local port",
+)
+
+
+def litmus_is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError, TimeoutError, OSError)):
+        return True
+    return any(snippet in str(exc).lower() for snippet in LITMUS_TRANSIENT_ERROR_SNIPPETS)
+
+
+def retry_litmus_transient(
+    action,
+    *,
+    context: str,
+    attempts: int = 6,
+    sleep_seconds: int = 5,
+):
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except Exception as exc:  # noqa: BLE001 - bounded retry on known Litmus warmup failures
+            if not litmus_is_transient_error(exc):
+                raise
+            if attempt >= attempts:
+                raise HaaCError(f"{context} failed after {attempts} attempts: {exc}") from exc
+            print(
+                f"[wait] {context}: transient Litmus service failure ({exc}); "
+                f"retrying in {sleep_seconds}s ({attempt}/{attempts})"
+            )
+            time.sleep(sleep_seconds)
 
 
 def litmus_http_json(
@@ -2867,6 +2983,8 @@ def litmus_http_json(
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8")
         raise HaaCError(f"Litmus API request failed: {method} {url}\n{detail}") from exc
+    except (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError, TimeoutError, OSError) as exc:
+        raise HaaCError(f"Litmus API request failed: {method} {url}\n{exc}") from exc
     try:
         return json.loads(body)
     except json.JSONDecodeError as exc:
@@ -3513,45 +3631,48 @@ def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, 
             "@127.0.0.1:27017/admin?authSource=admin"
         )
 
-        with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as auth_pf, kubectl_port_forward(
-            kubectl, session_kubeconfig, "chaos", "svc/litmus-server-service", server_port
-        ) as server_pf:
-            login = litmus_auth_login(auth_pf, username, password)
-            project_id = str(login["projectID"])
-            token = str(login["accessToken"])
+        def reconcile_chaos_api() -> None:
+            with kubectl_port_forward(kubectl, session_kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as auth_pf, kubectl_port_forward(
+                kubectl, session_kubeconfig, "chaos", "svc/litmus-server-service", server_port
+            ) as server_pf:
+                login = litmus_auth_login(auth_pf, username, password)
+                project_id = str(login["projectID"])
+                token = str(login["accessToken"])
 
-            environments = litmus_list_environments(server_pf, token, project_id)
-            targets = select_litmus_reconcile_targets(environments)
-            active_infra_id = ""
-            for environment_id, environment_name, should_create_environment in targets:
-                active_infra = reconcile_litmus_environment_target(
+                environments = litmus_list_environments(server_pf, token, project_id)
+                targets = select_litmus_reconcile_targets(environments)
+                active_infra_id = ""
+                for environment_id, environment_name, should_create_environment in targets:
+                    active_infra = reconcile_litmus_environment_target(
+                        server_pf,
+                        token,
+                        project_id,
+                        environment_id,
+                        environment_name,
+                        should_create_environment=should_create_environment,
+                        kubectl=kubectl,
+                        kubeconfig=session_kubeconfig,
+                    )
+                    resolved_infra_id = str(active_infra.get("infraID") or "").strip()
+                    if resolved_infra_id:
+                        active_infra_id = resolved_infra_id
+                if any(str(item.get("environmentID") or "") == LITMUS_LEGACY_ENVIRONMENT_ID for item in environments):
+                    if litmus_hide_legacy_environment(kubectl, session_kubeconfig, mongo_uri, username=username):
+                        print("[ok] Litmus legacy test environment hidden after canonical environment bootstrap")
+                    else:
+                        print("[ok] Litmus legacy test environment already hidden")
+                if not active_infra_id:
+                    raise HaaCError("Litmus chaos reconciliation did not resolve an active infra ID for the default environment")
+                ensure_litmus_chaos_catalog(
                     server_pf,
                     token,
                     project_id,
-                    environment_id,
-                    environment_name,
-                    should_create_environment=should_create_environment,
+                    infra_id=active_infra_id,
                     kubectl=kubectl,
                     kubeconfig=session_kubeconfig,
                 )
-                resolved_infra_id = str(active_infra.get("infraID") or "").strip()
-                if resolved_infra_id:
-                    active_infra_id = resolved_infra_id
-            if any(str(item.get("environmentID") or "") == LITMUS_LEGACY_ENVIRONMENT_ID for item in environments):
-                if litmus_hide_legacy_environment(kubectl, session_kubeconfig, mongo_uri, username=username):
-                    print("[ok] Litmus legacy test environment hidden after canonical environment bootstrap")
-                else:
-                    print("[ok] Litmus legacy test environment already hidden")
-            if not active_infra_id:
-                raise HaaCError("Litmus chaos reconciliation did not resolve an active infra ID for the default environment")
-            ensure_litmus_chaos_catalog(
-                server_pf,
-                token,
-                project_id,
-                infra_id=active_infra_id,
-                kubectl=kubectl,
-                kubeconfig=session_kubeconfig,
-            )
+
+        retry_litmus_transient(reconcile_chaos_api, context="Litmus chaos API reconciliation")
 
 
 def litmus_clear_initial_login(
@@ -3626,8 +3747,11 @@ def reconcile_litmus_admin_session(kubectl: str, kubeconfig: Path, *, username: 
         "@127.0.0.1:27017/admin?authSource=admin"
     )
 
-    with kubectl_port_forward(kubectl, kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
-        status, _ = litmus_login_probe(port, username, password)
+    def login_probe_status() -> tuple[int, str]:
+        with kubectl_port_forward(kubectl, kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
+            return litmus_login_probe(port, username, password)
+
+    status, _ = retry_litmus_transient(login_probe_status, context="Litmus admin login probe")
     if status not in {200, 401}:
         raise HaaCError(f"Unexpected Litmus login probe status before repair: {status}")
     if status == 401:
@@ -3663,8 +3787,7 @@ def reconcile_litmus_admin_session(kubectl: str, kubeconfig: Path, *, username: 
                 "--timeout=180s",
             ]
         )
-        with kubectl_port_forward(kubectl, kubeconfig, "chaos", "svc/litmus-auth-server-service", auth_port) as port:
-            status, _ = litmus_login_probe(port, username, password)
+        status, _ = retry_litmus_transient(login_probe_status, context="Litmus admin login probe after repair")
         if status != 200:
             raise HaaCError(f"Litmus admin credentials still failed after repair: login probe returned {status}")
         print("[ok] Litmus admin credentials reconciled from the repo-managed secret")
@@ -4679,6 +4802,8 @@ def cmd_check_env(_: argparse.Namespace) -> None:
             "AUTHELIA_ADMIN_PASSWORD",
             "GRAFANA_ADMIN_PASSWORD",
             "LITMUS_ADMIN_PASSWORD",
+            "LITMUS_MONGODB_ROOT_PASSWORD",
+            "LITMUS_MONGODB_REPLICA_SET_KEY",
             "SEMAPHORE_ADMIN_PASSWORD",
             "QUI_PASSWORD",
         ],

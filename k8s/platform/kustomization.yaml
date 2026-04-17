@@ -4,6 +4,7 @@ resources:
   - argocd
   - applications
   - chaos/litmus-admin-credentials-sealed-secret.yaml
+  - chaos/litmus-mongodb-credentials-sealed-secret.yaml
   - falco-ingest-service.yaml
   - observability
   - traefik/traefik-gateway-rbac.yaml

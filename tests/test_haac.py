@@ -236,6 +236,43 @@ class TaskRunStreamingTests(unittest.TestCase):
         fake_print.assert_any_call("TASK: two\n", end="")
 
 
+class UpFailureSummaryTests(unittest.TestCase):
+    def test_emit_up_failure_summary_preserves_explicit_recovery_lines(self) -> None:
+        lines = [
+            "task: [configure-os] python scripts/haac.py run-ansible",
+            "[recovery] Failing phase: GitOps readiness",
+            "[recovery] Last verified phase: GitOps publication",
+            "[recovery] Full rerun guidance: Retry GitOps post-install after fixing the failing app.",
+        ]
+
+        with mock.patch("builtins.print") as fake_print:
+            haac.emit_up_failure_summary(lines)
+
+        fake_print.assert_any_call("[recovery] Failing phase: GitOps readiness", file=haac.sys.stderr)
+        fake_print.assert_any_call("[recovery] Last verified phase: GitOps publication", file=haac.sys.stderr)
+        fake_print.assert_any_call(
+            "[recovery] Full rerun guidance: Retry GitOps post-install after fixing the failing app.",
+            file=haac.sys.stderr,
+        )
+
+    def test_emit_up_failure_summary_handles_nested_gitops_tasks_monotonically(self) -> None:
+        lines = [
+            "task: [preflight] task: check-env",
+            "task: [configure-os] python scripts/haac.py run-ansible",
+            "task: [internal:push-changes] python scripts/haac.py push-changes",
+            "task: [internal:wait-for-argocd-sync] python scripts/haac.py wait-for-stack",
+            "task: [security:post-install] python scripts/haac.py run-ansible --playbook ansible/maintenance-security-playbook.yml",
+            "task: [check-env] python scripts/haac.py check-env",
+            "task: [chaos:post-install] python scripts/haac.py reconcile-litmus-chaos",
+        ]
+
+        with mock.patch("builtins.print") as fake_print:
+            haac.emit_up_failure_summary(lines)
+
+        fake_print.assert_any_call("[recovery] Failing phase: GitOps readiness", file=haac.sys.stderr)
+        fake_print.assert_any_call("[recovery] Last verified phase: GitOps publication", file=haac.sys.stderr)
+
+
 class KnownHostsRefreshTests(unittest.TestCase):
     def test_cluster_node_hosts_strips_cidr_and_preserves_worker_order(self) -> None:
         env = {
@@ -318,6 +355,7 @@ class GitopsStagePathTests(unittest.TestCase):
         self.assertIn(str(haac.SECRETS_DIR), stage_paths)
         self.assertIn(str(haac.ARGOCD_OIDC_SECRET_OUTPUT), stage_paths)
         self.assertIn(str(haac.LITMUS_ADMIN_SECRET_OUTPUT), stage_paths)
+        self.assertIn(str(haac.LITMUS_MONGODB_SECRET_OUTPUT), stage_paths)
         self.assertIn(str(haac.VALUES_OUTPUT), stage_paths)
 
 
@@ -727,6 +765,22 @@ class LitmusChaosCatalogTests(unittest.TestCase):
 
 
 class LitmusBootstrapRecoveryTests(unittest.TestCase):
+    def test_retry_litmus_transient_retries_remote_disconnect_then_succeeds(self) -> None:
+        attempts: list[str] = []
+
+        def flaky_action() -> str:
+            attempts.append("x")
+            if len(attempts) == 1:
+                raise haac.HaaCError("Remote end closed connection without response")
+            return "ok"
+
+        with mock.patch.object(haac.time, "sleep") as sleep_mock:
+            result = haac.retry_litmus_transient(flaky_action, context="Litmus demo action", attempts=3, sleep_seconds=2)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(attempts), 2)
+        sleep_mock.assert_called_once_with(2)
+
     def test_wait_for_litmus_core_rollout_checks_auth_and_server(self) -> None:
         with mock.patch.object(haac, "run") as run_mock:
             haac.wait_for_litmus_core_rollout("kubectl", Path("demo-kubeconfig"))

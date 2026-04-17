@@ -148,6 +148,7 @@ The minimum `.env` inputs for `task up` are grouped into three surfaces:
 - operator identity defaults: `HAAC_MAIN_USERNAME`, `HAAC_MAIN_PASSWORD`, `HAAC_MAIN_EMAIL`, `HAAC_MAIN_NAME`
 - optional downloader credential sharing: `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS`
 - downloader local auth: `QBITTORRENT_USERNAME`, `QUI_PASSWORD`
+- Litmus MongoDB backend: `LITMUS_MONGODB_ROOT_PASSWORD`, `LITMUS_MONGODB_REPLICA_SET_KEY`
 
 The main operator identity is the default login layer for local Authelia auth, ArgoCD local auth, Grafana local admin, Semaphore admin, and Litmus admin. The downloader local auth stays explicit by default. If you want one main username/password across qBittorrent and QUI too, set `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true` and leave the dedicated downloader vars unset, or override them explicitly if you need separate values.
 
@@ -158,6 +159,7 @@ The supported login model is:
 - `HAAC_MAIN_*`: default human operator identity for Authelia, ArgoCD, Grafana, Semaphore, and Litmus
 - `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true`: optional opt-in to let qBittorrent and QUI inherit `HAAC_MAIN_*`
 - `QBITTORRENT_USERNAME` and `QUI_PASSWORD`: dedicated downloader auth when you want a lower-trust boundary
+- `LITMUS_MONGODB_ROOT_PASSWORD` and `LITMUS_MONGODB_REPLICA_SET_KEY`: stable technical secrets for the Litmus MongoDB subchart; pin them so Argo/Helm do not rotate the replica-set secret on every render
 - `*_OIDC_SECRET`, `*_COOKIE_*`, DB passwords, encryption keys: opaque bootstrap secrets that must stay separate from the human login defaults
 
 `LXC_PASSWORD` remains the documented password source of truth. Supporting `scripts/haac.py` bootstrap commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
