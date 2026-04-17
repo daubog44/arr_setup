@@ -1,0 +1,95 @@
+version: "3"
+
+vars:
+  PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
+  TOFU_DIR: '{{default "tofu" .TOFU_DIR}}'
+  DOMAIN_NAME_VALUE:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name DOMAIN_NAME'
+  KUBECTL:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name kubectl'
+  HELM:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name helm'
+  K3S_KUBECONFIG:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" kubeconfig-path'
+  MASTER_IP:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_ip --default 127.0.0.1'
+  PROXMOX_HOST:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" proxmox-access-host'
+
+tasks:
+  gitops-bootstrap:
+    desc: Internal GitOps bootstrap orchestration up to staged ArgoCD health.
+    cmds:
+      - task: generate-secrets
+      - task: push-changes
+      - task: deploy-argocd
+      - task: wait-for-argocd-sync
+
+  verify-all:
+    desc: Internal cluster and public-surface verification chain.
+    cmds:
+      - task: verify-cluster
+      - task: repair-litmus-admin
+      - task: repair-litmus-chaos
+      - task: verify-endpoints
+      - task: verify-browser-auth
+
+  deploy-argocd:
+    desc: Apply the ArgoCD app manifests with DOMAIN_NAME substitution.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" deploy-argocd --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  generate-secrets:
+    desc: Fetch the Sealed Secrets public cert, hydrate templates, and regenerate local Sealed Secrets.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" generate-secrets --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  push-changes:
+    desc: Regenerate sealed secrets from the cached cert, then push only the GitOps source of truth without performing Git merge policy.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" push-changes --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  wait-for-argocd-sync:
+    desc: Wait through staged ArgoCD root/platform/workload gates and the critical downloader readiness gate.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" wait-for-stack --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --timeout 3600'
+
+  verify-cluster:
+    desc: Run cluster-level checks over the remote K3s API.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" verify-cluster --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  verify-endpoints:
+    desc: Check the public HTTP endpoints exposed through Cloudflare and Traefik, reporting full versus partial success.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" verify-web --domain "{{.DOMAIN_NAME_VALUE}}"'
+
+  repair-litmus-admin:
+    desc: Reconcile the Litmus admin account from the repo-managed secret when the persisted MongoDB state drifted.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-litmus-admin --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  repair-litmus-chaos:
+    desc: Reconcile a usable Litmus environment and default chaos infrastructure without manual YAML apply.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-litmus-chaos --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  verify-browser-auth:
+    desc: Run browser-level auth verification for the official public UI surface using the repo-local Playwright verifier.
+    cmds:
+      - 'node "scripts/verify-public-auth.mjs"'
+
+  sync-cloudflare:
+    desc: Reconcile Cloudflare Tunnel ingress rules and the required DNS records.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" sync-cloudflare --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  configure-apps:
+    desc: Manual fallback bootstrap for QUI and qBittorrent when the in-cluster bootstrap Job must be retriggered explicitly.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" configure-apps --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  configure-argocd-local-auth:
+    desc: Optionally configure a local ArgoCD username/password fallback on top of the declarative OIDC setup.
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" configure-argocd-local-auth --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'

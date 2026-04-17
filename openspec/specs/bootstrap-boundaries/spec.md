@@ -32,3 +32,24 @@ The main orchestration file MUST not own low-level Git state inspection directly
 - **WHEN** the bootstrap path checks repo dirtiness, remote existence, or ref relationships
 - **THEN** the low-level helper logic MUST live in `scripts/haaclib/`
 - **AND** `scripts/haac.py` MUST keep orchestration and operator-facing policy only
+
+### Requirement: Internal bootstrap subtasks live outside the main Taskfile
+
+The main Taskfile MUST keep internal GitOps and post-install orchestration thin.
+
+#### Scenario: internal bootstrap helpers are needed
+
+- **WHEN** `task up` or a related operator-facing task needs lower-level helpers for GitOps publication, ArgoCD waiting, public verification, or post-install repair
+- **THEN** the implementation of those helpers MUST live in a subordinate internal task file or equivalent file-backed orchestration surface
+- **AND** the main `Taskfile.yml` MAY keep only thin compatibility stubs that delegate into that internal boundary
+
+### Requirement: Wrapper entrypoints preserve the staged CLI seam
+
+Wrapper entrypoints MUST preserve the existing task argument contract while the Cobra migration is in progress.
+
+#### Scenario: operator uses a shell wrapper
+
+- **WHEN** an operator runs `.\haac.ps1 <args>` or `sh ./haac.sh <args>`
+- **THEN** the wrapper MUST preserve the existing `task` argument semantics
+- **AND** global Task flags such as `-n` MUST survive the staged Go/Cobra bridge unchanged
+- **AND** it MUST be allowed to prefer the repo-local Go/Cobra entrypoint when available while keeping a Python fallback until the migration is complete

@@ -125,7 +125,7 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 
 ## Task Up Contract
 
-`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline through the same `scripts/haac.py` orchestration layer.
+`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline. The shell wrappers now prefer the repo-local Go/Cobra entrypoint when `go` is available, pass raw Task arguments through unchanged, and fall back to the Python bridge if the staged Go path is unavailable or fails.
 
 That bootstrap path is also the supported rerun path. A partial or previously successful run should be recoverable by rerunning the same command unless the failure output explicitly says manual intervention is required.
 
@@ -268,7 +268,7 @@ That split is deliberate. Cluster-local jobs stay in Kubernetes; infra maintenan
 
 ## Notes
 
-- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by `scripts/haac.py`.
+- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by `scripts/haac.py`, while internal bootstrap subtasks now live under `Taskfile.internal.yml` and the staged Cobra bridge can pass the same Task arguments through unchanged without exposing `internal:*` tasks as part of the supported wrapper surface.
 - `HAAC_KUBECTL_VERSION` controls the local workstation binary. `HAAC_CLUSTER_KUBECTL_IMAGE_TAG` controls the in-cluster helper image. They can differ because image publishing cadence does not always match the official client release cadence.
 - LXC should remain `unprivileged` by default; K3s, GPU, TUN, and eBPF exceptions are centrally gated with env flags.
 - `task up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.

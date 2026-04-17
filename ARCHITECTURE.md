@@ -123,7 +123,7 @@ Kustomize is used where structure and composition help most. Helm is used where 
 
 ## Local Orchestration
 
-The portable control plane for the workstation is `scripts/haac.py`.
+The portable control plane for the workstation is staged: `task up` remains the product surface, wrapper entrypoints can route through the repo-local Go/Cobra CLI while preserving raw Task argument semantics, and Python remains the compatibility bridge for commands that have not been ported yet. The supported wrapper surface remains the public Task contract, not `internal:*` helper tasks.
 
 High-risk reusable helper surfaces are now split out under `scripts/haaclib/` for:
 
