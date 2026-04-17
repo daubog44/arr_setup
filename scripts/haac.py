@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
@@ -56,7 +57,7 @@ VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
 LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
-LITMUS_WORKFLOW_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
+LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
@@ -141,6 +142,13 @@ UP_PHASE_RERUN_GUIDANCE = {
     "Cloudflare publication": "Cluster-side phases stay converged. Fix the Cloudflare issue, then rerun `task up`.",
     "Cluster verification": "Provisioning and publication phases already completed. Fix the cluster-health issue, then rerun `task up`.",
     "Public URL verification": "Earlier phases already converged. Fix the ingress, DNS, TLS, or auth issue, then rerun `task up`.",
+}
+LITMUS_DYNAMIC_METADATA_LABELS = {
+    "workflow_id",
+    "infra_id",
+    "revision_id",
+    "type",
+    "workflows.argoproj.io/controller-instanceid",
 }
 
 
@@ -2903,40 +2911,120 @@ def normalize_multiline_text(value: str) -> str:
     return "\n".join(line.rstrip() for line in value.strip().splitlines())
 
 
-def load_litmus_workflow_catalog(index_path: Path = LITMUS_WORKFLOW_CATALOG_INDEX) -> list[dict[str, str]]:
+def require_path_within(root: Path, candidate: Path, *, description: str) -> Path:
+    resolved_root = root.resolve()
+    resolved_candidate = candidate.resolve()
+    try:
+        resolved_candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise HaaCError(f"{description} escapes the Litmus chaos catalog root: {resolved_candidate}") from exc
+    return resolved_candidate
+
+
+def normalize_string_list(values: object) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise HaaCError(f"Expected a JSON array of strings, got: {values!r}")
+    normalized: list[str] = []
+    for item in values:
+        value = str(item).strip()
+        if value:
+            normalized.append(value)
+    return sorted(dict.fromkeys(normalized))
+
+
+def litmus_catalog_entry_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://nucleoautogenerativo.it/haac/litmus/{name.strip()}"))
+
+
+def canonicalize_litmus_manifest(manifest: str) -> str:
+    raw = manifest.strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return normalize_multiline_text(raw)
+    if not isinstance(payload, dict):
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        labels = metadata.get("labels")
+        if isinstance(labels, dict):
+            for key in LITMUS_DYNAMIC_METADATA_LABELS:
+                labels.pop(key, None)
+            if not labels:
+                metadata.pop("labels", None)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def load_litmus_chaos_catalog(index_path: Path = LITMUS_CHAOS_CATALOG_INDEX) -> list[dict[str, object]]:
+    catalog_root = index_path.parent.resolve()
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise HaaCError(f"Litmus workflow catalog index is missing: {index_path}") from exc
+        raise HaaCError(f"Litmus chaos catalog index is missing: {index_path}") from exc
     except json.JSONDecodeError as exc:
-        raise HaaCError(f"Litmus workflow catalog index is invalid JSON: {index_path}\n{exc}") from exc
+        raise HaaCError(f"Litmus chaos catalog index is invalid JSON: {index_path}\n{exc}") from exc
 
-    templates = payload.get("templates")
-    if not isinstance(templates, list) or not templates:
-        raise HaaCError(f"Litmus workflow catalog index must define a non-empty templates list: {index_path}")
+    experiments = payload.get("experiments")
+    if not isinstance(experiments, list) or not experiments:
+        raise HaaCError(f"Litmus chaos catalog index must define a non-empty experiments list: {index_path}")
 
-    catalog: list[dict[str, str]] = []
-    for item in templates:
+    catalog: list[dict[str, object]] = []
+    for item in experiments:
         if not isinstance(item, dict):
-            raise HaaCError(f"Litmus workflow catalog entry is not an object: {item!r}")
+            raise HaaCError(f"Litmus chaos catalog entry is not an object: {item!r}")
         name = str(item.get("name") or "").strip()
         description = str(item.get("description") or "").strip()
         manifest_name = str(item.get("manifest") or "").strip()
+        source_manifest_name = str(item.get("sourceManifest") or "").strip()
         if not name or not description or not manifest_name:
-            raise HaaCError(f"Litmus workflow catalog entry is missing name, description, or manifest: {item!r}")
-        manifest_path = index_path.parent / manifest_name
+            raise HaaCError(f"Litmus chaos catalog entry is missing name, description, or manifest: {item!r}")
+        manifest_path = require_path_within(catalog_root, index_path.parent / manifest_name, description="Litmus chaos manifest path")
         try:
             manifest = manifest_path.read_text(encoding="utf-8").strip()
         except FileNotFoundError as exc:
-            raise HaaCError(f"Litmus workflow manifest is missing: {manifest_path}") from exc
+            raise HaaCError(f"Litmus chaos manifest is missing: {manifest_path}") from exc
         if not manifest:
-            raise HaaCError(f"Litmus workflow manifest is empty: {manifest_path}")
+            raise HaaCError(f"Litmus chaos manifest is empty: {manifest_path}")
+
+        source_manifest = ""
+        source_manifest_path = ""
+        if source_manifest_name:
+            resolved_source_manifest_path = require_path_within(
+                catalog_root,
+                index_path.parent / source_manifest_name,
+                description="Litmus source manifest path",
+            )
+            try:
+                source_manifest = resolved_source_manifest_path.read_text(encoding="utf-8").strip()
+            except FileNotFoundError as exc:
+                raise HaaCError(f"Litmus source manifest is missing: {resolved_source_manifest_path}") from exc
+            if not source_manifest:
+                raise HaaCError(f"Litmus source manifest is empty: {resolved_source_manifest_path}")
+            source_manifest_path = str(resolved_source_manifest_path)
+
+        supporting_manifest_paths: list[str] = []
+        for manifest_item in normalize_string_list(item.get("supportingManifests")):
+            resolved_supporting_manifest_path = require_path_within(
+                catalog_root,
+                index_path.parent / manifest_item,
+                description="Litmus supporting manifest path",
+            )
+            if not resolved_supporting_manifest_path.exists():
+                raise HaaCError(f"Litmus supporting manifest is missing: {resolved_supporting_manifest_path}")
+            supporting_manifest_paths.append(str(resolved_supporting_manifest_path))
         catalog.append(
             {
                 "name": name,
                 "description": description,
                 "manifest": manifest,
                 "manifest_path": str(manifest_path),
+                "source_manifest": source_manifest,
+                "source_manifest_path": source_manifest_path,
+                "supporting_manifest_paths": supporting_manifest_paths,
+                "tags": normalize_string_list(item.get("tags")),
             }
         )
     return catalog
@@ -3029,81 +3117,146 @@ def litmus_register_infra(server_port: int, token: str, project_id: str, environ
     return registered
 
 
-def litmus_list_workflow_templates(server_port: int, token: str, project_id: str) -> list[dict[str, object]]:
+def litmus_list_experiments(server_port: int, token: str, project_id: str) -> list[dict[str, object]]:
     data = litmus_graphql(
         server_port,
         token,
-        "query ListWorkflowManifests($projectID: String!) { listWorkflowManifests(projectID: $projectID) { templateID manifest templateName templateDescription projectID projectName createdAt isRemoved isCustomWorkflow } }",
-        {"projectID": project_id},
+        (
+            "query listExperiment($projectID: ID!, $request: ListExperimentRequest!) "
+            "{ listExperiment(projectID: $projectID, request: $request) "
+            "{ totalNoOfExperiments experiments { experimentID name description tags experimentManifest infra { infraID } } } }"
+        ),
+        {"projectID": project_id, "request": {}},
     )
-    templates = data.get("listWorkflowManifests") or []
-    return [item for item in templates if isinstance(item, dict)]
+    payload = data.get("listExperiment") or {}
+    experiments = payload.get("experiments") or []
+    return [item for item in experiments if isinstance(item, dict)]
 
 
-def litmus_create_workflow_template(
+def litmus_save_experiment(
     server_port: int,
     token: str,
     *,
     project_id: str,
+    experiment_id: str,
+    infra_id: str,
     name: str,
     description: str,
     manifest: str,
-) -> dict[str, object]:
+    tags: list[str],
+) -> str:
     data = litmus_graphql(
         server_port,
         token,
-        "mutation CreateWorkflowTemplate($request: TemplateInput) { createWorkflowTemplate(request: $request) { templateID manifest templateName templateDescription projectID projectName createdAt isRemoved isCustomWorkflow } }",
+        (
+            "mutation saveChaosExperiment($projectID: ID!, $request: SaveChaosExperimentRequest!) "
+            "{ saveChaosExperiment(request: $request, projectID: $projectID) }"
+        ),
         {
+            "projectID": project_id,
             "request": {
+                "id": experiment_id,
+                "name": name,
+                "description": description,
+                "tags": tags,
+                "infraID": infra_id,
                 "manifest": manifest,
-                "templateName": name,
-                "templateDescription": description,
-                "projectID": project_id,
-                "isCustomWorkflow": True,
-            }
+            },
         },
     )
-    created = data.get("createWorkflowTemplate")
-    if not isinstance(created, dict):
-        raise HaaCError(f"Litmus did not return the created workflow template payload for {name}")
-    return created
+    saved = data.get("saveChaosExperiment")
+    if not isinstance(saved, str) or not saved.strip():
+        raise HaaCError(f"Litmus did not acknowledge the saved chaos experiment payload for {name}")
+    return saved.strip()
 
 
-def ensure_litmus_workflow_catalog(server_port: int, token: str, project_id: str) -> None:
-    catalog = load_litmus_workflow_catalog()
-    existing = litmus_list_workflow_templates(server_port, token, project_id)
+def validate_litmus_supporting_manifest(manifest: str, manifest_path: Path) -> None:
+    if not re.search(r"(?m)^[ \t]*kind:\s*ChaosExperiment\s*$", manifest):
+        raise HaaCError(f"Litmus supporting manifest must define kind ChaosExperiment: {manifest_path}")
+    if not re.search(r"(?m)^[ \t]*namespace:\s*litmus\s*$", manifest):
+        raise HaaCError(f"Litmus supporting manifest must target namespace litmus: {manifest_path}")
+
+
+def ensure_litmus_supporting_manifests(kubectl: str, kubeconfig: Path, catalog: list[dict[str, object]]) -> None:
+    applied: set[str] = set()
+    for entry in catalog:
+        for manifest_path_text in entry.get("supporting_manifest_paths") or []:
+            manifest_path = Path(str(manifest_path_text))
+            if str(manifest_path) in applied:
+                continue
+            manifest = manifest_path.read_text(encoding="utf-8").strip()
+            if not manifest:
+                raise HaaCError(f"Litmus supporting manifest is empty: {manifest_path}")
+            validate_litmus_supporting_manifest(manifest, manifest_path)
+            run([kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"], input_text=manifest)
+            applied.add(str(manifest_path))
+            print(f"[ok] Litmus supporting manifest applied: {manifest_path.name}")
+
+
+def ensure_litmus_chaos_catalog(
+    server_port: int,
+    token: str,
+    project_id: str,
+    *,
+    infra_id: str,
+    kubectl: str,
+    kubeconfig: Path,
+) -> None:
+    catalog = load_litmus_chaos_catalog()
+    ensure_litmus_supporting_manifests(kubectl, kubeconfig, catalog)
+    existing = litmus_list_experiments(server_port, token, project_id)
     existing_by_name: dict[str, dict[str, object]] = {}
     for item in existing:
-        name = str(item.get("templateName") or "").strip()
+        name = str(item.get("name") or "").strip()
         if name and name not in existing_by_name:
             existing_by_name[name] = item
 
     for entry in catalog:
-        name = entry["name"]
-        manifest = entry["manifest"]
-        description = entry["description"]
+        name = str(entry["name"])
+        manifest = str(entry["manifest"])
+        description = str(entry["description"])
+        tags = list(entry.get("tags") or [])
         current = existing_by_name.get(name)
         if current:
-            current_manifest = normalize_multiline_text(str(current.get("manifest") or ""))
-            current_description = str(current.get("templateDescription") or "").strip()
-            if current_manifest == normalize_multiline_text(manifest) and current_description == description:
-                print(f"[ok] Litmus workflow template already seeded: {name}")
-            else:
-                print(
-                    f"[warn] Litmus workflow template drift detected for {name}; "
-                    "keeping the existing portal template because the API does not expose a safe in-place update path"
-                )
+            current_manifest = canonicalize_litmus_manifest(str(current.get("experimentManifest") or ""))
+            current_description = str(current.get("description") or "").strip()
+            current_tags = normalize_string_list(current.get("tags"))
+            current_infra = str(((current.get("infra") or {}).get("infraID") or "")).strip()
+            if (
+                current_manifest == canonicalize_litmus_manifest(manifest)
+                and current_description == description
+                and current_tags == tags
+                and current_infra == infra_id
+            ):
+                print(f"[ok] Litmus chaos experiment already seeded: {name}")
+                continue
+
+            litmus_save_experiment(
+                server_port,
+                token,
+                project_id=project_id,
+                experiment_id=str(current.get("experimentID") or litmus_catalog_entry_id(name)),
+                infra_id=infra_id,
+                name=name,
+                description=description,
+                manifest=manifest,
+                tags=tags,
+            )
+            print(f"[ok] Litmus chaos experiment updated: {name}")
             continue
 
-        litmus_create_workflow_template(
+        litmus_save_experiment(
             server_port,
             token,
             project_id=project_id,
+            experiment_id=litmus_catalog_entry_id(name),
+            infra_id=infra_id,
             name=name,
             description=description,
             manifest=manifest,
+            tags=tags,
         )
-        print(f"[ok] Litmus workflow template seeded: {name}")
+        print(f"[ok] Litmus chaos experiment seeded: {name}")
 
 
 def select_litmus_reconcile_targets(environments: list[dict[str, object]]) -> list[tuple[str, str, bool]]:
@@ -3175,7 +3328,7 @@ def reconcile_litmus_environment_target(
     should_create_environment: bool,
     kubectl: str,
     kubeconfig: Path,
-) -> None:
+) -> dict[str, object]:
     if should_create_environment:
         litmus_create_environment(server_port, token, project_id, environment_id, environment_name)
         print(f"[ok] Litmus default environment created: {environment_name} ({environment_id})")
@@ -3194,7 +3347,7 @@ def reconcile_litmus_environment_target(
             f"[ok] Litmus chaos infrastructure already active: "
             f"{active.get('name')} ({active.get('infraID')}) in {environment_id}"
         )
-        return
+        return active
 
     infra_name = LITMUS_DEFAULT_INFRA_NAME
     stale_default_infras = [
@@ -3222,6 +3375,7 @@ def reconcile_litmus_environment_target(
         f"[ok] Litmus chaos infrastructure active: "
         f"{active.get('name')} ({active.get('infraID') or infra_id}) in {environment_id}"
     )
+    return active
 
 
 def litmus_hide_legacy_environment(
@@ -3287,9 +3441,9 @@ def litmus_hide_legacy_environment(
 def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     username = env.get("LITMUS_ADMIN_USERNAME", "admin")
-    password = env.get("LITMUS_ADMIN_PASSWORD") or env.get("AUTHELIA_ADMIN_PASSWORD")
+    password = env.get("LITMUS_ADMIN_PASSWORD")
     if not password:
-        print("[skip] Litmus chaos reconciliation skipped: no LITMUS_ADMIN_PASSWORD or AUTHELIA_ADMIN_PASSWORD configured")
+        print("[skip] Litmus chaos reconciliation skipped: no LITMUS_ADMIN_PASSWORD configured")
         return
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
@@ -3345,8 +3499,9 @@ def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, 
 
             environments = litmus_list_environments(server_pf, token, project_id)
             targets = select_litmus_reconcile_targets(environments)
+            active_infra_id = ""
             for environment_id, environment_name, should_create_environment in targets:
-                reconcile_litmus_environment_target(
+                active_infra = reconcile_litmus_environment_target(
                     server_pf,
                     token,
                     project_id,
@@ -3356,12 +3511,24 @@ def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, 
                     kubectl=kubectl,
                     kubeconfig=session_kubeconfig,
                 )
+                resolved_infra_id = str(active_infra.get("infraID") or "").strip()
+                if resolved_infra_id:
+                    active_infra_id = resolved_infra_id
             if any(str(item.get("environmentID") or "") == LITMUS_LEGACY_ENVIRONMENT_ID for item in environments):
                 if litmus_hide_legacy_environment(kubectl, session_kubeconfig, mongo_uri, username=username):
                     print("[ok] Litmus legacy test environment hidden after canonical environment bootstrap")
                 else:
                     print("[ok] Litmus legacy test environment already hidden")
-            ensure_litmus_workflow_catalog(server_pf, token, project_id)
+            if not active_infra_id:
+                raise HaaCError("Litmus chaos reconciliation did not resolve an active infra ID for the default environment")
+            ensure_litmus_chaos_catalog(
+                server_pf,
+                token,
+                project_id,
+                infra_id=active_infra_id,
+                kubectl=kubectl,
+                kubeconfig=session_kubeconfig,
+            )
 
 
 def litmus_clear_initial_login(
@@ -3399,9 +3566,9 @@ def litmus_clear_initial_login(
 def reconcile_litmus_admin(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     username = env.get("LITMUS_ADMIN_USERNAME", "admin")
-    password = env.get("LITMUS_ADMIN_PASSWORD") or env.get("AUTHELIA_ADMIN_PASSWORD")
+    password = env.get("LITMUS_ADMIN_PASSWORD")
     if not password:
-        print("[skip] Litmus admin reconciliation skipped: no LITMUS_ADMIN_PASSWORD or AUTHELIA_ADMIN_PASSWORD configured")
+        print("[skip] Litmus admin reconciliation skipped: no LITMUS_ADMIN_PASSWORD configured")
         return
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:

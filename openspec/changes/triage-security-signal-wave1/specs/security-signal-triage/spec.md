@@ -15,3 +15,15 @@ The operator surface MUST distinguish between repo-managed security defects that
 - **WHEN** Trivy reports policy-style findings for workloads in namespaces intentionally labeled `pod-security.kubernetes.io/enforce=privileged`
 - **THEN** the operator surface MAY classify those findings as expected homelab tradeoffs
 - **AND** that classification MUST NOT disable vulnerability scanning for published workloads
+
+#### Scenario: Historical rollout residue is separated from active defects
+
+- **WHEN** Kyverno failures remain only on zero-replica ReplicaSets from pre-fix rollouts
+- **THEN** the operator surface MAY classify those failures as migration residue instead of active workload defects
+- **AND** the live cleanup path MAY delete that zero-replica rollout history to restore an accurate Policy Reporter surface
+
+#### Scenario: Published-service CVE concentration opens a remediation wave
+
+- **WHEN** Trivy shows critical or high CVEs concentrated on repo-managed published services
+- **THEN** the triage process MUST open a dedicated remediation change for those images
+- **AND** it MUST NOT hide, suppress, or disable the vulnerability reports as a substitute for remediation planning

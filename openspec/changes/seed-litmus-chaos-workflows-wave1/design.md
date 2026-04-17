@@ -8,25 +8,27 @@ The existing `reconcile_litmus_chaos()` path is already the canonical imperative
 
 The first catalog will stay deliberately small and low-blast-radius:
 
-- a management-path pod-delete template for `homepage`
-- a notification-path pod-delete template for `ntfy`
-- a media-path pod-delete template for `radarr`
+- a management-path pod-delete experiment for `homepage`
+- a notification-path pod-delete experiment for `ntfy`
+- a media-path pod-delete experiment for `radarr`
 
-These templates will be preconfigured and visible in ChaosCenter, but they will not be auto-scheduled. The operator can choose when to run them from the Litmus UI.
+These experiments will be preconfigured and visible in ChaosCenter, but they will not be auto-scheduled. The operator can choose when to run them from the Litmus UI.
 
 ### Upstream experiment manifests
 
-The workflow templates depend on the upstream Litmus pod-delete experiment bundle. The repo will therefore vendor the minimal upstream experiment manifest required for `pod-delete` and apply it into the Litmus control namespace during the same reconcile path.
+The saved experiments depend on the upstream Litmus pod-delete experiment bundle. The repo will therefore vendor the minimal upstream `ChaosExperiment` manifest required for `pod-delete` and apply it into the Litmus control namespace during the same reconcile path.
+
+Wave1 treats those supporting `ChaosExperiment` objects as intentionally imperative bootstrap state. They are validated as catalog-local `ChaosExperiment` manifests targeting the `litmus` namespace, but they are not pruned automatically if an entry is removed from the catalog later.
 
 ### API contract
 
-Official ChaosCenter GraphQL documentation states that:
+The live ChaosCenter build exposed by chart `3.28.0` uses:
 
-- `createWorkflowTemplate` saves a workflow template in the project
-- `listWorkflowManifests` lists the saved templates
-- `manifest` is supplied as an escaped JSON string containing workflow YAML
+- `saveChaosExperiment` to create or update a saved project experiment
+- `listExperiment` to list those saved experiments
+- `manifest` as a JSON string representing a supported object such as `ChaosEngine`
 
-This wave will use that contract to upsert templates by name instead of forcing the user to import YAML through the browser.
+This wave will use that contract to upsert experiments by name instead of forcing the user to import YAML through the browser.
 
 ### Verification
 
@@ -38,5 +40,10 @@ This wave will use that contract to upsert templates by name instead of forcing 
 - `python -m unittest discover -s tests -p "test_haac.py" -v`
 - `kubectl kustomize k8s/platform`
 - `python scripts/haac.py task-run -- reconcile:gitops`
-- live Litmus API verification that the expected templates exist
-- browser verification that Litmus authenticates and reaches an already-seeded workflow surface
+- live Litmus API verification that the expected experiments exist
+- browser verification that Litmus authenticates and reaches an already-seeded experiment surface
+
+### Recovery and rollback
+
+- rerunning `chaos:post-install` or `reconcile-litmus-chaos` is the supported recovery path for failed or partial experiment seeding
+- removing a catalog entry in wave1 does not auto-delete the already-saved Litmus experiment or supporting `ChaosExperiment`; rollback requires manual deletion in Litmus and/or the `litmus` namespace

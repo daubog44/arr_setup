@@ -15,6 +15,13 @@ spec:
     helm:
       values: |
         replicaCount: 1
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
 
         serviceMonitor:
           enabled: true
@@ -28,9 +35,31 @@ spec:
           enabled: true
           replicaCount: 1
           disableauth: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          initContainer:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                cpu: 100m
+                memory: 64Mi
           redis:
             enabled: true
             storageEnabled: false
+            resources:
+              requests:
+                cpu: 25m
+                memory: 64Mi
+              limits:
+                cpu: 200m
+                memory: 256Mi
 
   destination:
     server: https://kubernetes.default.svc

@@ -2,9 +2,10 @@
 
 ### Severity model
 
-This wave will treat security findings in three buckets:
+This wave will treat security findings in four buckets:
 
 - **Urgent and fix now**: repo-managed workloads in `baseline` or `restricted` namespaces that violate the current Kyverno baseline, plus custom Falco rules that create alert floods.
+- **Urgent migration residue**: zero-replica historical ReplicaSets from pre-fix rollouts that keep Kyverno Policy Reporter red even after the active workload has become compliant.
 - **Actionable but not blanket-fixed in this wave**: Trivy image CVEs on user-facing workloads where newer image tags or vendor fixes may exist, but the remediation path needs controlled upgrades rather than blind image churn.
 - **Expected homelab tradeoff noise**: policy-style findings produced by Trivy against namespaces intentionally labeled `pod-security.kubernetes.io/enforce=privileged`, where the repo has already declared an exception model.
 
@@ -12,11 +13,13 @@ This wave will treat security findings in three buckets:
 
 The current baseline already requires requests and limits in `baseline` and `restricted` namespaces. Instead of weakening that policy, this wave will patch the repo-managed workloads that currently violate it:
 
-- Argo CD control-plane components in `argocd`
-- Falcosidekick, Falcosidekick UI, and Trivy Operator in `security`
-- Litmus MongoDB and its arbiter in `chaos`
+- Argo CD control-plane components in `argocd`, with the active defect narrowed to the `argocd-redis` init-container path
+- Falcosidekick and Falcosidekick UI in `security`
+- Litmus MongoDB in `chaos`
 
 The resource shapes will be conservative so the single-master control plane remains within the capacity work already completed.
+
+Because Policy Reporter also scans historical rollout objects, the live cleanup path for this wave may delete zero-replica ReplicaSets that were generated before the resource patches existed. That cleanup is migration-only residue handling, not a weakening of the policy baseline.
 
 ### Falco noise reduction
 
@@ -32,7 +35,9 @@ Trivy vulnerability scanning remains enabled. This wave only changes the policy-
 - record only failed config-audit and RBAC-style checks
 - keep the scanner scope unchanged for now so the operator can still see CVEs on published workloads
 
-This preserves real CVE visibility while making Grafana and Policy Reporter counts closer to “things to fix” instead of “all checks ever recorded”.
+This preserves real CVE visibility while making Grafana and Policy Reporter counts closer to things to fix instead of all checks ever recorded.
+
+The remaining image CVE backlog is not treated as noise. When triage shows that critical or high counts are concentrated on repo-managed published services, this wave must open a separate remediation change instead of silently accepting the backlog.
 
 ### Verification
 
@@ -47,5 +52,6 @@ This preserves real CVE visibility while making Grafana and Policy Reporter coun
 - `kubectl kustomize k8s/platform`
 - `kubectl kustomize k8s/workloads`
 - `python scripts/haac.py task-run -- reconcile:gitops`
-- live cluster check that Kyverno failures for requests/limits are cleared in `argocd`, `security`, and `chaos`
+- live cluster check that active Kyverno failures for requests/limits are cleared in `argocd`, `security`, and `chaos`
+- one-time live cleanup of zero-replica historical ReplicaSets if those older rollout objects are the only remaining source of Kyverno failures
 - browser validation for Grafana, Falco, and Kyverno

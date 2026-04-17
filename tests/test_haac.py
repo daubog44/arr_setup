@@ -497,19 +497,27 @@ class PushChangesTests(unittest.TestCase):
         self.assertIn(["git", "reset", "--mixed", "HEAD~1"], run_calls)
 
 
-class LitmusWorkflowCatalogTests(unittest.TestCase):
-    def test_load_litmus_workflow_catalog_reads_index_and_manifests(self) -> None:
+class LitmusChaosCatalogTests(unittest.TestCase):
+    def test_load_litmus_chaos_catalog_reads_manifests_and_supporting_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             catalog_dir = Path(temp_dir)
-            (catalog_dir / "workflow.yaml").write_text("apiVersion: argoproj.io/v1alpha1\nkind: Workflow\n", encoding="utf-8")
+            (catalog_dir / "workflow.json").write_text('{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine"}', encoding="utf-8")
+            (catalog_dir / "workflow.yaml").write_text("apiVersion: litmuschaos.io/v1alpha1\nkind: ChaosEngine\n", encoding="utf-8")
+            (catalog_dir / "pod-delete-chaosexperiment.yaml").write_text(
+                "apiVersion: litmuschaos.io/v1alpha1\nkind: ChaosExperiment\n",
+                encoding="utf-8",
+            )
             (catalog_dir / "catalog.json").write_text(
                 json.dumps(
                     {
-                        "templates": [
+                        "experiments": [
                             {
                                 "name": "demo-chaos",
                                 "description": "Demo workflow",
-                                "manifest": "workflow.yaml",
+                                "manifest": "workflow.json",
+                                "sourceManifest": "workflow.yaml",
+                                "supportingManifests": ["pod-delete-chaosexperiment.yaml"],
+                                "tags": ["haac", "demo"],
                             }
                         ]
                     }
@@ -517,76 +525,203 @@ class LitmusWorkflowCatalogTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            catalog = haac.load_litmus_workflow_catalog(catalog_dir / "catalog.json")
+            catalog = haac.load_litmus_chaos_catalog(catalog_dir / "catalog.json")
 
         self.assertEqual(len(catalog), 1)
         self.assertEqual(catalog[0]["name"], "demo-chaos")
         self.assertEqual(catalog[0]["description"], "Demo workflow")
-        self.assertIn("kind: Workflow", catalog[0]["manifest"])
-        self.assertTrue(catalog[0]["manifest_path"].endswith("workflow.yaml"))
+        self.assertIn('"kind":"ChaosEngine"', catalog[0]["manifest"])
+        self.assertIn("kind: ChaosEngine", catalog[0]["source_manifest"])
+        self.assertTrue(catalog[0]["manifest_path"].endswith("workflow.json"))
+        self.assertTrue(catalog[0]["source_manifest_path"].endswith("workflow.yaml"))
+        self.assertEqual(
+            catalog[0]["supporting_manifest_paths"],
+            [str(catalog_dir / "pod-delete-chaosexperiment.yaml")],
+        )
+        self.assertEqual(catalog[0]["tags"], ["demo", "haac"])
 
-    def test_ensure_litmus_workflow_catalog_seeds_missing_templates(self) -> None:
+    def test_load_litmus_chaos_catalog_rejects_supporting_manifest_path_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            catalog_dir = Path(temp_dir)
+            escaped_manifest = catalog_dir.parent / "escape.yaml"
+            escaped_manifest.write_text("apiVersion: litmuschaos.io/v1alpha1\nkind: ChaosExperiment\nmetadata:\n  namespace: litmus\n", encoding="utf-8")
+            (catalog_dir / "workflow.json").write_text('{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine"}', encoding="utf-8")
+            (catalog_dir / "catalog.json").write_text(
+                json.dumps(
+                    {
+                        "experiments": [
+                            {
+                                "name": "demo-chaos",
+                                "description": "Demo workflow",
+                                "manifest": "workflow.json",
+                                "supportingManifests": ["..\\escape.yaml"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(haac.HaaCError, "escapes the Litmus chaos catalog root"):
+                haac.load_litmus_chaos_catalog(catalog_dir / "catalog.json")
+
+    def test_ensure_litmus_supporting_manifests_dedupes_and_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            catalog_dir = Path(temp_dir)
+            support = catalog_dir / "pod-delete-chaosexperiment.yaml"
+            support.write_text(
+                "apiVersion: litmuschaos.io/v1alpha1\nkind: ChaosExperiment\nmetadata:\n  name: pod-delete\n  namespace: litmus\n",
+                encoding="utf-8",
+            )
+            catalog = [
+                {"supporting_manifest_paths": [str(support)]},
+                {"supporting_manifest_paths": [str(support)]},
+            ]
+
+            with mock.patch.object(haac, "run") as run_mock:
+                haac.ensure_litmus_supporting_manifests("kubectl", Path("demo-kubeconfig"), catalog)
+
+        run_mock.assert_called_once_with(
+            ["kubectl", "--kubeconfig", "demo-kubeconfig", "apply", "-f", "-"],
+            input_text="apiVersion: litmuschaos.io/v1alpha1\nkind: ChaosExperiment\nmetadata:\n  name: pod-delete\n  namespace: litmus",
+        )
+
+    def test_ensure_litmus_supporting_manifests_rejects_non_chaosexperiment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            support = Path(temp_dir) / "bad.yaml"
+            support.write_text(
+                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: bad\n  namespace: litmus\n",
+                encoding="utf-8",
+            )
+            catalog = [{"supporting_manifest_paths": [str(support)]}]
+
+            with self.assertRaisesRegex(haac.HaaCError, "must define kind ChaosExperiment"):
+                haac.ensure_litmus_supporting_manifests("kubectl", Path("demo-kubeconfig"), catalog)
+
+    def test_ensure_litmus_chaos_catalog_seeds_missing_experiments(self) -> None:
         catalog = [
             {
                 "name": "demo-chaos",
                 "description": "Demo workflow",
-                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
+                "manifest": '{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos"}}',
+                "supporting_manifest_paths": [],
+                "tags": ["demo", "haac"],
             }
         ]
 
-        with mock.patch.object(haac, "load_litmus_workflow_catalog", return_value=catalog):
-            with mock.patch.object(haac, "litmus_list_workflow_templates", return_value=[]):
-                with mock.patch.object(haac, "litmus_create_workflow_template", return_value={"templateID": "123"}) as create_template:
-                    with mock.patch("builtins.print") as fake_print:
-                        haac.ensure_litmus_workflow_catalog(9002, "token", "project")
+        with mock.patch.object(haac, "load_litmus_chaos_catalog", return_value=catalog):
+            with mock.patch.object(haac, "ensure_litmus_supporting_manifests") as ensure_support:
+                with mock.patch.object(haac, "litmus_list_experiments", return_value=[]):
+                    with mock.patch.object(haac, "litmus_save_experiment", return_value="saved") as save_experiment:
+                        with mock.patch("builtins.print") as fake_print:
+                            haac.ensure_litmus_chaos_catalog(
+                                9002,
+                                "token",
+                                "project",
+                                infra_id="infra-1",
+                                kubectl="kubectl",
+                                kubeconfig=Path("demo-kubeconfig"),
+                            )
 
-        create_template.assert_called_once_with(
+        ensure_support.assert_called_once_with("kubectl", Path("demo-kubeconfig"), catalog)
+        save_experiment.assert_called_once_with(
             9002,
             "token",
             project_id="project",
+            experiment_id=haac.litmus_catalog_entry_id("demo-chaos"),
+            infra_id="infra-1",
             name="demo-chaos",
             description="Demo workflow",
-            manifest="apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
+            manifest='{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos"}}',
+            tags=["demo", "haac"],
         )
-        fake_print.assert_any_call("[ok] Litmus workflow template seeded: demo-chaos")
+        fake_print.assert_any_call("[ok] Litmus chaos experiment seeded: demo-chaos")
 
-    def test_ensure_litmus_workflow_catalog_keeps_matching_or_drifting_templates_without_recreate(self) -> None:
-        matching_catalog = [
+    def test_ensure_litmus_chaos_catalog_keeps_matching_experiments_without_update(self) -> None:
+        catalog = [
             {
                 "name": "demo-chaos",
                 "description": "Demo workflow",
-                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow\n",
-            },
-            {
-                "name": "drifted-chaos",
-                "description": "Expected description",
-                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow\nmetadata:\n  name: expected\n",
+                "manifest": '{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos","labels":{"workflow_id":"dynamic","revision_id":"dynamic","infra_id":"infra-1"}}}',
+                "supporting_manifest_paths": [],
+                "tags": ["demo", "haac"],
             },
         ]
         existing = [
             {
-                "templateName": "demo-chaos",
-                "templateDescription": "Demo workflow",
-                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow",
-            },
-            {
-                "templateName": "drifted-chaos",
-                "templateDescription": "Portal description",
-                "manifest": "apiVersion: argoproj.io/v1alpha1\nkind: Workflow\nmetadata:\n  name: portal\n",
+                "experimentID": "exp-1",
+                "name": "demo-chaos",
+                "description": "Demo workflow",
+                "tags": ["haac", "demo"],
+                "experimentManifest": '{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos","labels":{"workflow_id":"server","revision_id":"server","infra_id":"infra-1"}}}',
+                "infra": {"infraID": "infra-1"},
             },
         ]
 
-        with mock.patch.object(haac, "load_litmus_workflow_catalog", return_value=matching_catalog):
-            with mock.patch.object(haac, "litmus_list_workflow_templates", return_value=existing):
-                with mock.patch.object(haac, "litmus_create_workflow_template") as create_template:
-                    with mock.patch("builtins.print") as fake_print:
-                        haac.ensure_litmus_workflow_catalog(9002, "token", "project")
+        with mock.patch.object(haac, "load_litmus_chaos_catalog", return_value=catalog):
+            with mock.patch.object(haac, "ensure_litmus_supporting_manifests"):
+                with mock.patch.object(haac, "litmus_list_experiments", return_value=existing):
+                    with mock.patch.object(haac, "litmus_save_experiment") as save_experiment:
+                        with mock.patch("builtins.print") as fake_print:
+                            haac.ensure_litmus_chaos_catalog(
+                                9002,
+                                "token",
+                                "project",
+                                infra_id="infra-1",
+                                kubectl="kubectl",
+                                kubeconfig=Path("demo-kubeconfig"),
+                            )
 
-        create_template.assert_not_called()
-        fake_print.assert_any_call("[ok] Litmus workflow template already seeded: demo-chaos")
-        fake_print.assert_any_call(
-            "[warn] Litmus workflow template drift detected for drifted-chaos; keeping the existing portal template because the API does not expose a safe in-place update path"
+        save_experiment.assert_not_called()
+        fake_print.assert_any_call("[ok] Litmus chaos experiment already seeded: demo-chaos")
+
+    def test_ensure_litmus_chaos_catalog_updates_drifted_experiments(self) -> None:
+        catalog = [
+            {
+                "name": "demo-chaos",
+                "description": "Expected description",
+                "manifest": '{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos"}}',
+                "supporting_manifest_paths": [],
+                "tags": ["demo", "haac"],
+            }
+        ]
+        existing = [
+            {
+                "experimentID": "exp-1",
+                "name": "demo-chaos",
+                "description": "Portal description",
+                "tags": ["haac"],
+                "experimentManifest": '{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos"}}',
+                "infra": {"infraID": "infra-old"},
+            }
+        ]
+
+        with mock.patch.object(haac, "load_litmus_chaos_catalog", return_value=catalog):
+            with mock.patch.object(haac, "ensure_litmus_supporting_manifests"):
+                with mock.patch.object(haac, "litmus_list_experiments", return_value=existing):
+                    with mock.patch.object(haac, "litmus_save_experiment", return_value="updated") as save_experiment:
+                        with mock.patch("builtins.print") as fake_print:
+                            haac.ensure_litmus_chaos_catalog(
+                                9002,
+                                "token",
+                                "project",
+                                infra_id="infra-1",
+                                kubectl="kubectl",
+                                kubeconfig=Path("demo-kubeconfig"),
+                            )
+
+        save_experiment.assert_called_once_with(
+            9002,
+            "token",
+            project_id="project",
+            experiment_id="exp-1",
+            infra_id="infra-1",
+            name="demo-chaos",
+            description="Expected description",
+            manifest='{"apiVersion":"litmuschaos.io/v1alpha1","kind":"ChaosEngine","metadata":{"name":"demo-chaos"}}',
+            tags=["demo", "haac"],
         )
+        fake_print.assert_any_call("[ok] Litmus chaos experiment updated: demo-chaos")
 
 
 class CleanLocalArtifactsTests(unittest.TestCase):
