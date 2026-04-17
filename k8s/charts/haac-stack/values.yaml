@@ -340,6 +340,17 @@ ingresses:
     homepage_name: Falco
     homepage_icon: mdi-shield-bug-outline
     homepage_description: Runtime Security
+  kyverno:
+    enabled: true
+    subdomain: kyverno
+    service: policy-reporter-ui
+    port: 8080
+    namespace: security
+    auth_strategy: edge_forward_auth
+    homepage_group: Security
+    homepage_name: Kyverno
+    homepage_icon: mdi-shield-check-outline
+    homepage_description: Policy Reporter
 
 homepage:
   bookmarks:
