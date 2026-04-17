@@ -12,10 +12,13 @@ metadata:
       plus memory limits to keep the single-control-plane cluster predictable. Privileged namespaces
       remain an explicit carve-out.
 spec:
+  admission: true
+  emitWarning: false
   validationFailureAction: Audit
   background: true
   rules:
     - name: validate-resources
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -29,6 +32,7 @@ spec:
                       - baseline
                       - restricted
       validate:
+        allowExistingViolations: true
         message: CPU and memory requests plus memory limits are required in baseline or restricted namespaces.
         pattern:
           spec:

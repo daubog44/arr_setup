@@ -12,10 +12,13 @@ metadata:
       Privileged namespaces are the explicit repo-managed carve-out for workloads that still
       need elevated behavior.
 spec:
+  admission: true
+  emitWarning: false
   validationFailureAction: Enforce
   background: true
   rules:
     - name: privilege-escalation
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -28,6 +31,7 @@ spec:
                     values:
                       - restricted
       validate:
+        allowExistingViolations: true
         message: >-
           Restricted namespaces must set allowPrivilegeEscalation to false for all containers.
         pattern:

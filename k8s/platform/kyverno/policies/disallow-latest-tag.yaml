@@ -12,10 +12,13 @@ metadata:
       relying on the mutable latest tag. Namespaces explicitly labeled
       pod-security.kubernetes.io/enforce=privileged are the documented carve-out.
 spec:
+  admission: true
+  emitWarning: false
   validationFailureAction: Audit
   background: true
   rules:
     - name: require-image-tag
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -29,12 +32,14 @@ spec:
                       - baseline
                       - restricted
       validate:
+        allowExistingViolations: true
         message: An image tag is required.
         pattern:
           spec:
             containers:
               - image: "*:*"
     - name: validate-image-tag
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -48,6 +53,7 @@ spec:
                       - baseline
                       - restricted
       validate:
+        allowExistingViolations: true
         message: Using a mutable image tag such as latest is not allowed in baseline or restricted namespaces.
         pattern:
           spec:

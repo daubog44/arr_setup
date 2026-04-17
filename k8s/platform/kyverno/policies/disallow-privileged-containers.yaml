@@ -12,10 +12,13 @@ metadata:
       Privileged namespaces are explicitly labeled in bootstrap root when workloads still need
       host access.
 spec:
+  admission: true
+  emitWarning: false
   validationFailureAction: Enforce
   background: true
   rules:
     - name: privileged-containers
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -29,6 +32,7 @@ spec:
                       - baseline
                       - restricted
       validate:
+        allowExistingViolations: true
         message: >-
           Baseline and restricted namespaces must not run privileged containers.
         pattern:

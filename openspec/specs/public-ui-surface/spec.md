@@ -32,7 +32,7 @@ Published app UIs MUST declare an explicit per-route auth strategy in the public
 
 - **WHEN** the official public UI catalog is rendered
 - **THEN** `authelia` MUST be `public`
-- **AND** `homepage`, `ntfy`, `falco`, `longhorn`, and `headlamp` MUST be `edge_forward_auth`
+- **AND** `homepage`, `ntfy`, `falco`, `kyverno`, `longhorn`, and `headlamp` MUST be `edge_forward_auth`
 - **AND** `semaphore`, `grafana`, and `argocd` MUST be `native_oidc`
 - **AND** `jellyfin`, `radarr`, `sonarr`, `prowlarr`, `autobrr`, `qbittorrent`, and `litmus` MUST be `app_native`
 
@@ -53,6 +53,16 @@ The operator-visible UI catalog MUST include Falco and Litmus when those UIs are
 - **AND** the browser verification flow MUST prove that those repo-managed credentials reach the Litmus application after the initial login form
 - **AND** the route MUST NOT remain behind the shared Authelia forward-auth middleware
 
+### Requirement: Homepage reflects the published security surface
+
+Homepage MUST show the official published security UIs instead of lagging behind the route catalog after config changes.
+
+#### Scenario: Security cards stay visible after config changes
+
+- **WHEN** the published route catalog includes security services such as `falco` and `kyverno`
+- **THEN** Homepage MUST render those services under the `Security` group
+- **AND** browser verification MUST fail if an enabled official security card disappears from Homepage
+
 ### Requirement: Official UI verification matches the catalog
 
 Endpoint verification MUST evaluate exactly the official published UI surface.
@@ -69,4 +79,3 @@ Endpoint verification MUST evaluate exactly the official published UI surface.
 - **THEN** the repo MUST prefer Playwright MCP when it is available in the client
 - **AND** the repo MUST provide a repo-local Playwright CLI fallback when Playwright MCP is unavailable
 - **AND** the verification contract MUST stay the same across both paths
-

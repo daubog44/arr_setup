@@ -12,10 +12,13 @@ metadata:
       baseline or privileged remain the documented carve-out while the stack is incrementally
       hardened.
 spec:
+  admission: true
+  emitWarning: false
   validationFailureAction: Enforce
   background: true
   rules:
     - name: run-as-non-root
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -28,6 +31,7 @@ spec:
                     values:
                       - restricted
       validate:
+        allowExistingViolations: true
         message: Restricted namespaces must set runAsNonRoot to true.
         anyPattern:
           - spec:
