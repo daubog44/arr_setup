@@ -1661,6 +1661,63 @@ def wait_for_resource(
     raise HaaCError(f"Timeout waiting for {label}")
 
 
+def gitops_remote_revision_sha(env: dict[str, str], remote_name: str = "origin") -> str | None:
+    if not gitstatelib.is_git_repo(ROOT):
+        return None
+    if not gitstatelib.git_has_remote(ROOT, remote_name):
+        return None
+
+    revision = gitops_revision(env)
+    remote_ref = f"{remote_name}/{revision}"
+    fetch = run(["git", "fetch", remote_name, revision], check=False, capture_output=True)
+    require_success(fetch, f"Git fetch failed for {remote_ref}")
+    return run_stdout(["git", "rev-parse", remote_ref])
+
+
+def argocd_application_repo_url(app: dict[str, object]) -> str:
+    source = app.get("spec") or {}
+    source = source.get("source") or {}
+    return str(source.get("repoURL") or "").strip()
+
+
+def argocd_application_sync_revision(app: dict[str, object]) -> str:
+    status = app.get("status") or {}
+    sync = status.get("sync") or {}
+    return str(sync.get("revision") or "").strip()
+
+
+def repo_managed_argocd_application_revision_current(
+    app: dict[str, object],
+    *,
+    expected_revision: str | None,
+    gitops_repo_url: str | None,
+) -> bool:
+    if not expected_revision or not gitops_repo_url:
+        return True
+    if argocd_application_repo_url(app) != gitops_repo_url:
+        return True
+    return argocd_application_sync_revision(app) == expected_revision
+
+
+def refresh_argocd_application(kubectl: str, kubeconfig: Path, application: str, *, hard: bool = True) -> None:
+    annotation = "argocd.argoproj.io/refresh=hard" if hard else "argocd.argoproj.io/refresh=normal"
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "annotate",
+            "application",
+            application,
+            "-n",
+            "argocd",
+            annotation,
+            "--overwrite",
+        ],
+        check=False,
+    )
+
+
 def wait_for_argocd_application_ready(
     kubectl: str,
     kubeconfig: Path,
@@ -1668,6 +1725,8 @@ def wait_for_argocd_application_ready(
     application: str,
     stage_label: str,
     deadline: float,
+    expected_revision: str | None = None,
+    gitops_repo_url: str | None = None,
 ) -> None:
     print(f"[stage] {stage_label}: {application}")
     resource_command = ["get", "application", application, "-n", "argocd"]
@@ -1697,10 +1756,24 @@ def wait_for_argocd_application_ready(
         health_status = ((status.get("health") or {}).get("status") or "").strip()
         operation_state = status.get("operationState") or {}
         operation_phase = (operation_state.get("phase") or "").strip()
+        revision_current = repo_managed_argocd_application_revision_current(
+            app,
+            expected_revision=expected_revision,
+            gitops_repo_url=gitops_repo_url,
+        )
 
-        if sync_status == "Synced" and health_status == "Healthy":
+        if sync_status == "Synced" and health_status == "Healthy" and revision_current:
             print(f"[ok] {stage_label}: {application} synced and healthy")
             return
+        if sync_status == "Synced" and health_status == "Healthy" and not revision_current:
+            current_revision = argocd_application_sync_revision(app) or "unknown"
+            refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
+            print(
+                f"[wait] {stage_label}: {application} healthy on stale revision "
+                f"{current_revision[:12]} while waiting for {expected_revision[:12]}"
+            )
+            time.sleep(10)
+            continue
 
         if operation_phase in {"Error", "Failed"}:
             detail = (operation_state.get("message") or f"ArgoCD application {application} failed").strip()
@@ -2073,6 +2146,7 @@ def deploy_argocd(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: 
         cleanup_falco_legacy_ui_storage(kubectl, session_kubeconfig, env)
         root_app = render_env_placeholders((K8S_DIR / "argocd-apps.yaml").read_text(encoding="utf-8"), env)
         run([kubectl, "--kubeconfig", str(session_kubeconfig), "apply", "--validate=false", "-f", "-"], input_text=root_app)
+        refresh_argocd_application(kubectl, session_kubeconfig, "haac-root", hard=True)
         cleanup_disabled_platform_apps(kubectl, session_kubeconfig, env)
 
 
@@ -2187,6 +2261,9 @@ def deploy_local(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: s
 
 
 def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str, timeout_seconds: int = 3600) -> None:
+    env = merged_env()
+    gitops_repo = gitops_repo_url(env)
+    expected_revision = gitops_remote_revision_sha(env)
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         last_verified_phase = "GitOps publication"
 
@@ -2199,6 +2276,8 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
                     application=application,
                     stage_label=stage_label,
                     deadline=deadline,
+                    expected_revision=expected_revision,
+                    gitops_repo_url=gitops_repo,
                 )
             except HaaCError as exc:
                 raise HaaCError(
@@ -2225,6 +2304,7 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
         last_verified_phase = "ArgoCD API reachability"
 
         deadline = time.time() + timeout_seconds
+        wait_for_readiness_gate("haac-root", "Root application gate")
         wait_for_readiness_gate("haac-platform", "Platform root gate")
         wait_for_readiness_gate("argocd", "ArgoCD self-management gate")
         wait_for_readiness_gate("haac-workloads", "Workloads root gate")

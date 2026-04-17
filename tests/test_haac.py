@@ -72,5 +72,65 @@ class SshTunnelRetryTests(unittest.TestCase):
         self.assertIn("permission denied", str(ctx.exception))
 
 
+class ArgocdRevisionGateTests(unittest.TestCase):
+    def test_repo_managed_application_revision_must_match_expected_sha(self) -> None:
+        app = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {"sync": {"revision": "oldsha"}},
+        }
+
+        self.assertFalse(
+            haac.repo_managed_argocd_application_revision_current(
+                app,
+                expected_revision="newsha",
+                gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+            )
+        )
+        self.assertTrue(
+            haac.repo_managed_argocd_application_revision_current(
+                app,
+                expected_revision="newsha",
+                gitops_repo_url="https://github.com/example/other.git",
+            )
+        )
+
+    def test_wait_for_argocd_application_refreshes_stale_but_healthy_repo_app(self) -> None:
+        stale_app = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"status": "Synced", "revision": "old-sha"},
+                "health": {"status": "Healthy"},
+                "operationState": {"phase": ""},
+            },
+        }
+        fresh_app = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"status": "Synced", "revision": "new-sha"},
+                "health": {"status": "Healthy"},
+                "operationState": {"phase": ""},
+            },
+        }
+
+        with mock.patch.object(haac, "wait_for_resource"):
+            with mock.patch.object(haac, "kubectl_json", side_effect=[stale_app, fresh_app]):
+                with mock.patch.object(haac, "recover_stale_argocd_operation", return_value=False):
+                    with mock.patch.object(haac, "recover_stalled_downloaders_rollout", return_value=False):
+                        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                            with mock.patch.object(haac.time, "sleep"):
+                                with mock.patch.object(haac.time, "time", side_effect=[0, 0, 1]):
+                                    haac.wait_for_argocd_application_ready(
+                                        "kubectl",
+                                        Path("demo-kubeconfig"),
+                                        application="haac-platform",
+                                        stage_label="Platform root gate",
+                                        deadline=60,
+                                        expected_revision="new-sha",
+                                        gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                    )
+
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
+
+
 if __name__ == "__main__":
     unittest.main()

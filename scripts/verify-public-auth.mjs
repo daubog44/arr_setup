@@ -107,7 +107,10 @@ function loadIngressCatalog(content, domainName) {
 }
 
 const routeChecks = {
-  homepage: { expectedText: "Litmus", unexpectedText: "ChaosTest" },
+  homepage: {
+    expectedText: "/Benvenuto nel Nucleo Autogenerativo|Management|Media|Security/",
+    unexpectedText: "ChaosTest",
+  },
   headlamp: { type: "headlamp" },
   ntfy: {},
   litmus: {
@@ -334,6 +337,23 @@ async function fetchJson(page, relativePath) {
 }
 
 const GRAFANA_API_SERVER_DASHBOARD_UID = "09ec8aa1e996d6ffcd6817bbaff4db1b";
+const GRAFANA_PROMETHEUS_DATASOURCE_UID = "prometheus";
+
+function prometheusScalar(result) {
+  const scalar = result?.data?.result?.[0]?.value?.[1];
+  const numeric = Number(scalar);
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`Prometheus query did not return a scalar value: ${JSON.stringify(result)}`);
+  }
+  return numeric;
+}
+
+async function queryGrafanaPrometheus(page, query) {
+  return fetchJson(
+    page,
+    `/api/datasources/proxy/uid/${GRAFANA_PROMETHEUS_DATASOURCE_UID}/api/v1/query?query=${encodeURIComponent(query)}`,
+  );
+}
 
 async function verifyGrafanaObservability(page) {
   const grafanaHost = new URL(page.url()).host;
@@ -346,6 +366,30 @@ async function verifyGrafanaObservability(page) {
   );
   await page.waitForSelector('text=/Kubernetes\\s*\\/\\s*API server/i', { timeout: 30000 });
   await page.waitForTimeout(8000);
+
+  const apiserverTargetCount = await queryGrafanaPrometheus(page, 'count(up{job="apiserver"})');
+  if (prometheusScalar(apiserverTargetCount) < 1) {
+    throw new Error(
+      `Grafana reached the dashboard, but Prometheus exposed no apiserver targets: ${JSON.stringify(apiserverTargetCount)}`,
+    );
+  }
+
+  const clusterCount = await queryGrafanaPrometheus(page, 'count(count by (cluster) (up{job="apiserver",cluster!=""}))');
+  if (prometheusScalar(clusterCount) < 1) {
+    throw new Error(
+      `Grafana reached the dashboard, but the official cluster selector resolved no values for job="apiserver": ${JSON.stringify(clusterCount)}`,
+    );
+  }
+
+  const instanceCount = await queryGrafanaPrometheus(
+    page,
+    'count(count by (instance) (up{job="apiserver",cluster!="",instance!=""}))',
+  );
+  if (prometheusScalar(instanceCount) < 1) {
+    throw new Error(
+      `Grafana reached the dashboard, but the official instance selector resolved no values for job="apiserver": ${JSON.stringify(instanceCount)}`,
+    );
+  }
 
   const bodyText = await page.locator("body").innerText();
   if (/Unable to find datasource|Datasource not found/i.test(bodyText)) {

@@ -1,0 +1,3 @@
+- [x] 1.1 Update the Homepage Deployment to use the upstream-compatible host allow-list and healthcheck probe path
+- [ ] 1.2 Validate the rendered chart and reconcile the live cluster to the latest revision
+- [ ] 1.3 Re-run browser verification, including Playwright CLI against the public Homepage route
