@@ -421,10 +421,17 @@ async function verifyHeadlamp(page, env) {
   await verifyEdgeRoute(page, env, "headlamp", "headlamp");
   await ensureHost(page, expectedHost, env);
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+  const routeErrorMarkers = ["Bad gateway", "502", "Application is not available", "Internal Server Error", "404 page not found"];
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await page.waitForTimeout(1000);
     const body = String((await page.textContent("body").catch(() => "")) || "");
     const url = page.url();
+    for (const marker of routeErrorMarkers) {
+      if (body.includes(marker)) {
+        await screenshot(page, "headlamp-main-gateway-error");
+        throw new Error(`Headlamp rendered a route-level failure after edge auth: ${marker}`);
+      }
+    }
     if (body.includes("Unauthorized")) {
       await screenshot(page, "headlamp-main-unauthorized");
       throw new Error("Headlamp rendered an unauthorized cluster state behind edge auth");
@@ -442,7 +449,11 @@ async function verifyHeadlamp(page, env) {
     }
   }
   await screenshot(page, "headlamp-main-still-login");
-  throw new Error("Headlamp still presented the internal token login behind edge auth");
+  const body = String((await page.textContent("body").catch(() => "")) || "");
+  if (body.includes("Use A Token")) {
+    throw new Error("Headlamp still presented the internal token login behind edge auth");
+  }
+  throw new Error(`Headlamp did not reach an authenticated cluster landing page: ${page.url()}`);
 }
 
 async function verifyNativeOidc(page, env, endpoint, screenshotName, options = {}) {

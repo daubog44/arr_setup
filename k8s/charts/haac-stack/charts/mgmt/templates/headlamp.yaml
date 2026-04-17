@@ -18,6 +18,12 @@ spec:
       labels:
         app.kubernetes.io/name: headlamp
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       serviceAccountName: headlamp-access
       volumes:
         - name: headlamp-kubeconfig
@@ -41,6 +47,7 @@ spec:
               path: /
               port: 4466
             initialDelaySeconds: 15
+            timeoutSeconds: 5
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
@@ -48,6 +55,7 @@ spec:
               path: /
               port: 4466
             initialDelaySeconds: 5
+            timeoutSeconds: 5
             periodSeconds: 10
           args:
             - "-in-cluster"
