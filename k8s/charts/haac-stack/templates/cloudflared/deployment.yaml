@@ -14,6 +14,10 @@ spec:
       labels:
         app: cloudflared
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       dnsConfig:
         options:
           - name: ndots
@@ -36,6 +40,13 @@ spec:
                 secretKeyRef:
                   name: cloudflare-tunnel-token
                   key: token
+          securityContext:
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           resources:
             requests:
               cpu: 50m
