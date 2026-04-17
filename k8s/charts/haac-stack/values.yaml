@@ -40,7 +40,7 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "3d2e072af8a2c23c84300230b4b2d48b43c64ce200e99a0a8d710b4a0214fd67"
+    autheliaConfigChecksum: "d8e8ac791cf98f2fd1a2da8241bf8aa57c31dcf7c9a162508200aa5173a9ce46"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     homepageConfigChecksum: "a8d1d79edd70a03265d9fe46fb5adef7a640c4ddf6abcfcaabbb8f8a39e15839"
