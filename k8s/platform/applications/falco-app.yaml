@@ -19,14 +19,6 @@ spec:
         serviceMonitor:
           enabled: true
 
-        resources:
-          requests:
-            cpu: 50m
-            memory: 128Mi
-          limits:
-            cpu: 250m
-            memory: 256Mi
-
         config:
           ntfy:
             url: "https://ntfy.nucleoautogenerativo.it/haac-alerts"
@@ -36,31 +28,9 @@ spec:
           enabled: true
           replicaCount: 1
           disableauth: true
-          initContainer:
-            resources:
-              requests:
-                cpu: 25m
-                memory: 32Mi
-              limits:
-                cpu: 100m
-                memory: 128Mi
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 250m
-              memory: 256Mi
           redis:
             enabled: true
             storageEnabled: false
-            resources:
-              requests:
-                cpu: 50m
-                memory: 128Mi
-              limits:
-                cpu: 250m
-                memory: 256Mi
 
   destination:
     server: https://kubernetes.default.svc
