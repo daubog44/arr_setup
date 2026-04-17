@@ -6,4 +6,4 @@
 
 ## 2. Verification
 
-- [ ] 2.1 Validate with OpenSpec, `kubectl kustomize`, and a live Argo CD reconcile/refresh showing the affected apps as `Synced`
+- [x] 2.1 Validate with OpenSpec, `kubectl kustomize`, and a live Argo CD reconcile/refresh showing the affected apps as `Synced`
