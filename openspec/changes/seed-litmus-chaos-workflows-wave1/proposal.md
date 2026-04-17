@@ -14,6 +14,7 @@ What is still missing is a post-install seed step that gives the user a small, s
 
 - Add a repo-managed Litmus post-install catalog under source control.
 - Extend the existing Litmus reconcile flow so it seeds a small set of homelab-safe chaos experiments into ChaosCenter after the default infrastructure is active.
+- Make the Litmus post-install path repair the repo-managed admin login before experiment seeding so `task up` remains rerunnable after MongoDB or auth drift.
 - Apply the minimum upstream Litmus experiment manifests needed for those saved experiments so the chaos scenarios are runnable later without manual chart downloads.
 
 ## Capabilities

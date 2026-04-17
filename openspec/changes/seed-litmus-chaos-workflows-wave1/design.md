@@ -4,6 +4,8 @@
 
 The existing `reconcile_litmus_chaos()` path is already the canonical imperative bridge between GitOps-managed installation and Litmus API state. This wave extends that same path instead of adding a second bootstrap job or a second operator-visible manual flow.
 
+Because the persisted Litmus auth database can drift from the repo-managed secret, the post-install task must also reconcile the admin login before it tries to seed saved experiments. That repair remains part of the same Litmus bootstrap path rather than a separate manual recovery step.
+
 ### Catalog shape
 
 The first catalog will stay deliberately small and low-blast-radius:

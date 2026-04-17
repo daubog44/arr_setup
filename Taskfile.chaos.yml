@@ -26,4 +26,5 @@ tasks:
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-litmus-admin --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
       - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-litmus-chaos --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'

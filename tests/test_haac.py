@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -722,6 +724,107 @@ class LitmusChaosCatalogTests(unittest.TestCase):
             tags=["demo", "haac"],
         )
         fake_print.assert_any_call("[ok] Litmus chaos experiment updated: demo-chaos")
+
+
+class LitmusBootstrapRecoveryTests(unittest.TestCase):
+    def test_wait_for_litmus_core_rollout_checks_auth_and_server(self) -> None:
+        with mock.patch.object(haac, "run") as run_mock:
+            haac.wait_for_litmus_core_rollout("kubectl", Path("demo-kubeconfig"))
+
+        run_mock.assert_has_calls(
+            [
+                mock.call(
+                    [
+                        "kubectl",
+                        "--kubeconfig",
+                        "demo-kubeconfig",
+                        "rollout",
+                        "status",
+                        "deployment/litmus-auth-server",
+                        "-n",
+                        "chaos",
+                        "--timeout=240s",
+                    ]
+                ),
+                mock.call(
+                    [
+                        "kubectl",
+                        "--kubeconfig",
+                        "demo-kubeconfig",
+                        "rollout",
+                        "status",
+                        "deployment/litmus-server",
+                        "-n",
+                        "chaos",
+                        "--timeout=240s",
+                    ]
+                ),
+            ]
+        )
+
+    def test_reconcile_litmus_chaos_repairs_admin_before_login(self) -> None:
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def fake_cluster_session(*args: object, **kwargs: object):
+            yield Path("session-kubeconfig")
+
+        @contextlib.contextmanager
+        def fake_port_forward(*args: object, **kwargs: object):
+            yield 9001
+
+        def fake_run(args: list[str], check: bool = True, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        def fake_kubectl_json(*args: object, **kwargs: object) -> dict[str, object]:
+            command = list(args[2])
+            if command[:3] == ["get", "svc", "litmus-auth-server-service"]:
+                return {"spec": {"ports": [{"name": "auth-server", "port": 9003}]}}
+            if command[:3] == ["get", "svc", "litmus-server-service"]:
+                return {"spec": {"ports": [{"port": 9002}]}}
+            if command[:3] == ["get", "secret", "litmus-mongodb"]:
+                return {"data": {}}
+            raise AssertionError(command)
+
+        def fake_wait_for_core(*args: object, **kwargs: object) -> None:
+            call_order.append("wait_for_core")
+
+        def fake_reconcile_admin(*args: object, **kwargs: object) -> None:
+            call_order.append("repair_admin")
+
+        def fake_auth_login(*args: object, **kwargs: object) -> dict[str, object]:
+            call_order.append("auth_login")
+            return {"projectID": "project-1", "accessToken": "token-1"}
+
+        with mock.patch.object(haac, "cluster_session", fake_cluster_session):
+            with mock.patch.object(haac, "run", side_effect=fake_run):
+                with mock.patch.object(haac, "wait_for_litmus_core_rollout", side_effect=fake_wait_for_core):
+                    with mock.patch.object(haac, "reconcile_litmus_admin_session", side_effect=fake_reconcile_admin):
+                        with mock.patch.object(haac, "kubectl_json", side_effect=fake_kubectl_json):
+                            with mock.patch.object(haac, "decode_secret_data", return_value={"mongodb-root-password": "secret"}):
+                                with mock.patch.object(haac, "kubectl_port_forward", fake_port_forward):
+                                    with mock.patch.object(haac, "litmus_auth_login", side_effect=fake_auth_login):
+                                        with mock.patch.object(haac, "litmus_list_environments", return_value=[]):
+                                            with mock.patch.object(
+                                                haac,
+                                                "select_litmus_reconcile_targets",
+                                                return_value=[("haac-default", "haac-default", True)],
+                                            ):
+                                                with mock.patch.object(
+                                                    haac,
+                                                    "reconcile_litmus_environment_target",
+                                                    return_value={"infraID": "infra-1", "name": "haac-default"},
+                                                ):
+                                                    with mock.patch.object(haac, "litmus_hide_legacy_environment", return_value=False):
+                                                        with mock.patch.object(haac, "ensure_litmus_chaos_catalog"):
+                                                            haac.reconcile_litmus_chaos(
+                                                                "192.168.0.211",
+                                                                "192.168.0.200",
+                                                                Path("demo-kubeconfig"),
+                                                                "kubectl",
+                                                            )
+
+        self.assertEqual(call_order[:3], ["wait_for_core", "repair_admin", "auth_login"])
 
 
 class CleanLocalArtifactsTests(unittest.TestCase):

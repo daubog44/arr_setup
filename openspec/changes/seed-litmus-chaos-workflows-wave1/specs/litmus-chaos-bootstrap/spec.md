@@ -8,6 +8,7 @@ The bootstrap path MUST automate Litmus chaos infrastructure enrollment for the 
 
 - **WHEN** the Litmus platform is healthy enough for API access
 - **THEN** the bootstrap MUST ensure the canonical `haac-default` environment and default chaos infrastructure exist without manual YAML download/apply
+- **AND** it MUST repair the repo-managed Litmus admin login if the persisted auth database drifted
 - **AND** it MUST seed the repo-managed default chaos experiment catalog for that project
 
 #### Scenario: Default chaos catalog is seeded
