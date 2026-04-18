@@ -17,12 +17,28 @@
       "tags": ["haac", "homelab", "mgmt", "ntfy", "pod-delete"]
     },
     {
+      "name": "haac-headlamp-pod-delete",
+      "description": "Delete the Headlamp pod in the management namespace to verify the cluster dashboard and OIDC front door recover cleanly.",
+      "manifest": "headlamp-pod-delete.json",
+      "sourceManifest": "headlamp-pod-delete.yaml",
+      "supportingManifests": ["pod-delete-chaosexperiment.yaml"],
+      "tags": ["haac", "homelab", "mgmt", "headlamp", "pod-delete"]
+    },
+    {
       "name": "haac-radarr-pod-delete",
       "description": "Delete the Radarr pod in the media namespace to validate media-helper recovery on persistent storage with low blast radius.",
       "manifest": "radarr-pod-delete.json",
       "sourceManifest": "radarr-pod-delete.yaml",
       "supportingManifests": ["pod-delete-chaosexperiment.yaml"],
       "tags": ["haac", "homelab", "media", "radarr", "pod-delete"]
+    },
+    {
+      "name": "haac-prowlarr-pod-delete",
+      "description": "Delete the Prowlarr pod in the media namespace to validate indexer-path recovery before downstream media requests fan out.",
+      "manifest": "prowlarr-pod-delete.json",
+      "sourceManifest": "prowlarr-pod-delete.yaml",
+      "supportingManifests": ["pod-delete-chaosexperiment.yaml"],
+      "tags": ["haac", "homelab", "media", "prowlarr", "pod-delete"]
     }
   ]
 }

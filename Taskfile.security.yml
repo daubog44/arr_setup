@@ -2,10 +2,19 @@ version: "3"
 
 vars:
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
+  TOFU_DIR: '{{default "tofu" .TOFU_DIR}}'
   LXC_PASSWORD_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'
   NAS_PATH_VALUE:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_PATH'
+  KUBECTL:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name kubectl'
+  K3S_KUBECONFIG:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" kubeconfig-path'
+  MASTER_IP:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_ip --default 127.0.0.1'
+  PROXMOX_HOST:
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" proxmox-access-host'
 
 tasks:
   post-install:
@@ -18,3 +27,14 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
       - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/maintenance-security-playbook.yml'
+
+  cleanup-signal-residue:
+    desc: Manually prune the known stale security-report residue left by historical rollout objects in argocd/security.
+    env:
+      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
+      NAS_PATH: "{{.NAS_PATH_VALUE}}"
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" cleanup-security-signal-residue --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'

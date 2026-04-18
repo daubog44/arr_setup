@@ -17,6 +17,21 @@ The remediation order will follow blast radius:
 
 Each candidate image must be checked against the upstream release source before any version bump. The repo must prefer source-template version updates over report suppression, ignore files, or dashboard filtering.
 
+Wave1 will upgrade the low-risk services whose upstream releases are both newer and clearly source-aligned:
+
+- `homepage` `v1.10.1` -> `v1.12.3`
+- `ntfy` `v2.19.2` -> `v2.21.0`
+- `headlamp` `v0.40.1` -> `v0.41.0`
+- `authelia` `4.39.15` -> `4.39.19`
+- `jellyfin` `10.11.6` -> `10.11.8`
+
+`jellyfin` needs one additional rollout safeguard beyond the image bump: because it is GPU-bound and mounts a `ReadWriteOnce` config PVC, the deployment must use `Recreate` so the old pod releases the scheduling slot before the new version is admitted.
+
+The highest remaining blockers after those upgrades are expected to be:
+
+- `flaresolverr`, where the pinned image is already at the latest upstream release tag `v3.4.6`
+- `prowlarr`, `radarr`, and `sonarr`, where the repo uses LinuxServer image tags that are not safely mappable one-to-one from the upstream application release stream without a separate compatibility pass
+
 ### Safety rules
 
 - keep upgrades bounded to services whose tags are already source-controlled in the HaaC stack values

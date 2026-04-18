@@ -20,6 +20,19 @@ spec:
         rest:
           enabled: true
 
+        reportFilter:
+          kinds:
+            exclude:
+              - ReplicaSet
+
+        sourceFilters:
+          - selector:
+              source: kyverno
+            uncontrolledOnly: true
+            kinds:
+              exclude:
+                - ReplicaSet
+
         metrics:
           enabled: true
 

@@ -42,8 +42,8 @@ spec:
         verbs:
           - "get"
           - "list"
-    image: "litmuschaos.docker.scarf.sh/litmuschaos/go-runner:latest"
-    imagePullPolicy: Always
+    image: "litmuschaos.docker.scarf.sh/litmuschaos/go-runner:3.27.0"
+    imagePullPolicy: IfNotPresent
     command:
       - /bin/bash
     args:

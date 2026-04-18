@@ -1,0 +1,50 @@
+{
+  "apiVersion": "litmuschaos.io/v1alpha1",
+  "kind": "ChaosEngine",
+  "metadata": {
+    "name": "haac-prowlarr-pod-delete",
+    "namespace": "litmus",
+    "annotations": {
+      "probeRef": "[]"
+    },
+    "labels": {
+      "context": "media_prowlarr_pod-delete",
+      "haac.nucleoautogenerativo.it/template": "true",
+      "weight": "25"
+    }
+  },
+  "spec": {
+    "annotationCheck": "false",
+    "appinfo": {
+      "appns": "media",
+      "applabel": "app=prowlarr",
+      "appkind": "deployment"
+    },
+    "jobCleanUpPolicy": "delete",
+    "engineState": "active",
+    "chaosServiceAccount": "litmus-admin",
+    "experiments": [
+      {
+        "name": "pod-delete",
+        "spec": {
+          "components": {
+            "env": [
+              {
+                "name": "TOTAL_CHAOS_DURATION",
+                "value": "20"
+              },
+              {
+                "name": "CHAOS_INTERVAL",
+                "value": "5"
+              },
+              {
+                "name": "FORCE",
+                "value": "false"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

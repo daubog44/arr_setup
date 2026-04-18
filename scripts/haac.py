@@ -88,6 +88,16 @@ GITOPS_GENERATED_OUTPUTS = (
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
 FALCO_INGEST_SERVICE_OUTPUT = K8S_DIR / "platform" / "falco-ingest-service.yaml"
 DISABLED_GITOPS_LIST = "apiVersion: v1\nkind: List\nitems: []\n"
+SECURITY_SIGNAL_RESIDUE_TARGETS = {
+    "argocd": ("argocd-repo-server-", "argocd-redis-"),
+    "security": ("falco-falcosidekick-ui-", "trivy-operator-"),
+}
+TRIVY_NAMESPACED_REPORT_RESOURCES = (
+    "configauditreports.aquasecurity.github.io",
+    "exposedsecretreports.aquasecurity.github.io",
+    "rbacassessmentreports.aquasecurity.github.io",
+    "vulnerabilityreports.aquasecurity.github.io",
+)
 HOOKS_DIR = ROOT / ".git" / "hooks"
 KUBESEAL_VERSION = "0.36.1"
 DEFAULT_WSL_DISTRO = "Debian"
@@ -2092,6 +2102,200 @@ def kubectl_json(
         return json.loads(completed.stdout or "{}")
     except json.JSONDecodeError as exc:
         raise HaaCError(f"{context}\nInvalid JSON returned by kubectl") from exc
+
+
+def find_zero_replica_replicasets(
+    kubectl: str,
+    kubeconfig: Path,
+    targets: dict[str, tuple[str, ...]] = SECURITY_SIGNAL_RESIDUE_TARGETS,
+) -> dict[str, set[str]]:
+    stale_by_namespace: dict[str, set[str]] = {}
+    for namespace, prefixes in targets.items():
+        payload = kubectl_json(
+            kubectl,
+            kubeconfig,
+            ["get", "replicaset", "-n", namespace, "-o", "json"],
+            context=f"Unable to read ReplicaSets in namespace {namespace}",
+        )
+        for item in payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") or {}
+            name = str(metadata.get("name") or "").strip()
+            if not name:
+                continue
+            if not any(name.startswith(prefix) for prefix in prefixes):
+                continue
+            spec = item.get("spec") or {}
+            status = item.get("status") or {}
+            replicas = int(spec.get("replicas") or 0)
+            ready_replicas = int(status.get("readyReplicas") or 0)
+            available_replicas = int(status.get("availableReplicas") or 0)
+            if replicas == 0 and ready_replicas == 0 and available_replicas == 0:
+                stale_by_namespace.setdefault(namespace, set()).add(name)
+    return stale_by_namespace
+
+
+def report_targets_stale_replicaset(item: dict[str, object], stale_by_namespace: dict[str, set[str]]) -> str:
+    metadata = item.get("metadata") or {}
+    namespace = str(metadata.get("namespace") or "").strip()
+    stale_names = stale_by_namespace.get(namespace) or set()
+    if not stale_names:
+        return ""
+
+    scope = item.get("scope") or {}
+    scope_kind = str(scope.get("kind") or "").strip()
+    scope_name = str(scope.get("name") or "").strip()
+    if scope_kind == "ReplicaSet" and scope_name in stale_names:
+        return scope_name
+
+    for owner in metadata.get("ownerReferences") or []:
+        if not isinstance(owner, dict):
+            continue
+        owner_kind = str(owner.get("kind") or "").strip()
+        owner_name = str(owner.get("name") or "").strip()
+        if owner_kind == "ReplicaSet" and owner_name in stale_names:
+            return owner_name
+    return ""
+
+
+def delete_namespaced_resource(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    resource: str,
+    namespace: str,
+    name: str,
+) -> None:
+    completed = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "delete",
+            resource,
+            name,
+            "-n",
+            namespace,
+            "--ignore-not-found=true",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    require_success(completed, f"Unable to delete {resource} {namespace}/{name}")
+
+
+def delete_stale_namespaced_records(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    resource: str,
+    namespaces: tuple[str, ...],
+    stale_by_namespace: dict[str, set[str]],
+) -> tuple[int, dict[str, set[str]]]:
+    deleted = 0
+    matched_by_namespace: dict[str, set[str]] = {}
+    for namespace in namespaces:
+        if not stale_by_namespace.get(namespace):
+            continue
+        payload = kubectl_json(
+            kubectl,
+            kubeconfig,
+            ["get", resource, "-n", namespace, "-o", "json"],
+            context=f"Unable to read {resource} in namespace {namespace}",
+        )
+        for item in payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            stale_name = report_targets_stale_replicaset(item, stale_by_namespace)
+            if not stale_name:
+                continue
+            metadata = item.get("metadata") or {}
+            name = str(metadata.get("name") or "").strip()
+            if not name:
+                continue
+            delete_namespaced_resource(kubectl, kubeconfig, resource=resource, namespace=namespace, name=name)
+            deleted += 1
+            matched_by_namespace.setdefault(namespace, set()).add(stale_name)
+            print(f"[ok] Deleted stale {resource} {namespace}/{name} for zero-replica ReplicaSet {stale_name}")
+    return deleted, matched_by_namespace
+
+
+def merge_stale_targets(*sources: dict[str, set[str]]) -> dict[str, set[str]]:
+    merged: dict[str, set[str]] = {}
+    for source in sources:
+        for namespace, names in source.items():
+            if names:
+                merged.setdefault(namespace, set()).update(names)
+    return merged
+
+
+def cleanup_security_signal_residue_in_session(
+    kubectl: str,
+    kubeconfig: Path,
+    targets: dict[str, tuple[str, ...]] = SECURITY_SIGNAL_RESIDUE_TARGETS,
+) -> dict[str, int]:
+    stale_by_namespace = find_zero_replica_replicasets(kubectl, kubeconfig, targets)
+    if not stale_by_namespace:
+        print("[ok] No allowlisted zero-replica rollout residue detected for security signal cleanup")
+        return {"policy_reports": 0, "trivy_reports": 0, "replicasets": 0}
+
+    namespaces = tuple(targets)
+
+    deleted_policy_reports, policy_residue = delete_stale_namespaced_records(
+        kubectl,
+        kubeconfig,
+        resource="policyreport",
+        namespaces=namespaces,
+        stale_by_namespace=stale_by_namespace,
+    )
+    deleted_trivy_reports = 0
+    trivy_residue: dict[str, set[str]] = {}
+    for resource in TRIVY_NAMESPACED_REPORT_RESOURCES:
+        deleted, matched = delete_stale_namespaced_records(
+            kubectl,
+            kubeconfig,
+            resource=resource,
+            namespaces=namespaces,
+            stale_by_namespace=stale_by_namespace,
+        )
+        deleted_trivy_reports += deleted
+        trivy_residue = merge_stale_targets(trivy_residue, matched)
+
+    residue_targets = merge_stale_targets(policy_residue, trivy_residue)
+    if not residue_targets:
+        print("[ok] No report-backed security residue required rollout-history pruning")
+        return {
+            "policy_reports": deleted_policy_reports,
+            "trivy_reports": deleted_trivy_reports,
+            "replicasets": 0,
+        }
+
+    deleted_replicasets = 0
+    for namespace, names in residue_targets.items():
+        for name in sorted(names):
+            delete_namespaced_resource(kubectl, kubeconfig, resource="replicaset", namespace=namespace, name=name)
+            deleted_replicasets += 1
+            print(f"[ok] Deleted zero-replica ReplicaSet residue {namespace}/{name}")
+
+    return {
+        "policy_reports": deleted_policy_reports,
+        "trivy_reports": deleted_trivy_reports,
+        "replicasets": deleted_replicasets,
+    }
+
+
+def cleanup_security_signal_residue(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> dict[str, int]:
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        counts = cleanup_security_signal_residue_in_session(kubectl, session_kubeconfig)
+    if any(counts.values()):
+        print(
+            "[ok] Security signal residue cleanup removed "
+            f"{counts['policy_reports']} PolicyReports, "
+            f"{counts['trivy_reports']} Trivy reports, and "
+            f"{counts['replicasets']} zero-replica ReplicaSets"
+        )
+    return counts
 
 
 def recover_stale_argocd_operation(
@@ -5061,6 +5265,10 @@ def cmd_reconcile_litmus_chaos(args: argparse.Namespace) -> None:
     reconcile_litmus_chaos(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
+def cmd_cleanup_security_signal_residue(args: argparse.Namespace) -> None:
+    cleanup_security_signal_residue(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
+
+
 def cmd_verify_web(args: argparse.Namespace) -> None:
     verify_web(args.domain)
 
@@ -5247,6 +5455,13 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--kubeconfig", required=True)
     command.add_argument("--kubectl", default="kubectl")
     command.set_defaults(func=cmd_reconcile_litmus_chaos)
+
+    command = subparsers.add_parser("cleanup-security-signal-residue")
+    command.add_argument("--master-ip", required=True)
+    command.add_argument("--proxmox-host", required=True)
+    command.add_argument("--kubeconfig", required=True)
+    command.add_argument("--kubectl", default="kubectl")
+    command.set_defaults(func=cmd_cleanup_security_signal_residue)
 
     command = subparsers.add_parser("verify-web")
     command.add_argument("--domain", required=True)

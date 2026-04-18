@@ -19,11 +19,17 @@ The current baseline already requires requests and limits in `baseline` and `res
 
 The resource shapes will be conservative so the single-master control plane remains within the capacity work already completed.
 
-Because Policy Reporter also scans historical rollout objects, the live cleanup path for this wave may delete zero-replica ReplicaSets that were generated before the resource patches existed. That cleanup is migration-only residue handling, not a weakening of the policy baseline.
+Because Policy Reporter also scans historical rollout objects, the repo will prefer a non-destructive noise reduction step first: exclude `ReplicaSet`-scoped results from Policy Reporter processing and UI metrics, while keeping controller-scoped Kyverno and Trivy signal visible.
+
+Any rollout-history pruning remains manual and tightly scoped. If a one-time cleanup is still needed after the filter change, the dedicated residue-cleanup command must:
+
+- target only the known historical rollout prefixes for `argocd-repo-server`, `argocd-redis`, `trivy-operator`, and `falco-falcosidekick-ui`
+- delete report CRs first and only prune zero-replica ReplicaSets when those specific ReplicaSets are proven to be the remaining source of stale security reports
+- stay outside the default `task up` post-install path so routine reruns do not erase rollout history
 
 ### Falco noise reduction
 
-The current custom host rule fires on any `nc`, `ncat`, or `socat` spawn. The live noise comes from loopback-only probe traffic, not lateral movement. The rule will therefore be narrowed to ignore obvious localhost/127.0.0.1 probes while preserving warnings for non-loopback socket tooling.
+The current custom host rule fires on any `nc`, `ncat`, or `socat` spawn. The live noise comes from loopback-only readiness probes against the internal `850x` maintenance ports, not lateral movement. The rule will therefore be narrowed to ignore only those loopback scan-style probes while preserving warnings for generic non-loopback or interactive socket tooling.
 
 The post-install security playbook remains the source of truth for delivering the host rule bundle.
 
@@ -53,5 +59,6 @@ The remaining image CVE backlog is not treated as noise. When triage shows that 
 - `kubectl kustomize k8s/workloads`
 - `python scripts/haac.py task-run -- reconcile:gitops`
 - live cluster check that active Kyverno failures for requests/limits are cleared in `argocd`, `security`, and `chaos`
-- one-time live cleanup of zero-replica historical ReplicaSets if those older rollout objects are the only remaining source of Kyverno failures
+- live check that Policy Reporter no longer treats ReplicaSet-only residue as active failure signal
+- optional manual residue cleanup only if allowlisted historical ReplicaSets still remain the only source of stale reports
 - browser validation for Grafana, Falco, and Kyverno

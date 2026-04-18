@@ -12,13 +12,17 @@ The first catalog will stay deliberately small and low-blast-radius:
 
 - a management-path pod-delete experiment for `homepage`
 - a notification-path pod-delete experiment for `ntfy`
+- a cluster-dashboard pod-delete experiment for `headlamp`
 - a media-path pod-delete experiment for `radarr`
+- an indexer-path pod-delete experiment for `prowlarr`
 
 These experiments will be preconfigured and visible in ChaosCenter, but they will not be auto-scheduled. The operator can choose when to run them from the Litmus UI.
 
 ### Upstream experiment manifests
 
 The saved experiments depend on the upstream Litmus pod-delete experiment bundle. The repo will therefore vendor the minimal upstream `ChaosExperiment` manifest required for `pod-delete` and apply it into the Litmus control namespace during the same reconcile path.
+
+That vendored manifest must pin a concrete `go-runner` image tag instead of `latest`, so the post-install chaos catalog does not widen the supply-chain surface every time the catalog is seeded.
 
 Wave1 treats those supporting `ChaosExperiment` objects as intentionally imperative bootstrap state. They are validated as catalog-local `ChaosExperiment` manifests targeting the `litmus` namespace, but they are not pruned automatically if an entry is removed from the catalog later.
 

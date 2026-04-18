@@ -881,6 +881,185 @@ class LitmusBootstrapRecoveryTests(unittest.TestCase):
         self.assertEqual(call_order[:3], ["wait_for_core", "repair_admin", "auth_login"])
 
 
+class SecuritySignalResidueCleanupTests(unittest.TestCase):
+    def test_cleanup_security_signal_residue_in_session_deletes_reports_for_zero_replica_replicasets(self) -> None:
+        def fake_kubectl_json(
+            kubectl: str,
+            kubeconfig: Path,
+            command: list[str],
+            *,
+            context: str,
+        ) -> dict[str, object]:
+            resource = command[1]
+            namespace = command[3]
+            if resource == "replicaset" and namespace == "argocd":
+                return {
+                    "items": [
+                        {"metadata": {"name": "argocd-server-old"}, "spec": {"replicas": 0}, "status": {}},
+                        {
+                            "metadata": {"name": "argocd-server-live"},
+                            "spec": {"replicas": 1},
+                            "status": {"readyReplicas": 1, "availableReplicas": 1},
+                        },
+                    ]
+                }
+            if resource == "replicaset" and namespace == "security":
+                return {
+                    "items": [
+                        {"metadata": {"name": "trivy-operator-old"}, "spec": {"replicas": 0}, "status": {}},
+                    ]
+                }
+            if resource == "policyreport" and namespace == "argocd":
+                return {
+                    "items": [
+                        {
+                            "metadata": {"namespace": "argocd", "name": "policy-old"},
+                            "scope": {"kind": "ReplicaSet", "name": "argocd-server-old"},
+                        },
+                        {
+                            "metadata": {"namespace": "argocd", "name": "policy-live"},
+                            "scope": {"kind": "ReplicaSet", "name": "argocd-server-live"},
+                        },
+                    ]
+                }
+            if resource == "policyreport" and namespace == "security":
+                return {
+                    "items": [
+                        {
+                            "metadata": {"namespace": "security", "name": "policy-sec"},
+                            "scope": {"kind": "ReplicaSet", "name": "trivy-operator-old"},
+                        }
+                    ]
+                }
+            if resource == "configauditreports.aquasecurity.github.io" and namespace == "security":
+                return {
+                    "items": [
+                        {
+                            "metadata": {
+                                "namespace": "security",
+                                "name": "config-sec",
+                                "ownerReferences": [{"kind": "ReplicaSet", "name": "trivy-operator-old"}],
+                            }
+                        }
+                    ]
+                }
+            if resource == "vulnerabilityreports.aquasecurity.github.io" and namespace == "argocd":
+                return {
+                    "items": [
+                        {
+                            "metadata": {
+                                "namespace": "argocd",
+                                "name": "vuln-old",
+                                "ownerReferences": [{"kind": "ReplicaSet", "name": "argocd-server-old"}],
+                            }
+                        }
+                    ]
+                }
+            return {"items": []}
+
+        def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
+            return mock.Mock(args=command, returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(haac, "kubectl_json", side_effect=fake_kubectl_json):
+            with mock.patch.object(haac, "run", side_effect=fake_run) as run_mock:
+                counts = haac.cleanup_security_signal_residue_in_session(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    targets={
+                        "argocd": ("argocd-server-",),
+                        "security": ("trivy-operator-",),
+                    },
+                )
+
+        self.assertEqual(
+            counts,
+            {"policy_reports": 2, "trivy_reports": 2, "replicasets": 2},
+        )
+        deleted_commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(
+            ["kubectl", "--kubeconfig", "demo-kubeconfig", "delete", "policyreport", "policy-old", "-n", "argocd", "--ignore-not-found=true"],
+            deleted_commands,
+        )
+        self.assertIn(
+            ["kubectl", "--kubeconfig", "demo-kubeconfig", "delete", "policyreport", "policy-sec", "-n", "security", "--ignore-not-found=true"],
+            deleted_commands,
+        )
+        self.assertIn(
+            [
+                "kubectl",
+                "--kubeconfig",
+                "demo-kubeconfig",
+                "delete",
+                "configauditreports.aquasecurity.github.io",
+                "config-sec",
+                "-n",
+                "security",
+                "--ignore-not-found=true",
+            ],
+            deleted_commands,
+        )
+        self.assertIn(
+            [
+                "kubectl",
+                "--kubeconfig",
+                "demo-kubeconfig",
+                "delete",
+                "vulnerabilityreports.aquasecurity.github.io",
+                "vuln-old",
+                "-n",
+                "argocd",
+                "--ignore-not-found=true",
+            ],
+            deleted_commands,
+        )
+        self.assertIn(
+            ["kubectl", "--kubeconfig", "demo-kubeconfig", "delete", "replicaset", "argocd-server-old", "-n", "argocd", "--ignore-not-found=true"],
+            deleted_commands,
+        )
+        self.assertIn(
+            ["kubectl", "--kubeconfig", "demo-kubeconfig", "delete", "replicaset", "trivy-operator-old", "-n", "security", "--ignore-not-found=true"],
+            deleted_commands,
+        )
+
+    def test_cleanup_preserves_zero_replica_replicaset_without_matching_reports(self) -> None:
+        def fake_kubectl_json(
+            kubectl: str,
+            kubeconfig: Path,
+            command: list[str],
+            *,
+            context: str,
+        ) -> dict[str, object]:
+            resource = command[1]
+            namespace = command[3]
+            if resource == "replicaset" and namespace == "argocd":
+                return {
+                    "items": [
+                        {"metadata": {"name": "argocd-server-old"}, "spec": {"replicas": 0}, "status": {}},
+                    ]
+                }
+            return {"items": []}
+
+        delete_calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **kwargs: object) -> mock.Mock:
+            delete_calls.append(command)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(haac, "kubectl_json", side_effect=fake_kubectl_json):
+            with mock.patch.object(haac, "run", side_effect=fake_run):
+                counts = haac.cleanup_security_signal_residue_in_session(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    targets={"argocd": ("argocd-server-",)},
+                )
+
+        self.assertEqual(
+            counts,
+            {"policy_reports": 0, "trivy_reports": 0, "replicasets": 0},
+        )
+        self.assertEqual(delete_calls, [])
+
+
 class CleanLocalArtifactsTests(unittest.TestCase):
     def test_clean_local_artifacts_removes_disposable_roots_and_prunes_empty_tmp_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

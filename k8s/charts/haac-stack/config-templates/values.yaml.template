@@ -72,16 +72,16 @@ global:
       tag: 1.37.0
     authelia:
       repository: authelia/authelia
-      tag: 4.39.15
+      tag: 4.39.19
     jellyfin:
       repository: jellyfin/jellyfin
-      tag: 10.11.6
+      tag: 10.11.8
     homepage:
       repository: ghcr.io/gethomepage/homepage
-      tag: v1.10.1
+      tag: v1.12.3
     headlamp:
       repository: ghcr.io/headlamp-k8s/headlamp
-      tag: v0.40.1
+      tag: v0.41.0
     cloudflared:
       repository: cloudflare/cloudflared
       tag: 2026.2.0
@@ -90,7 +90,7 @@ global:
       tag: v1.75.1
     ntfy:
       repository: binwiederhier/ntfy
-      tag: v2.19.2
+      tag: v2.21.0
     busybox:
       repository: busybox
       tag: 1.37.0

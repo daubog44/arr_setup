@@ -113,15 +113,21 @@
   priority: NOTICE
   tags: [maturity_stable, haac, homelab, package_management]
 
+- macro: haac_loopback_socket_probe
+  condition: >
+    proc.name in (nc, netcat, ncat) and
+    (proc.cmdline contains "-z" or proc.cmdline contains "-vz" or proc.cmdline contains "-zv") and
+    (
+      proc.cmdline contains " localhost 850" or
+      proc.cmdline contains " 127.0.0.1 850" or
+      proc.cmdline contains " ::1 850"
+    )
+
 - rule: HAAC Socket Tool Execution
   desc: Detect interactive socket tooling commonly used for pivots and reverse shells.
   condition: >
     spawned_process and proc.name in (haac_socket_tools) and
-    not (
-      proc.cmdline contains "localhost" or
-      proc.cmdline contains "127.0.0.1" or
-      proc.cmdline contains "::1"
-    )
+    not haac_loopback_socket_probe
   output: >
     Interactive socket tooling executed on the Proxmox host
     (user=%user.name command=%proc.cmdline parent=%proc.pname)
