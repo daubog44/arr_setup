@@ -1138,12 +1138,39 @@ class DownloadersTemplateContractTests(unittest.TestCase):
             template,
         )
 
+    def test_downloaders_template_reconciles_supported_shared_paths(self) -> None:
+        template = (
+            haac.K8S_DIR / "charts" / "haac-stack" / "charts" / "downloaders" / "templates" / "downloaders.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("value: /data/torrents", template)
+        self.assertIn("value: /data/torrents/incomplete", template)
+        self.assertIn('Session\\\\DefaultSavePath=', template)
+        self.assertIn('Downloads\\\\TempPathEnabled=true', template)
+        self.assertIn('qBittorrent did not persist the supported shared download paths.', template)
+
     def test_downloaders_readiness_probe_accepts_qui_ready_and_qbit_403(self) -> None:
         script = haac.downloaders_readiness_probe_script()
 
         self.assertIn("http://127.0.0.1:7476/api/auth/me", script)
         self.assertIn("http://127.0.0.1:8080/api/v2/app/version", script)
         self.assertIn("'200 403'", script)
+
+    def test_qbittorrent_shared_paths_supported_requires_repo_managed_paths(self) -> None:
+        supported = "\n".join(
+            (
+                "[BitTorrent]",
+                "Session\\DefaultSavePath=/data/torrents/",
+                "Session\\TempPath=/data/torrents/incomplete/",
+                "[Preferences]",
+                "Downloads\\SavePath=/data/torrents/",
+                "Downloads\\TempPath=/data/torrents/incomplete/",
+            )
+        )
+        unsupported = supported.replace("/data/torrents/", "/downloads/")
+
+        self.assertTrue(haac.qbittorrent_shared_paths_supported(supported))
+        self.assertFalse(haac.qbittorrent_shared_paths_supported(unsupported))
 
     def test_downloaders_bootstrap_succeeded_from_logs_requires_port_sync_steady_state(self) -> None:
         healthy_logs = "\n".join(
@@ -1772,12 +1799,17 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("JELLYFIN_ADMIN_USERNAME", env_example)
         self.assertIn("JELLYFIN_ADMIN_PASSWORD", env_example)
         self.assertIn("JELLYFIN_ADMIN_EMAIL", env_example)
+        self.assertIn("BAZARR_AUTH_USERNAME", env_example)
+        self.assertIn("BAZARR_AUTH_PASSWORD", env_example)
+        self.assertIn("BAZARR_LANGUAGES", env_example)
 
     def test_readme_documents_media_post_install_surface(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("media:post-install", readme)
         self.assertIn("JELLYFIN_ADMIN_*", readme)
+        self.assertIn("BAZARR_AUTH_*", readme)
+        self.assertIn("BAZARR_LANGUAGES", readme)
 
     def test_recyclarr_config_template_vendors_official_profiles_with_secret_refs(self) -> None:
         config = (
@@ -1812,8 +1844,12 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("prowlarr_indexer_total", verifier)
         self.assertIn("autobrr_info", verifier)
         self.assertIn("flaresolverr_request_total", verifier)
-        self.assertIn('seerr: { appNativeSelector:', verifier)
+        self.assertIn("bazarr_system_status", verifier)
+        self.assertIn("unpackerr_uptime_seconds_total", verifier)
+        self.assertIn('bazarr: { appNativeSelector:', verifier)
+        self.assertIn("seerr: {", verifier)
         self.assertIn('bodyText.includes("Seerr")', verifier)
+        self.assertIn('currentUrl.pathname.startsWith("/setup")', verifier)
 
     def test_arr_dashboard_configmap_is_repo_managed(self) -> None:
         dashboard = (ROOT / "k8s" / "platform" / "observability" / "arr-stack-dashboard-configmap.yaml").read_text(
@@ -1824,6 +1860,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn('"uid": "haac-arr-stack-overview"', dashboard)
         self.assertIn("radarr_movie_total", dashboard)
         self.assertIn("autobrr_info", dashboard)
+        self.assertIn("bazarr_system_status", dashboard)
+        self.assertIn("unpackerr_uptime_seconds_total", dashboard)
 
     def test_media_manifests_expose_supported_metrics(self) -> None:
         downloaders = (
@@ -1847,6 +1885,12 @@ class ArrStackRepoFileTests(unittest.TestCase):
         seerr = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "seerr.yaml"
         ).read_text(encoding="utf-8")
+        bazarr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "bazarr.yaml"
+        ).read_text(encoding="utf-8")
+        unpackerr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "unpackerr.yaml"
+        ).read_text(encoding="utf-8")
         prometheus_app = (
             ROOT / "k8s" / "platform" / "applications" / "kube-prometheus-stack-app.yaml.template"
         ).read_text(encoding="utf-8")
@@ -1860,6 +1904,11 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("labels:\n    app: sonarr", sonarr)
         self.assertIn("labels:\n    app: prowlarr", prowlarr)
         self.assertIn("labels:\n    app: downloaders", downloaders)
+        self.assertIn('args: ["bazarr"]', bazarr)
+        self.assertIn("FORM_AUTH", bazarr)
+        self.assertIn("labels:\n    app: bazarr", bazarr)
+        self.assertIn('listen_addr = "0.0.0.0:5656"', unpackerr)
+        self.assertIn("labels:\n    app: unpackerr", unpackerr)
         self.assertIn("kind: StatefulSet", seerr)
         self.assertIn("/api/v1/settings/public", seerr)
         self.assertIn("- name: flaresolverr", prometheus_app)
@@ -1867,6 +1916,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("- name: sonarr", prometheus_app)
         self.assertIn("- name: prowlarr", prometheus_app)
         self.assertIn("- name: autobrr", prometheus_app)
+        self.assertIn("- name: bazarr", prometheus_app)
+        self.assertIn("- name: unpackerr", prometheus_app)
         self.assertIn("namespaceSelector:\n                matchNames:\n                  - media", prometheus_app)
         self.assertIn("argocd.argoproj.io/hook: PreSync", prometheus_app)
 

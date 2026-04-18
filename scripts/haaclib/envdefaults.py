@@ -45,6 +45,7 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
         for key in (
             "AUTHELIA_ADMIN_USERNAME",
             "ARGOCD_USERNAME",
+            "BAZARR_AUTH_USERNAME",
             "GRAFANA_ADMIN_USERNAME",
             "JELLYFIN_ADMIN_USERNAME",
             "LITMUS_ADMIN_USERNAME",
@@ -56,6 +57,7 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
         for key in (
             "AUTHELIA_ADMIN_PASSWORD",
             "ARGOCD_PASSWORD",
+            "BAZARR_AUTH_PASSWORD",
             "GRAFANA_ADMIN_PASSWORD",
             "JELLYFIN_ADMIN_PASSWORD",
             "LITMUS_ADMIN_PASSWORD",
@@ -66,12 +68,13 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
     set_default(env, "AUTHELIA_ADMIN_USERNAME", "admin")
     authelia_username = env_value(env, "AUTHELIA_ADMIN_USERNAME") or "admin"
 
-    for key in ("ARGOCD_USERNAME", "GRAFANA_ADMIN_USERNAME", "LITMUS_ADMIN_USERNAME", "SEMAPHORE_ADMIN_USERNAME"):
+    for key in ("ARGOCD_USERNAME", "BAZARR_AUTH_USERNAME", "GRAFANA_ADMIN_USERNAME", "LITMUS_ADMIN_USERNAME", "SEMAPHORE_ADMIN_USERNAME"):
         set_default(env, key, authelia_username)
 
     if env_value(env, "AUTHELIA_ADMIN_PASSWORD"):
         for key in (
             "ARGOCD_PASSWORD",
+            "BAZARR_AUTH_PASSWORD",
             "GRAFANA_ADMIN_PASSWORD",
             "LITMUS_ADMIN_PASSWORD",
             "SEMAPHORE_ADMIN_PASSWORD",
@@ -105,6 +108,7 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
         "HAAC_MAIN_USERNAME",
         "AUTHELIA_ADMIN_USERNAME",
         "ARGOCD_USERNAME",
+        "BAZARR_AUTH_USERNAME",
         "GRAFANA_ADMIN_USERNAME",
         "JELLYFIN_ADMIN_USERNAME",
         "LITMUS_ADMIN_USERNAME",

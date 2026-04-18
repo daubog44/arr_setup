@@ -39,6 +39,10 @@ spec:
                 secretKeyRef:
                   name: downloaders-auth
                   key: QBITTORRENT_PASSWORD_PBKDF2
+            - name: QBITTORRENT_SAVE_PATH
+              value: /data/torrents
+            - name: QBITTORRENT_TEMP_PATH
+              value: /data/torrents/incomplete
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -48,41 +52,105 @@ spec:
               config_file="${config_dir}/qBittorrent.conf"
               tmp_file="${config_file}.tmp"
               mkdir -p "$config_dir"
+              mkdir -p "$QBITTORRENT_SAVE_PATH" "$QBITTORRENT_TEMP_PATH"
               touch "$config_file"
 
-              awk -v quser="$QBITTORRENT_USERNAME" -v qhash="$QBITTORRENT_PASSWORD_PBKDF2" '
+              awk -v quser="$QBITTORRENT_USERNAME" -v qhash="$QBITTORRENT_PASSWORD_PBKDF2" -v qsave="$QBITTORRENT_SAVE_PATH" -v qtemp="$QBITTORRENT_TEMP_PATH" '
                 BEGIN {
+                  in_bittorrent = 0
                   in_preferences = 0
+                  bittorrent_found = 0
                   preferences_found = 0
-                  wrote_credentials = 0
+                  wrote_bittorrent = 0
+                  wrote_preferences = 0
                 }
                 {
+                  if ($0 == "[BitTorrent]") {
+                    if (in_preferences && !wrote_preferences) {
+                      print "WebUI\\Username=" quser
+                      print "WebUI\\Password_PBKDF2=" qhash
+                      print "Downloads\\SavePath=" qsave
+                      print "Downloads\\TempPath=" qtemp
+                      print "Downloads\\TempPathEnabled=true"
+                      wrote_preferences = 1
+                    }
+                    in_preferences = 0
+                    bittorrent_found = 1
+                    in_bittorrent = 1
+                    print
+                    next
+                  }
                   if ($0 == "[Preferences]") {
+                    if (in_bittorrent && !wrote_bittorrent) {
+                      print "Session\\DefaultSavePath=" qsave
+                      print "Session\\TempPath=" qtemp
+                      wrote_bittorrent = 1
+                    }
+                    in_bittorrent = 0
                     preferences_found = 1
                     in_preferences = 1
                     print
                     next
                   }
+                  if (in_bittorrent && $0 ~ /^\[/) {
+                    if (!wrote_bittorrent) {
+                      print "Session\\DefaultSavePath=" qsave
+                      print "Session\\TempPath=" qtemp
+                      wrote_bittorrent = 1
+                    }
+                    in_bittorrent = 0
+                  }
                   if (in_preferences && $0 ~ /^\[/) {
-                    if (!wrote_credentials) {
+                    if (!wrote_preferences) {
                       print "WebUI\\Username=" quser
                       print "WebUI\\Password_PBKDF2=" qhash
-                      wrote_credentials = 1
+                      print "Downloads\\SavePath=" qsave
+                      print "Downloads\\TempPath=" qtemp
+                      print "Downloads\\TempPathEnabled=true"
+                      wrote_preferences = 1
                     }
                     in_preferences = 0
                   }
-                  if (in_preferences && ($0 ~ /^WebUI\\Username=/ || $0 ~ /^WebUI\\Password_PBKDF2=/)) {
+                  if (
+                    in_bittorrent &&
+                    (
+                      $0 ~ /^Session\\DefaultSavePath=/ ||
+                      $0 ~ /^Session\\TempPath=/
+                    )
+                  ) {
+                    next
+                  }
+                  if (
+                    in_preferences &&
+                    (
+                      $0 ~ /^WebUI\\Username=/ ||
+                      $0 ~ /^WebUI\\Password_PBKDF2=/ ||
+                      $0 ~ /^Downloads\\SavePath=/ ||
+                      $0 ~ /^Downloads\\TempPath=/ ||
+                      $0 ~ /^Downloads\\TempPathEnabled=/
+                    )
+                  ) {
                     next
                   }
                   print
                 }
                 END {
+                  if (!bittorrent_found) {
+                    print "[BitTorrent]"
+                  }
+                  if (!wrote_bittorrent) {
+                    print "Session\\DefaultSavePath=" qsave
+                    print "Session\\TempPath=" qtemp
+                  }
                   if (!preferences_found) {
                     print "[Preferences]"
                   }
-                  if (!wrote_credentials) {
+                  if (!wrote_preferences) {
                     print "WebUI\\Username=" quser
                     print "WebUI\\Password_PBKDF2=" qhash
+                    print "Downloads\\SavePath=" qsave
+                    print "Downloads\\TempPath=" qtemp
+                    print "Downloads\\TempPathEnabled=true"
                   }
                 }
               ' "$config_file" > "$tmp_file"
@@ -91,6 +159,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+            - name: media
+              mountPath: /data
       containers:
         - name: gluetun
           image: >-
@@ -163,6 +233,10 @@ spec:
                 secretKeyRef:
                   name: downloaders-auth
                   key: QUI_PASSWORD
+            - name: QBIT_SAVE_PATH
+              value: /data/torrents
+            - name: QBIT_TEMP_PATH
+              value: /data/torrents/incomplete
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -212,6 +286,28 @@ spec:
                 return 1
               }
 
+              qbit_login_cookie() {
+                curl_common -fsS -c /tmp/qbit-cookies.txt \
+                  --data-urlencode "username=${QBIT_USER}" \
+                  --data-urlencode "password=${QBIT_PASS}" \
+                  http://127.0.0.1:8080/api/v2/auth/login >/dev/null
+              }
+
+              qbit_reconcile_preferences() {
+                qbit_login_cookie
+                preference_payload=$(printf '{"save_path":"%s","temp_path":"%s","temp_path_enabled":true}' "$QBIT_SAVE_PATH" "$QBIT_TEMP_PATH")
+                curl_common -fsS -b /tmp/qbit-cookies.txt \
+                  --data-urlencode "json=${preference_payload}" \
+                  http://127.0.0.1:8080/api/v2/app/setPreferences >/dev/null
+              }
+
+              qbit_preferences_supported() {
+                preferences=$(curl_common -fsS -b /tmp/qbit-cookies.txt http://127.0.0.1:8080/api/v2/app/preferences || true)
+                printf '%s' "$preferences" | grep -q "\"save_path\":\"${QBIT_SAVE_PATH}" &&
+                  printf '%s' "$preferences" | grep -q "\"temp_path\":\"${QBIT_TEMP_PATH}" &&
+                  printf '%s' "$preferences" | grep -q '"temp_path_enabled":true'
+              }
+
               extract_instance_id() {
                 compact="$1"
                 instance_id=$(printf '%s' "$compact" | sed -n 's/.*"id":\([0-9][0-9]*\),"name":"qBittorrent".*/\1/p')
@@ -244,6 +340,12 @@ spec:
 
               if ! qbit_login_ok "$QBIT_PASS"; then
                 echo "qBittorrent did not accept the reconciled password." >&2
+                exit 1
+              fi
+
+              qbit_reconcile_preferences
+              if ! qbit_preferences_supported; then
+                echo "qBittorrent did not persist the supported shared download paths." >&2
                 exit 1
               fi
 
@@ -304,11 +406,8 @@ spec:
                   port=$(cat /tmp/gluetun/forwarded_port)
                   if [ "$port" != "$last_port" ] && [ -n "$port" ]; then
                     echo "Syncing port $port to qBittorrent..."
-                    curl -s -o /dev/null -c /tmp/cookies.txt \
-                      --data-urlencode "username=${QBIT_USER}" \
-                      --data-urlencode "password=${QBIT_PASS}" \
-                      http://localhost:8080/api/v2/auth/login
-                    curl -s -o /dev/null -b /tmp/cookies.txt -d "json={\"listen_port\": ${port}}" http://localhost:8080/api/v2/app/setPreferences
+                    qbit_login_cookie
+                    curl -s -o /dev/null -b /tmp/qbit-cookies.txt -d "json={\"listen_port\": ${port}}" http://localhost:8080/api/v2/app/setPreferences
                     echo "Port synchronized."
                     last_port=$port
                   fi

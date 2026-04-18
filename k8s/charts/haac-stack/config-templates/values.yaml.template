@@ -43,6 +43,7 @@ global:
     autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "${DOWNLOADERS_AUTH_SECRET_SHA256}"
+    mediaAuthChecksum: "${MEDIA_AUTH_SECRET_SHA256}"
     homepageConfigChecksum: "${HOMEPAGE_CONFIG_CHECKSUM}"
     homepageWidgetsChecksum: "${HOMEPAGE_WIDGETS_SECRET_SHA256}"
   images:
@@ -70,6 +71,9 @@ global:
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
       tag: 1.37.0
+    bazarr:
+      repository: lscr.io/linuxserver/bazarr
+      tag: 1.5.3
     exportarr:
       repository: ghcr.io/onedr0p/exportarr
       tag: v2.3.0
@@ -109,6 +113,9 @@ global:
     flaresolverr:
       repository: ghcr.io/flaresolverr/flaresolverr
       tag: v3.4.6
+    unpackerr:
+      repository: ghcr.io/unpackerr/unpackerr
+      tag: v0.15.2
     recyclarr:
       repository: ghcr.io/recyclarr/recyclarr
       tag: 8.5.1
@@ -269,6 +276,17 @@ ingresses:
     homepage_name: Seerr
     homepage_icon: mdi-movie-search-outline
     homepage_description: Requests & Discovery
+  bazarr:
+    enabled: true
+    subdomain: bazarr
+    service: bazarr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Bazarr
+    homepage_icon: bazarr.png
+    homepage_description: Subtitle Automation
   qbittorrent:
     enabled: true
     subdomain: qui

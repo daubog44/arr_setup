@@ -254,6 +254,36 @@ spec:
                     - action: replace
                       targetLabel: cluster
                       replacement: "haacarr-master"
+            - name: bazarr
+              namespaceSelector:
+                matchNames:
+                  - media
+              selector:
+                matchLabels:
+                  app: bazarr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
+            - name: unpackerr
+              namespaceSelector:
+                matchNames:
+                  - media
+              selector:
+                matchLabels:
+                  app: unpackerr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
           prometheusSpec:
             securityContext:
               runAsNonRoot: false

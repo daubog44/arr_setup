@@ -65,6 +65,7 @@ LITMUS_MONGODB_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-mongodb-
 LITMUS_MONGODB_SECRET_NAME = "litmus-mongodb-credentials"
 LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
+MEDIA_AUTH_SECRET_OUTPUT = SECRETS_DIR / "media-auth-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 RECYCLARR_CONFIG_TEMPLATE = (
@@ -92,6 +93,7 @@ GITOPS_GENERATED_OUTPUTS = (
     ARGOCD_OIDC_SECRET_OUTPUT,
     LITMUS_ADMIN_SECRET_OUTPUT,
     LITMUS_MONGODB_SECRET_OUTPUT,
+    MEDIA_AUTH_SECRET_OUTPUT,
     *GITOPS_RENDERED_OUTPUTS,
 )
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
@@ -181,9 +183,14 @@ SEERR_JELLYFIN_INTERNAL_PORT = 80
 SEERR_JELLYFIN_SERVER_TYPE = 2
 QBITTORRENT_INTERNAL_HOST = "qbittorrent.media.svc.cluster.local"
 QBITTORRENT_INTERNAL_PORT = 8080
+QBITTORRENT_SHARED_DOWNLOAD_PATH = "/data/torrents"
+QBITTORRENT_SHARED_INCOMPLETE_PATH = "/data/torrents/incomplete"
+BAZARR_INTERNAL_URL = "http://bazarr.media.svc.cluster.local"
 PROWLARR_INTERNAL_URL = "http://prowlarr.media.svc.cluster.local"
 RADARR_INTERNAL_URL = "http://radarr.media.svc.cluster.local"
 SONARR_INTERNAL_URL = "http://sonarr.media.svc.cluster.local"
+BAZARR_DEFAULT_LANGUAGE_CODES = ("it", "en")
+BAZARR_DEFAULT_PROFILE_ID = 1
 ARR_QBITTORRENT_CLIENT_NAME = "qBittorrent"
 ARR_QBITTORRENT_CATEGORIES = {
     "radarr": "radarr",
@@ -275,6 +282,16 @@ def merged_env() -> dict[str, str]:
                     "QBITTORRENT_USERNAME": merged.get("QBITTORRENT_USERNAME", "admin"),
                     "QUI_PASSWORD": merged["QUI_PASSWORD"],
                     "QBITTORRENT_PASSWORD_PBKDF2": merged["QBITTORRENT_PASSWORD_PBKDF2"],
+                }
+            ),
+        )
+    if merged.get("BAZARR_AUTH_USERNAME") and merged.get("BAZARR_AUTH_PASSWORD"):
+        merged.setdefault(
+            "MEDIA_AUTH_SECRET_SHA256",
+            stable_secret_checksum(
+                {
+                    "BAZARR_AUTH_USERNAME": merged["BAZARR_AUTH_USERNAME"],
+                    "BAZARR_AUTH_PASSWORD": merged["BAZARR_AUTH_PASSWORD"],
                 }
             ),
         )
@@ -1786,6 +1803,16 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             None,
         ),
         (
+            "media-auth",
+            "media",
+            MEDIA_AUTH_SECRET_OUTPUT,
+            {
+                "BAZARR_AUTH_USERNAME": env["BAZARR_AUTH_USERNAME"],
+                "BAZARR_AUTH_PASSWORD": env["BAZARR_AUTH_PASSWORD"],
+            },
+            None,
+        ),
+        (
             "homepage-widgets-secret",
             "mgmt",
             HOMEPAGE_WIDGETS_SECRET_OUTPUT,
@@ -3146,6 +3173,38 @@ def http_request_text(
         return exc.code, exc.read().decode("utf-8")
     except (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError, TimeoutError, OSError) as exc:
         raise HaaCError(f"HTTP request failed: {method} {url}\n{exc}") from exc
+
+
+def form_field_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return ""
+    return str(value)
+
+
+def http_request_form_text(
+    url: str,
+    *,
+    method: str = "POST",
+    fields: list[tuple[str, object]] | tuple[tuple[str, object], ...],
+    headers: dict[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+    timeout: int = 60,
+) -> tuple[int, str]:
+    encoded_fields = [(key, form_field_value(value)) for key, value in fields]
+    request_headers = dict(headers or {})
+    request_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+    data = urllib.parse.urlencode(encoded_fields, doseq=True).encode("utf-8")
+    request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+    open_fn = opener.open if opener is not None else urllib.request.urlopen
+    try:
+        with open_fn(request, timeout=timeout) as response:
+            return response.status, response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8")
+    except (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError, TimeoutError, OSError) as exc:
+        raise HaaCError(f"HTTP form request failed: {method} {url}\n{exc}") from exc
 
 
 def http_request_json(
@@ -4634,6 +4693,13 @@ def bootstrap_downloaders_session(kubectl: str, session_kubeconfig: Path, env: d
             capture_output=True,
         ).stdout
         if downloaders_bootstrap_succeeded_from_logs(latest_logs):
+            config_text = read_downloaders_qbittorrent_config(kubectl, session_kubeconfig, pod_name)
+            if not qbittorrent_shared_paths_supported(config_text):
+                raise HaaCError(
+                    "Downloader bootstrap reached the supported port-sync steady state, "
+                    "but qBittorrent still persisted unsupported shared paths.\n"
+                    f"{config_text.strip()}"
+                )
             return
         time.sleep(5)
 
@@ -4673,6 +4739,57 @@ def downloaders_bootstrap_succeeded_from_logs(logs: str) -> bool:
     return (
         "qui instance connectivity test passed." in normalized
         and "bootstrap complete. starting port-forward sync loop..." in normalized
+    )
+
+
+def normalize_qbittorrent_path(value: str | None) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return ""
+    normalized = cleaned.rstrip("/")
+    return normalized or "/"
+
+
+def qbittorrent_config_value(config_text: str, key: str) -> str:
+    prefix = f"{key}="
+    for raw_line in config_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return ""
+
+
+def qbittorrent_shared_paths_supported(config_text: str) -> bool:
+    expected_paths = {
+        "Session\\DefaultSavePath": QBITTORRENT_SHARED_DOWNLOAD_PATH,
+        "Session\\TempPath": QBITTORRENT_SHARED_INCOMPLETE_PATH,
+        "Downloads\\SavePath": QBITTORRENT_SHARED_DOWNLOAD_PATH,
+        "Downloads\\TempPath": QBITTORRENT_SHARED_INCOMPLETE_PATH,
+    }
+    for key, expected in expected_paths.items():
+        actual = normalize_qbittorrent_path(qbittorrent_config_value(config_text, key))
+        if actual != normalize_qbittorrent_path(expected):
+            return False
+    return True
+
+
+def read_downloaders_qbittorrent_config(kubectl: str, kubeconfig: Path, pod_name: str) -> str:
+    return run_stdout(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "exec",
+            "-n",
+            "media",
+            pod_name,
+            "-c",
+            "qbittorrent",
+            "--",
+            "/bin/sh",
+            "-ec",
+            "cat /config/qBittorrent/qBittorrent.conf",
+        ]
     )
 
 
@@ -5528,6 +5645,199 @@ def ensure_seerr_sonarr_settings(
     )
 
 
+def bazarr_auth_identity(env: dict[str, str]) -> tuple[str, str]:
+    username = str(env.get("BAZARR_AUTH_USERNAME") or "").strip()
+    password = str(env.get("BAZARR_AUTH_PASSWORD") or "").strip()
+    if not username or not password:
+        raise HaaCError(
+            "Bazarr bootstrap needs native auth credentials. Set BAZARR_AUTH_USERNAME/BAZARR_AUTH_PASSWORD or let them derive from HAAC_MAIN_*."
+        )
+    return username, password
+
+
+def bazarr_language_codes(env: dict[str, str]) -> list[str]:
+    raw = str(env.get("BAZARR_LANGUAGES") or "").strip()
+    values = raw.split(",") if raw else list(BAZARR_DEFAULT_LANGUAGE_CODES)
+    codes: list[str] = []
+    for value in values:
+        code = str(value).strip().lower()
+        if not code:
+            continue
+        if not re.fullmatch(r"[a-z]{2,3}", code):
+            raise HaaCError(f"BAZARR_LANGUAGES contains an unsupported language code: {code}")
+        if code not in codes:
+            codes.append(code)
+    if not codes:
+        return list(BAZARR_DEFAULT_LANGUAGE_CODES)
+    return codes
+
+
+def bazarr_profile_name(language_codes: list[str]) -> str:
+    labels = {
+        "en": "English",
+        "it": "Italian",
+    }
+    resolved = [labels.get(code, code.upper()) for code in language_codes]
+    return " + ".join(resolved)
+
+
+def bazarr_default_profile_payload(language_codes: list[str]) -> list[dict[str, object]]:
+    return [
+        {
+            "name": bazarr_profile_name(language_codes),
+            "profileId": BAZARR_DEFAULT_PROFILE_ID,
+            "cutoff": None,
+            "items": [
+                {
+                    "id": index,
+                    "language": code,
+                    "forced": False,
+                    "hi": False,
+                    "audio_exclude": False,
+                    "audio_only_include": False,
+                }
+                for index, code in enumerate(language_codes, start=1)
+            ],
+            "mustContain": [],
+            "mustNotContain": [],
+            "originalFormat": False,
+            "tag": None,
+        }
+    ]
+
+
+def bazarr_api_headers(api_key: str) -> dict[str, str]:
+    return {"X-API-KEY": api_key}
+
+
+def bazarr_settings_json(port: int, *, api_key: str) -> dict[str, object]:
+    data = http_request_json(
+        f"http://127.0.0.1:{port}/api/system/settings",
+        headers=bazarr_api_headers(api_key),
+    )
+    if not isinstance(data, dict):
+        raise HaaCError("Bazarr returned an unsupported settings payload.")
+    return data
+
+
+def read_bazarr_service_api_key(kubectl: str, kubeconfig: Path) -> str:
+    pod_name = latest_pod_name(kubectl, kubeconfig, "media", "app=bazarr")
+    script = r"""
+set -eu
+config_path="$(find /config -maxdepth 4 -type f \( -name 'config.yaml' -o -name 'config.yml' \) | head -n 1)"
+[ -n "$config_path" ] || { echo 'Bazarr config.yaml not found under /config' >&2; exit 1; }
+awk '
+/^auth:$/ { in_auth=1; next }
+/^[^[:space:]].*:$/ { if (in_auth) in_auth=0 }
+in_auth && /^[[:space:]]+apikey:/ {
+  sub(/^[[:space:]]*apikey:[[:space:]]*/, "")
+  gsub(/^[\"\047]|[\"\047]$/, "")
+  print
+  exit
+}
+' "$config_path"
+"""
+    api_key = kubectl_exec_stdout(
+        kubectl,
+        kubeconfig,
+        namespace="media",
+        pod=pod_name,
+        container="bazarr",
+        script=script,
+    ).strip()
+    if not api_key:
+        raise HaaCError("Bazarr config does not expose an API key yet.")
+    return api_key
+
+
+def bazarr_settings_form_fields(
+    *,
+    env: dict[str, str],
+    radarr_api_key: str,
+    sonarr_api_key: str,
+) -> list[tuple[str, object]]:
+    language_codes = bazarr_language_codes(env)
+    fields: list[tuple[str, object]] = [
+        ("settings-general-use_sonarr", True),
+        ("settings-general-use_radarr", True),
+        ("settings-general-single_language", False),
+        ("settings-general-minimum_score", 90),
+        ("settings-general-minimum_score_movie", 90),
+        ("settings-general-serie_default_enabled", True),
+        ("settings-general-serie_default_profile", BAZARR_DEFAULT_PROFILE_ID),
+        ("settings-general-movie_default_enabled", True),
+        ("settings-general-movie_default_profile", BAZARR_DEFAULT_PROFILE_ID),
+        ("settings-sonarr-ip", "sonarr.media.svc.cluster.local"),
+        ("settings-sonarr-port", 80),
+        ("settings-sonarr-base_url", ""),
+        ("settings-sonarr-ssl", False),
+        ("settings-sonarr-apikey", sonarr_api_key),
+        ("settings-sonarr-only_monitored", True),
+        ("settings-radarr-ip", "radarr.media.svc.cluster.local"),
+        ("settings-radarr-port", 80),
+        ("settings-radarr-base_url", ""),
+        ("settings-radarr-ssl", False),
+        ("settings-radarr-apikey", radarr_api_key),
+        ("settings-radarr-only_monitored", True),
+        ("languages-profiles", json.dumps(bazarr_default_profile_payload(language_codes))),
+    ]
+    for code in language_codes:
+        fields.append(("languages-enabled", code))
+    return fields
+
+
+def ensure_bazarr_bootstrap(
+    port: int,
+    *,
+    env: dict[str, str],
+    api_key: str,
+    radarr_api_key: str,
+    sonarr_api_key: str,
+) -> None:
+    settings_url = f"http://127.0.0.1:{port}/api/system/settings"
+    status, body = http_request_form_text(
+        settings_url,
+        fields=bazarr_settings_form_fields(env=env, radarr_api_key=radarr_api_key, sonarr_api_key=sonarr_api_key),
+        headers=bazarr_api_headers(api_key),
+    )
+    if status not in (200, 204):
+        raise HaaCError(f"Bazarr settings bootstrap failed.\nHTTP {status}\n{body}")
+
+    username, password = bazarr_auth_identity(env)
+    auth_status, auth_body = http_request_form_text(
+        settings_url,
+        fields=[
+            ("settings-auth-type", "form"),
+            ("settings-auth-username", username),
+            ("settings-auth-password", password),
+        ],
+        headers=bazarr_api_headers(api_key),
+    )
+    if auth_status not in (200, 204):
+        raise HaaCError(f"Bazarr auth bootstrap failed.\nHTTP {auth_status}\n{auth_body}")
+
+    settings = bazarr_settings_json(port, api_key=api_key)
+    general = settings.get("general") if isinstance(settings.get("general"), dict) else {}
+    sonarr_settings = settings.get("sonarr") if isinstance(settings.get("sonarr"), dict) else {}
+    radarr_settings = settings.get("radarr") if isinstance(settings.get("radarr"), dict) else {}
+    auth_settings = settings.get("auth") if isinstance(settings.get("auth"), dict) else {}
+    if not bool(general.get("use_sonarr")) or not bool(general.get("use_radarr")):
+        raise HaaCError("Bazarr persisted settings but still does not enable both Sonarr and Radarr.")
+    if str(sonarr_settings.get("ip") or "").strip() != "sonarr.media.svc.cluster.local":
+        raise HaaCError("Bazarr settings persisted, but the Sonarr endpoint is still not the repo-managed internal service.")
+    if str(radarr_settings.get("ip") or "").strip() != "radarr.media.svc.cluster.local":
+        raise HaaCError("Bazarr settings persisted, but the Radarr endpoint is still not the repo-managed internal service.")
+    if not bool(general.get("serie_default_enabled")) or not bool(general.get("movie_default_enabled")):
+        raise HaaCError("Bazarr settings persisted, but the default language profile is still disabled for series or movies.")
+    if str(auth_settings.get("type") or "").strip() != "form":
+        raise HaaCError("Bazarr settings persisted, but native form authentication is still disabled.")
+    require_http_status(
+        f"http://127.0.0.1:{port}/login",
+        label="Bazarr /login",
+        expected_statuses=(200, 302),
+    )
+
+
 def warm_flaresolverr_metrics(kubectl: str, kubeconfig: Path) -> None:
     with kubectl_port_forward(kubectl, kubeconfig, "media", "svc/flaresolverr", 8191) as app_port:
         http_request_text(
@@ -5544,6 +5854,8 @@ def verify_media_metrics_surface(kubectl: str, kubeconfig: Path) -> None:
         ("svc/sonarr", 9708, "sonarr_series_total"),
         ("svc/prowlarr", 9709, "prowlarr_indexer_total"),
         ("svc/autobrr", 9074, "autobrr_info"),
+        ("svc/bazarr", 9710, "bazarr_system_status"),
+        ("svc/unpackerr", 5656, "unpackerr_uptime_seconds_total"),
     )
     for resource, remote_port, metric_name in metric_checks:
         with kubectl_port_forward(kubectl, kubeconfig, "media", resource, remote_port) as local_port:
@@ -5564,6 +5876,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
     downloader_password = env["QUI_PASSWORD"]
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        bazarr_api_key = ""
         radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
         sonarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "sonarr")
         prowlarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "prowlarr")
@@ -5577,6 +5890,8 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             "deployment/radarr",
             "deployment/sonarr",
             "deployment/prowlarr",
+            "deployment/bazarr",
+            "deployment/unpackerr",
             "deployment/jellyfin",
             "statefulset/seerr",
         ):
@@ -5661,6 +5976,20 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 implementation="Sonarr",
                 downstream_api_key=sonarr_api_key,
                 downstream_url=SONARR_INTERNAL_URL,
+            )
+        bazarr_api_key = read_bazarr_service_api_key(kubectl, session_kubeconfig)
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/bazarr", 80) as port:
+            require_http_status(
+                f"http://127.0.0.1:{port}/login",
+                label="Bazarr /login",
+                expected_statuses=(200, 302),
+            )
+            ensure_bazarr_bootstrap(
+                port,
+                env=env,
+                api_key=bazarr_api_key,
+                radarr_api_key=radarr_api_key,
+                sonarr_api_key=sonarr_api_key,
             )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/jellyfin", 80) as port:
             require_http_status(f"http://127.0.0.1:{port}/health", label="Jellyfin /health")

@@ -254,6 +254,36 @@ spec:
                     - action: replace
                       targetLabel: cluster
                       replacement: "${LXC_MASTER_HOSTNAME}"
+            - name: bazarr
+              namespaceSelector:
+                matchNames:
+                  - media
+              selector:
+                matchLabels:
+                  app: bazarr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "${LXC_MASTER_HOSTNAME}"
+            - name: unpackerr
+              namespaceSelector:
+                matchNames:
+                  - media
+              selector:
+                matchLabels:
+                  app: unpackerr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "${LXC_MASTER_HOSTNAME}"
           prometheusSpec:
             securityContext:
               runAsNonRoot: false

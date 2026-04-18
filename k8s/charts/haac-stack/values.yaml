@@ -40,10 +40,11 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "d8e8ac791cf98f2fd1a2da8241bf8aa57c31dcf7c9a162508200aa5173a9ce46"
+    autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
-    homepageConfigChecksum: "ffa513811a013c316a051d5d4c103a4cb471356d8f98af24273e5d1c2836134b"
+    mediaAuthChecksum: "5fa0ee508931338ffecd850cca5c176dd204142a7433d7fdd77682a727cec882"
+    homepageConfigChecksum: "3b9abbabb43f600b644178a97619b6cb42f355559559ec395af98baa9214927a"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -70,6 +71,9 @@ global:
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
       tag: 1.37.0
+    bazarr:
+      repository: lscr.io/linuxserver/bazarr
+      tag: 1.5.3
     exportarr:
       repository: ghcr.io/onedr0p/exportarr
       tag: v2.3.0
@@ -109,6 +113,9 @@ global:
     flaresolverr:
       repository: ghcr.io/flaresolverr/flaresolverr
       tag: v3.4.6
+    unpackerr:
+      repository: ghcr.io/unpackerr/unpackerr
+      tag: v0.15.2
     recyclarr:
       repository: ghcr.io/recyclarr/recyclarr
       tag: 8.5.1
@@ -269,6 +276,17 @@ ingresses:
     homepage_name: Seerr
     homepage_icon: mdi-movie-search-outline
     homepage_description: Requests & Discovery
+  bazarr:
+    enabled: true
+    subdomain: bazarr
+    service: bazarr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Bazarr
+    homepage_icon: bazarr.png
+    homepage_description: Subtitle Automation
   qbittorrent:
     enabled: true
     subdomain: qui

@@ -1,0 +1,118 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bazarr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    matchLabels:
+      app: bazarr
+  template:
+    metadata:
+      annotations:
+        checksum/media-auth: {{ .Values.global.auth.mediaAuthChecksum | quote }}
+      labels:
+        app: bazarr
+    spec:
+      containers:
+        - name: bazarr
+          image: >-
+            {{ .Values.global.images.bazarr.repository }}:{{ .Values.global.images.bazarr.tag }}
+          ports:
+            - containerPort: 6767
+              name: http
+          livenessProbe:
+            tcpSocket:
+              port: 6767
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 6767
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          env:
+            - name: PUID
+              value: "{{ .Values.global.storage.uid }}"
+            - name: PGID
+              value: "{{ .Values.global.storage.gid }}"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+        - name: exportarr
+          image: >-
+            {{ .Values.global.images.exportarr.repository }}:{{ .Values.global.images.exportarr.tag }}
+          args: ["bazarr"]
+          env:
+            - name: PORT
+              value: "9710"
+            - name: URL
+              value: "http://127.0.0.1:6767"
+            - name: AUTH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: media-auth
+                  key: BAZARR_AUTH_USERNAME
+            - name: AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: media-auth
+                  key: BAZARR_AUTH_PASSWORD
+            - name: FORM_AUTH
+              value: "true"
+            - name: LOG_LEVEL
+              value: info
+          ports:
+            - containerPort: 9710
+              name: metrics
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: bazarr-config
+        - name: media
+          hostPath:
+            path: /data
+            type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bazarr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: bazarr
+spec:
+  selector:
+    app: bazarr
+  ports:
+    - port: 80
+      targetPort: 6767
+      name: http
+    - port: 9710
+      targetPort: 9710
+      name: metrics
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bazarr-config
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

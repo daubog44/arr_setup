@@ -1,0 +1,129 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unpackerr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    matchLabels:
+      app: unpackerr
+  template:
+    metadata:
+      labels:
+        app: unpackerr
+    spec:
+      initContainers:
+        - name: unpackerr-config
+          image: >-
+            {{ .Values.global.images.alpine.repository }}:{{ .Values.global.images.alpine.tag }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -eu
+              apk add --no-cache python3 >/dev/null
+              cat > /tmp/render-unpackerr.py <<'PY'
+              import pathlib
+              import xml.etree.ElementTree as ET
+
+              def read_api_key(path_str: str) -> str:
+                  path = pathlib.Path(path_str)
+                  if not path.exists():
+                      raise SystemExit(f"Missing ARR config: {path}")
+                  tree = ET.parse(path)
+                  api_key = (tree.findtext("./ApiKey") or "").strip()
+                  if not api_key:
+                      raise SystemExit(f"ARR config does not expose ApiKey: {path}")
+                  return api_key
+
+              radarr_api_key = read_api_key("/arr-config/radarr/config.xml")
+              sonarr_api_key = read_api_key("/arr-config/sonarr/config.xml")
+              config = f"""
+              [webserver]
+                metrics = true
+                listen_addr = "0.0.0.0:5656"
+
+              [[radarr]]
+                url = "http://radarr.media.svc.cluster.local"
+                api_key = "{radarr_api_key}"
+                paths = ['/data/torrents']
+                protocols = "torrent,TorrentDownloadProtocol"
+
+              [[sonarr]]
+                url = "http://sonarr.media.svc.cluster.local"
+                api_key = "{sonarr_api_key}"
+                paths = ['/data/torrents']
+                protocols = "torrent,TorrentDownloadProtocol"
+              """.strip() + "\n"
+              pathlib.Path("/config/unpackerr.conf").write_text(config, encoding="utf-8")
+              PY
+              python3 /tmp/render-unpackerr.py
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: radarr-config
+              mountPath: /arr-config/radarr
+              readOnly: true
+            - name: sonarr-config
+              mountPath: /arr-config/sonarr
+              readOnly: true
+      containers:
+        - name: unpackerr
+          image: >-
+            {{ .Values.global.images.unpackerr.repository }}:{{ .Values.global.images.unpackerr.tag }}
+          ports:
+            - containerPort: 5656
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5656
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5656
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: media
+          hostPath:
+            path: /data
+            type: Directory
+        - name: radarr-config
+          persistentVolumeClaim:
+            claimName: radarr-config
+        - name: sonarr-config
+          persistentVolumeClaim:
+            claimName: sonarr-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unpackerr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: unpackerr
+spec:
+  selector:
+    app: unpackerr
+  ports:
+    - port: 5656
+      targetPort: 5656
+      name: metrics
