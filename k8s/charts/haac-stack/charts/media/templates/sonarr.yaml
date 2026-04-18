@@ -45,6 +45,26 @@ spec:
               mountPath: /config
             - name: media
               mountPath: /data
+        - name: exportarr
+          image: >-
+            {{ .Values.global.images.exportarr.repository }}:{{ .Values.global.images.exportarr.tag }}
+          args: ["sonarr"]
+          env:
+            - name: PORT
+              value: "9708"
+            - name: URL
+              value: "http://127.0.0.1:8989"
+            - name: CONFIG
+              value: /config/config.xml
+            - name: LOG_LEVEL
+              value: info
+          ports:
+            - containerPort: 9708
+              name: metrics
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
       volumes:
         - name: config
           persistentVolumeClaim:
@@ -69,6 +89,9 @@ spec:
     - port: 80
       targetPort: 8989
       name: http
+    - port: 9708
+      targetPort: 9708
+      name: metrics
 
 ---
 apiVersion: v1

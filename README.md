@@ -120,6 +120,7 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 - `plan`: OpenTofu plan only
 - `configure-os`: Ansible only
 - `deploy-local`: local Helm deploy for the workload stack
+- `media:post-install`: rerunnable media reconcile for downloader bootstrap, Seerr wiring, and media metrics warmup
 - `verify-all`: cluster and endpoint checks
 - `down`: graceful shutdown and destroy
 
@@ -154,9 +155,12 @@ The main operator identity is the default login layer for local Authelia auth, A
 
 Opaque machine secrets stay separate. OIDC client secrets, cookie keys, encryption keys, DB passwords, and similar bootstrap internals do not derive from `HAAC_MAIN_PASSWORD`. Grafana no longer falls back to downloader credentials either; it uses the effective admin identity layer only.
 
+The supported media rerun path is `task media:post-install`. It waits for the media workloads, reuses the downloader bootstrap, wires Seerr against Jellyfin/Radarr/Sonarr when the effective Jellyfin admin identity is valid, warms the supported media metrics, and fails closed with an explicit ProtonVPN blocker when the downloader path cannot come up.
+
 The supported login model is:
 
 - `HAAC_MAIN_*`: default human operator identity for Authelia, ArgoCD, Grafana, Semaphore, and Litmus
+- `JELLYFIN_ADMIN_*`: optional override only for the Seerr bootstrap path when Jellyfin admin differs from `HAAC_MAIN_*`
 - `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true`: optional opt-in to let qBittorrent and QUI inherit `HAAC_MAIN_*`
 - `QBITTORRENT_USERNAME` and `QUI_PASSWORD`: dedicated downloader auth when you want a lower-trust boundary
 - `LITMUS_MONGODB_ROOT_PASSWORD` and `LITMUS_MONGODB_REPLICA_SET_KEY`: stable technical secrets for the Litmus MongoDB subchart; pin them so Argo/Helm do not rotate the replica-set secret on every render

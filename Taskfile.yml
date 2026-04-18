@@ -9,6 +9,8 @@ includes:
     taskfile: ./Taskfile.security.yml
   chaos:
     taskfile: ./Taskfile.chaos.yml
+  media:
+    taskfile: ./Taskfile.media.yml
 
 vars:
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
@@ -123,6 +125,7 @@ tasks:
       - task: internal:gitops-bootstrap
       - task: security:post-install
       - task: chaos:post-install
+      - task: media:post-install
       - task: internal:sync-cloudflare
 
   reconcile:sealed-secrets:
@@ -149,6 +152,11 @@ tasks:
       - task: internal:repair-litmus-chaos
       - task: internal:verify-endpoints
       - task: internal:verify-browser-auth
+
+  reconcile:media:
+    desc: "Reconcile only the repo-managed media stack readiness surface without reprovisioning infra or re-running the full GitOps publication flow."
+    cmds:
+      - task: media:post-install
 
   reconcile:infra:
     desc: "Reconcile remote infra and node configuration without re-running the full final verification path."

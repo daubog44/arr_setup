@@ -62,6 +62,7 @@ function applyCredentialDefaults(env) {
       "AUTHELIA_ADMIN_USERNAME",
       "ARGOCD_USERNAME",
       "GRAFANA_ADMIN_USERNAME",
+      "JELLYFIN_ADMIN_USERNAME",
       "LITMUS_ADMIN_USERNAME",
       "SEMAPHORE_ADMIN_USERNAME",
     ]) {
@@ -74,6 +75,7 @@ function applyCredentialDefaults(env) {
       "AUTHELIA_ADMIN_PASSWORD",
       "ARGOCD_PASSWORD",
       "GRAFANA_ADMIN_PASSWORD",
+      "JELLYFIN_ADMIN_PASSWORD",
       "LITMUS_ADMIN_PASSWORD",
       "SEMAPHORE_ADMIN_PASSWORD",
     ]) {
@@ -95,6 +97,7 @@ function applyCredentialDefaults(env) {
   }
   if (mainEmail) {
     setDefault(env, "AUTHELIA_ADMIN_EMAIL", mainEmail);
+    setDefault(env, "JELLYFIN_ADMIN_EMAIL", mainEmail);
     setDefault(env, "SEMAPHORE_ADMIN_EMAIL", mainEmail);
   }
   if (mainName) {
@@ -241,6 +244,7 @@ const routeChecks = {
   sonarr: { appNativeSelector: 'text=/Sonarr|Login|Username|Password/' },
   prowlarr: { appNativeSelector: 'text=/Prowlarr|Login|Username|Password|Authentication Required|Indexers/' },
   autobrr: { appNativeSelector: 'text=/autobrr|Login|Username|Password/i' },
+  seerr: { appNativeSelector: 'text=/Seerr|Jellyfin|Plex|Emby|Login|Sign In|Request/i' },
   qbittorrent: { appNativeSelector: 'text=/qBittorrent|Username|Password|Web UI/' },
   argocd: {
     type: "native_oidc",
@@ -416,6 +420,7 @@ const GRAFANA_API_SERVER_DASHBOARD_UID = "09ec8aa1e996d6ffcd6817bbaff4db1b";
 const GRAFANA_ARGOCD_DASHBOARD_UID = "qPkgGHg7k";
 const GRAFANA_TRIVY_DASHBOARD_UID = "ycwPj724k";
 const GRAFANA_ALLOY_DASHBOARD_UID = "haac-alloy-overview";
+const GRAFANA_ARR_STACK_DASHBOARD_UID = "haac-arr-stack-overview";
 const GRAFANA_PROMETHEUS_DATASOURCE_UID = "prometheus";
 
 function prometheusScalar(result) {
@@ -519,6 +524,13 @@ async function verifyGrafanaObservability(page) {
   await assertGrafanaMetricPresent(page, "trivy_clusterrole_clusterrbacassessments");
   await assertGrafanaMetricPresent(page, "trivy_image_exposedsecrets");
 
+  await openGrafanaDashboard(page, GRAFANA_ARR_STACK_DASHBOARD_UID, "arr-stack-overview", "/ARR Stack Overview/i");
+  await assertGrafanaMetricPresent(page, "radarr_movie_total");
+  await assertGrafanaMetricPresent(page, "sonarr_series_total");
+  await assertGrafanaMetricPresent(page, "prowlarr_indexer_total");
+  await assertGrafanaMetricPresent(page, "autobrr_info");
+  await assertGrafanaMetricPresent(page, "flaresolverr_request_total");
+
   await openGrafanaDashboard(page, GRAFANA_ALLOY_DASHBOARD_UID, "alloy-overview", "/Alloy Overview/i");
   await assertGrafanaMetricPresent(page, "alloy_build_info");
   const alloyTargetCount = await queryGrafanaPrometheus(page, 'count(up{job=~"alloy.*"})');
@@ -553,7 +565,7 @@ async function verifyGrafanaObservability(page) {
 async function verifyHomepageWidgets(page) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const bodyText = await page.locator("body").innerText();
-    if (!bodyText.includes("Grafana") || !bodyText.includes("qBittorrent") || !bodyText.includes("Kyverno")) {
+    if (!bodyText.includes("Grafana") || !bodyText.includes("qBittorrent") || !bodyText.includes("Kyverno") || !bodyText.includes("Seerr")) {
       await page.waitForTimeout(1000);
       continue;
     }
@@ -569,7 +581,7 @@ async function verifyHomepageWidgets(page) {
     }
     return;
   }
-  throw new Error("Homepage did not render the expected Grafana, qBittorrent, and Kyverno cards before widget verification.");
+  throw new Error("Homepage did not render the expected Grafana, qBittorrent, Kyverno, and Seerr cards before widget verification.");
 }
 
 async function verifyEdgeRoute(page, env, subdomain, screenshotName, expectedText = null, unexpectedText = null) {

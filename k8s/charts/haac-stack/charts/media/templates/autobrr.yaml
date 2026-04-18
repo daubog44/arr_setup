@@ -22,6 +22,8 @@ spec:
           ports:
             - containerPort: 7474
               name: http
+            - containerPort: 9074
+              name: metrics
           livenessProbe:
             httpGet:
               path: /
@@ -42,6 +44,12 @@ spec:
               value: "{{ .Values.global.storage.gid }}"
             - name: AUTOBRR__HOST
               value: "0.0.0.0"
+            - name: AUTOBRR__METRICS_ENABLED
+              value: "true"
+            - name: AUTOBRR__METRICS_HOST
+              value: "0.0.0.0"
+            - name: AUTOBRR__METRICS_PORT
+              value: "9074"
           volumeMounts:
             - name: config
               mountPath: /config
@@ -64,6 +72,9 @@ spec:
     - port: 80
       targetPort: 7474
       name: http
+    - port: 9074
+      targetPort: 9074
+      name: metrics
 
 ---
 apiVersion: v1

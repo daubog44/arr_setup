@@ -43,7 +43,7 @@ global:
     autheliaConfigChecksum: "d8e8ac791cf98f2fd1a2da8241bf8aa57c31dcf7c9a162508200aa5173a9ce46"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
-    homepageConfigChecksum: "a8d1d79edd70a03265d9fe46fb5adef7a640c4ddf6abcfcaabbb8f8a39e15839"
+    homepageConfigChecksum: "ffa513811a013c316a051d5d4c103a4cb471356d8f98af24273e5d1c2836134b"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -70,6 +70,12 @@ global:
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
       tag: 1.37.0
+    exportarr:
+      repository: ghcr.io/onedr0p/exportarr
+      tag: v2.3.0
+    seerr:
+      repository: ghcr.io/seerr-team/seerr
+      tag: v3.2.0
     authelia:
       repository: authelia/authelia
       tag: 4.39.19
@@ -252,6 +258,17 @@ ingresses:
     homepage_name: Autobrr
     homepage_icon: autobrr.png
     homepage_description: RSS/IRC Downloader
+  seerr:
+    enabled: true
+    subdomain: seerr
+    service: seerr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Seerr
+    homepage_icon: mdi-movie-search-outline
+    homepage_description: Requests & Discovery
   qbittorrent:
     enabled: true
     subdomain: qui

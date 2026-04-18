@@ -70,6 +70,12 @@ global:
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
       tag: 1.37.0
+    exportarr:
+      repository: ghcr.io/onedr0p/exportarr
+      tag: v2.3.0
+    seerr:
+      repository: ghcr.io/seerr-team/seerr
+      tag: v3.2.0
     authelia:
       repository: authelia/authelia
       tag: 4.39.19
@@ -252,6 +258,17 @@ ingresses:
     homepage_name: Autobrr
     homepage_icon: autobrr.png
     homepage_description: RSS/IRC Downloader
+  seerr:
+    enabled: true
+    subdomain: seerr
+    service: seerr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Seerr
+    homepage_icon: mdi-movie-search-outline
+    homepage_description: Requests & Discovery
   qbittorrent:
     enabled: true
     subdomain: qui

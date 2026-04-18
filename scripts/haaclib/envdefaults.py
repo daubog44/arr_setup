@@ -46,6 +46,7 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
             "AUTHELIA_ADMIN_USERNAME",
             "ARGOCD_USERNAME",
             "GRAFANA_ADMIN_USERNAME",
+            "JELLYFIN_ADMIN_USERNAME",
             "LITMUS_ADMIN_USERNAME",
             "SEMAPHORE_ADMIN_USERNAME",
         ):
@@ -56,6 +57,7 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
             "AUTHELIA_ADMIN_PASSWORD",
             "ARGOCD_PASSWORD",
             "GRAFANA_ADMIN_PASSWORD",
+            "JELLYFIN_ADMIN_PASSWORD",
             "LITMUS_ADMIN_PASSWORD",
             "SEMAPHORE_ADMIN_PASSWORD",
         ):
@@ -78,11 +80,13 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
 
     if main_email:
         set_default(env, "AUTHELIA_ADMIN_EMAIL", main_email)
+        set_default(env, "JELLYFIN_ADMIN_EMAIL", main_email)
         set_default(env, "SEMAPHORE_ADMIN_EMAIL", main_email)
 
     domain_name = env_value(env, "DOMAIN_NAME")
     if domain_name:
         set_default(env, "AUTHELIA_ADMIN_EMAIL", f"{authelia_username}@{domain_name}")
+        set_default(env, "JELLYFIN_ADMIN_EMAIL", f"{authelia_username}@{domain_name}")
         set_default(env, "SEMAPHORE_ADMIN_EMAIL", f"{authelia_username}@{domain_name}")
     set_default(env, "SEMAPHORE_ADMIN_EMAIL", "admin@localhost")
 
@@ -102,6 +106,7 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
         "AUTHELIA_ADMIN_USERNAME",
         "ARGOCD_USERNAME",
         "GRAFANA_ADMIN_USERNAME",
+        "JELLYFIN_ADMIN_USERNAME",
         "LITMUS_ADMIN_USERNAME",
         "SEMAPHORE_ADMIN_USERNAME",
         "QBITTORRENT_USERNAME",
@@ -113,7 +118,14 @@ def apply_identity_defaults(env: dict[str, str]) -> dict[str, str]:
             hint="Use only letters, digits, dot, underscore, or dash.",
         )
 
-    for key in ("HAAC_MAIN_NAME", "AUTHELIA_ADMIN_NAME", "SEMAPHORE_ADMIN_NAME", "AUTHELIA_ADMIN_EMAIL", "SEMAPHORE_ADMIN_EMAIL"):
+    for key in (
+        "HAAC_MAIN_NAME",
+        "AUTHELIA_ADMIN_NAME",
+        "SEMAPHORE_ADMIN_NAME",
+        "AUTHELIA_ADMIN_EMAIL",
+        "JELLYFIN_ADMIN_EMAIL",
+        "SEMAPHORE_ADMIN_EMAIL",
+    ):
         validate_identity_value(
             key,
             env_value(env, key),

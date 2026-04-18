@@ -5,6 +5,7 @@ import argparse
 import base64
 import hashlib
 import http.client
+import http.cookiejar
 import json
 import os
 import platform
@@ -23,6 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
@@ -155,6 +157,7 @@ UP_TASK_PHASES = {
     "internal:wait-for-argocd-sync": "GitOps readiness",
     "security:post-install": "GitOps readiness",
     "chaos:post-install": "GitOps readiness",
+    "media:post-install": "GitOps readiness",
     "internal:repair-litmus-admin": "GitOps readiness",
     "internal:repair-litmus-chaos": "GitOps readiness",
     "sync-cloudflare": "Cloudflare publication",
@@ -3084,6 +3087,140 @@ def kubectl_port_forward(
                 process.wait(timeout=10)
 
 
+def http_request_text(
+    url: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+    timeout: int = 60,
+) -> tuple[int, str]:
+    data = None
+    request_headers = dict(headers or {})
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        request_headers.setdefault("Content-Type", "application/json")
+    request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
+    open_fn = opener.open if opener is not None else urllib.request.urlopen
+    try:
+        with open_fn(request, timeout=timeout) as response:
+            return response.status, response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8")
+    except (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError, TimeoutError, OSError) as exc:
+        raise HaaCError(f"HTTP request failed: {method} {url}\n{exc}") from exc
+
+
+def http_request_json(
+    url: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+    timeout: int = 60,
+) -> dict[str, object] | list[object]:
+    status, body = http_request_text(
+        url,
+        method=method,
+        payload=payload,
+        headers=headers,
+        opener=opener,
+        timeout=timeout,
+    )
+    if status < 200 or status >= 300:
+        raise HaaCError(f"API request failed: {method} {url}\nHTTP {status}\n{body}")
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HaaCError(f"API returned non-JSON content: {method} {url}") from exc
+    if isinstance(parsed, (dict, list)):
+        return parsed
+    raise HaaCError(f"API returned unsupported JSON content: {method} {url}")
+
+
+def build_cookie_opener() -> urllib.request.OpenerDirector:
+    jar = http.cookiejar.CookieJar()
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+
+def json_array(value: dict[str, object] | list[object]) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def xml_element_text(root: ET.Element, name: str) -> str:
+    for element in root.iter():
+        local_name = element.tag.split("}", 1)[-1]
+        if local_name == name and element.text:
+            return element.text.strip()
+    return ""
+
+
+def wait_for_rollout(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    namespace: str,
+    resource: str,
+    timeout_seconds: int = 600,
+) -> None:
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "rollout",
+            "status",
+            resource,
+            "-n",
+            namespace,
+            f"--timeout={timeout_seconds}s",
+        ]
+    )
+
+
+def latest_pod_name(kubectl: str, kubeconfig: Path, namespace: str, selector: str) -> str:
+    pod_name = run_stdout(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "get",
+            "pod",
+            "-n",
+            namespace,
+            "-l",
+            selector,
+            "--sort-by=.metadata.creationTimestamp",
+            "-o",
+            "jsonpath={.items[-1].metadata.name}",
+        ],
+        check=False,
+    )
+    if not pod_name:
+        raise HaaCError(f"No pod found in namespace {namespace} for selector {selector}")
+    return pod_name
+
+
+def kubectl_exec_stdout(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    namespace: str,
+    pod: str,
+    container: str | None = None,
+    script: str,
+) -> str:
+    command = [kubectl, "--kubeconfig", str(kubeconfig), "exec", "-n", namespace, pod]
+    if container:
+        command.extend(["-c", container])
+    command.extend(["--", "/bin/sh", "-ec", script])
+    return run_stdout(command)
+
+
 def litmus_login_probe(port: int, username: str, password: str) -> tuple[int, str]:
     payload = json.dumps({"username": username, "password": password}).encode("utf-8")
     request = urllib.request.Request(
@@ -4398,63 +4535,21 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
         )
 
 
-def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
-    env = merged_env()
+def bootstrap_downloaders_session(kubectl: str, session_kubeconfig: Path, env: dict[str, str]) -> None:
     require_env(["QUI_PASSWORD"], env)
     qui_password = env["QUI_PASSWORD"]
     qbit_username = env.get("QBITTORRENT_USERNAME", "admin")
 
-    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
-        deadline = time.time() + 600
-        pod_name = ""
-        while time.time() < deadline:
-            pod_name = run_stdout(
-                [
-                    kubectl,
-                    "--kubeconfig",
-                    str(session_kubeconfig),
-                    "get",
-                    "pod",
-                    "-l",
-                    "app=downloaders",
-                    "-n",
-                    "media",
-                    "--sort-by=.metadata.creationTimestamp",
-                    "-o",
-                    "jsonpath={.items[-1].metadata.name}",
-                ],
-                check=False,
-            )
-            if pod_name:
-                health = run(
-                    [
-                        kubectl,
-                        "--kubeconfig",
-                        str(session_kubeconfig),
-                        "exec",
-                        "-n",
-                        "media",
-                pod_name,
-                "-c",
-                "port-sync",
-                "--",
-                "/bin/sh",
-                "-ec",
-                "curl -fsS http://127.0.0.1:7476/api/auth/me >/dev/null && "
-                "version_code=$(curl -sS -o /tmp/qbit-version.txt -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version || true) && "
-                "[ \"$version_code\" = \"200\" ] || [ \"$version_code\" = \"403\" ]",
-            ],
-            check=False,
-            capture_output=True,
-        )
-                if health.returncode == 0:
-                    break
+    deadline = time.time() + 600
+    pod_name = ""
+    while time.time() < deadline:
+        try:
+            pod_name = latest_pod_name(kubectl, session_kubeconfig, "media", "app=downloaders")
+        except HaaCError:
             time.sleep(5)
-        else:
-            raise HaaCError("QUI API did not become available before timeout")
-
-        def exec_port_sync(script: str, *, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
-            return run(
+            continue
+        if pod_name:
+            health = run(
                 [
                     kubectl,
                     "--kubeconfig",
@@ -4468,108 +4563,573 @@ def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                     "--",
                     "/bin/sh",
                     "-ec",
-                    script,
+                    "curl -fsS http://127.0.0.1:7476/api/auth/me >/dev/null && "
+                    "version_code=$(curl -sS -o /tmp/qbit-version.txt -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version || true) && "
+                    "[ \"$version_code\" = \"200\" ] || [ \"$version_code\" = \"403\" ]",
                 ],
-                check=check,
-                capture_output=capture_output,
+                check=False,
+                capture_output=True,
             )
+            if health.returncode == 0:
+                break
+        time.sleep(5)
+    else:
+        raise HaaCError("QUI API did not become available before timeout")
 
-        qbit_username_q = shlex.quote(qbit_username)
-        qbit_password_q = shlex.quote(qui_password)
-        qbit_login_check = (
-            f"QBIT_USERNAME={qbit_username_q}; "
-            f"QBIT_PASSWORD={qbit_password_q}; "
-            "login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' "
-            "--connect-timeout 5 --max-time 20 "
-            "--data-urlencode \"username=${QBIT_USERNAME}\" "
-            "--data-urlencode \"password=${QBIT_PASSWORD}\" "
-            "http://127.0.0.1:8080/api/v2/auth/login || true); "
-            "[ \"$login_code\" = \"200\" ] && grep -q 'Ok\\.' /tmp/qbit-login.txt"
-        )
-
-        logs = run(
+    def exec_port_sync(script: str, *, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
+        return run(
             [
                 kubectl,
                 "--kubeconfig",
                 str(session_kubeconfig),
-                "logs",
+                "exec",
                 "-n",
                 "media",
                 pod_name,
                 "-c",
-                "qbittorrent",
+                "port-sync",
+                "--",
+                "/bin/sh",
+                "-ec",
+                script,
             ],
-            check=False,
-            capture_output=True,
-        ).stdout
-        temp_password = ""
-        for line in logs.splitlines():
-            if "A temporary password is provided for this session:" in line:
-                temp_password = line.split()[-1]
+            check=check,
+            capture_output=capture_output,
+        )
 
-        if exec_port_sync(qbit_login_check, check=False).returncode != 0:
-            if not temp_password:
-                raise HaaCError(
-                    "qBittorrent is not accepting the desired password and no temporary password was found in container logs."
-                )
+    qbit_username_q = shlex.quote(qbit_username)
+    qbit_password_q = shlex.quote(qui_password)
+    qbit_login_check = (
+        f"QBIT_USERNAME={qbit_username_q}; "
+        f"QBIT_PASSWORD={qbit_password_q}; "
+        "login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' "
+        "--connect-timeout 5 --max-time 20 "
+        "--data-urlencode \"username=${QBIT_USERNAME}\" "
+        "--data-urlencode \"password=${QBIT_PASSWORD}\" "
+        "http://127.0.0.1:8080/api/v2/auth/login || true); "
+        "[ \"$login_code\" = \"200\" ] && grep -q 'Ok\\.' /tmp/qbit-login.txt"
+    )
 
-            exec_port_sync(
-                f"QBIT_USERNAME={qbit_username_q}; "
-                f"TEMP_PASSWORD={shlex.quote(temp_password)}; "
-                f"QBIT_PASSWORD={qbit_password_q}; "
-                "curl -fsS --connect-timeout 5 --max-time 20 -c /tmp/qbit-cookies.txt "
-                "--data-urlencode \"username=${QBIT_USERNAME}\" "
-                "--data-urlencode \"password=${TEMP_PASSWORD}\" "
-                "http://127.0.0.1:8080/api/v2/auth/login >/dev/null && "
-                "curl -fsS --connect-timeout 5 --max-time 20 -b /tmp/qbit-cookies.txt "
-                "--data-urlencode \"new_password=${QBIT_PASSWORD}\" "
-                "http://127.0.0.1:8080/api/v2/auth/changePassword >/dev/null"
+    logs = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(session_kubeconfig),
+            "logs",
+            "-n",
+            "media",
+            pod_name,
+            "-c",
+            "qbittorrent",
+        ],
+        check=False,
+        capture_output=True,
+    ).stdout
+    temp_password = ""
+    for line in logs.splitlines():
+        if "A temporary password is provided for this session:" in line:
+            temp_password = line.split()[-1]
+
+    if exec_port_sync(qbit_login_check, check=False).returncode != 0:
+        if not temp_password:
+            raise HaaCError(
+                "qBittorrent is not accepting the desired password and no temporary password was found in container logs."
             )
 
-        if exec_port_sync(qbit_login_check, check=False).returncode != 0:
-            raise HaaCError("qBittorrent did not accept the reconciled password.")
-
-        upsert_instance_script = (
+        exec_port_sync(
             f"QBIT_USERNAME={qbit_username_q}; "
+            f"TEMP_PASSWORD={shlex.quote(temp_password)}; "
             f"QBIT_PASSWORD={qbit_password_q}; "
-            "ESCAPED_QBIT_PASSWORD=$(printf '%s' \"$QBIT_PASSWORD\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
-            "extract_instance_id() { "
-            "compact=\"$1\"; "
-            "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\),\"name\":\"qBittorrent\".*/\\1/p'); "
-            "if [ -z \"$instance_id\" ]; then "
-            "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"name\":\"qBittorrent\",\"id\":\\([0-9][0-9]*\\).*/\\1/p'); "
-            "fi; "
-            "printf '%s' \"$instance_id\"; "
-            "}; "
-            "ESCAPED_QBIT_USERNAME=$(printf '%s' \"$QBIT_USERNAME\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
-            "INSTANCE_PAYLOAD=$(printf '{\"name\":\"qBittorrent\",\"host\":\"http://127.0.0.1:8080\",\"username\":\"%s\",\"password\":\"%s\",\"hasLocalFilesystemAccess\":true}' \"$ESCAPED_QBIT_USERNAME\" \"$ESCAPED_QBIT_PASSWORD\"); "
-            "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
-            "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
-            "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
-            "if [ -n \"$INSTANCE_ID\" ]; then "
-            "curl -fsS --connect-timeout 5 --max-time 20 -X PUT -H 'Content-Type: application/json' --data \"$INSTANCE_PAYLOAD\" "
-            "\"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}\" >/dev/null; "
-            "else "
-            "CREATE_CODE=$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/qui-instance-create.json -w '%{http_code}' -H 'Content-Type: application/json' "
-            "--data \"$INSTANCE_PAYLOAD\" http://127.0.0.1:7476/api/instances || true); "
-            "if [ \"$CREATE_CODE\" != \"200\" ] && [ \"$CREATE_CODE\" != \"201\" ]; then "
-            "cat /tmp/qui-instance-create.json >&2; exit 1; "
-            "fi; "
-            "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
-            "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
-            "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
-            "fi; "
-            "[ -n \"$INSTANCE_ID\" ]; "
-            "TEST_RESPONSE=''; "
-            "for _ in $(seq 1 24); do "
-            "TEST_RESPONSE=$(curl -sS --connect-timeout 5 --max-time 20 -X POST \"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}/test\" || true); "
-            "if printf '%s' \"$TEST_RESPONSE\" | grep -q '\"connected\":true'; then exit 0; fi; "
-            "sleep 5; "
-            "done; "
-            "printf '%s\\n' \"$TEST_RESPONSE\" >&2; "
-            "exit 1"
+            "curl -fsS --connect-timeout 5 --max-time 20 -c /tmp/qbit-cookies.txt "
+            "--data-urlencode \"username=${QBIT_USERNAME}\" "
+            "--data-urlencode \"password=${TEMP_PASSWORD}\" "
+            "http://127.0.0.1:8080/api/v2/auth/login >/dev/null && "
+            "curl -fsS --connect-timeout 5 --max-time 20 -b /tmp/qbit-cookies.txt "
+            "--data-urlencode \"new_password=${QBIT_PASSWORD}\" "
+            "http://127.0.0.1:8080/api/v2/auth/changePassword >/dev/null"
         )
-        exec_port_sync(upsert_instance_script)
+
+    if exec_port_sync(qbit_login_check, check=False).returncode != 0:
+        raise HaaCError("qBittorrent did not accept the reconciled password.")
+
+    upsert_instance_script = (
+        f"QBIT_USERNAME={qbit_username_q}; "
+        f"QBIT_PASSWORD={qbit_password_q}; "
+        "ESCAPED_QBIT_PASSWORD=$(printf '%s' \"$QBIT_PASSWORD\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
+        "extract_instance_id() { "
+        "compact=\"$1\"; "
+        "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\),\"name\":\"qBittorrent\".*/\\1/p'); "
+        "if [ -z \"$instance_id\" ]; then "
+        "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"name\":\"qBittorrent\",\"id\":\\([0-9][0-9]*\\).*/\\1/p'); "
+        "fi; "
+        "printf '%s' \"$instance_id\"; "
+        "}; "
+        "ESCAPED_QBIT_USERNAME=$(printf '%s' \"$QBIT_USERNAME\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
+        "INSTANCE_PAYLOAD=$(printf '{\"name\":\"qBittorrent\",\"host\":\"http://127.0.0.1:8080\",\"username\":\"%s\",\"password\":\"%s\",\"hasLocalFilesystemAccess\":true}' \"$ESCAPED_QBIT_USERNAME\" \"$ESCAPED_QBIT_PASSWORD\"); "
+        "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
+        "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
+        "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
+        "if [ -n \"$INSTANCE_ID\" ]; then "
+        "curl -fsS --connect-timeout 5 --max-time 20 -X PUT -H 'Content-Type: application/json' --data \"$INSTANCE_PAYLOAD\" "
+        "\"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}\" >/dev/null; "
+        "else "
+        "CREATE_CODE=$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/qui-instance-create.json -w '%{http_code}' -H 'Content-Type: application/json' "
+        "--data \"$INSTANCE_PAYLOAD\" http://127.0.0.1:7476/api/instances || true); "
+        "if [ \"$CREATE_CODE\" != \"200\" ] && [ \"$CREATE_CODE\" != \"201\" ]; then "
+        "cat /tmp/qui-instance-create.json >&2; exit 1; "
+        "fi; "
+        "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
+        "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
+        "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
+        "fi; "
+        "[ -n \"$INSTANCE_ID\" ]; "
+        "TEST_RESPONSE=''; "
+        "for _ in $(seq 1 24); do "
+        "TEST_RESPONSE=$(curl -sS --connect-timeout 5 --max-time 20 -X POST \"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}/test\" || true); "
+        "if printf '%s' \"$TEST_RESPONSE\" | grep -q '\"connected\":true'; then exit 0; fi; "
+        "sleep 5; "
+        "done; "
+        "printf '%s\\n' \"$TEST_RESPONSE\" >&2; "
+        "exit 1"
+    )
+    exec_port_sync(upsert_instance_script)
+
+
+def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
+    env = merged_env()
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        bootstrap_downloaders_session(kubectl, session_kubeconfig, env)
+
+
+def detect_vpn_blocker(kubectl: str, kubeconfig: Path) -> str:
+    try:
+        pod_name = latest_pod_name(kubectl, kubeconfig, "media", "app=downloaders")
+    except HaaCError:
+        return ""
+    logs = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "logs",
+            "-n",
+            "media",
+            pod_name,
+            "-c",
+            "gluetun",
+            "--tail=120",
+        ],
+        check=False,
+        capture_output=True,
+    ).stdout
+    markers = (
+        "auth failed",
+        "auth_failed",
+        "subscription",
+        "plan",
+        "credentials",
+        "openvpn",
+        "cannot authenticate",
+        "failed to start",
+    )
+    matching = [line.strip() for line in logs.splitlines() if any(marker in line.lower() for marker in markers)]
+    if not matching:
+        return ""
+    return "\n".join(matching[-5:])
+
+
+def read_arr_service_api_key(kubectl: str, kubeconfig: Path, app_name: str) -> str:
+    pod_name = latest_pod_name(kubectl, kubeconfig, "media", f"app={app_name}")
+    config_xml = kubectl_exec_stdout(
+        kubectl,
+        kubeconfig,
+        namespace="media",
+        pod=pod_name,
+        container=app_name,
+        script="cat /config/config.xml",
+    )
+    try:
+        root = ET.fromstring(config_xml)
+    except ET.ParseError as exc:
+        raise HaaCError(f"{app_name} config.xml is not valid XML") from exc
+    api_key = xml_element_text(root, "ApiKey")
+    if not api_key:
+        raise HaaCError(f"{app_name} config.xml does not contain an ApiKey")
+    return api_key
+
+
+def require_http_status(
+    url: str,
+    *,
+    label: str,
+    expected_statuses: tuple[int, ...] = (200,),
+    expected_body_pattern: str | None = None,
+    opener: urllib.request.OpenerDirector | None = None,
+) -> str:
+    status, body = http_request_text(url, opener=opener)
+    if status not in expected_statuses:
+        raise HaaCError(f"{label} returned HTTP {status} instead of {expected_statuses}: {body}")
+    if expected_body_pattern and not re.search(expected_body_pattern, body, flags=re.IGNORECASE):
+        raise HaaCError(f"{label} did not render the expected body pattern {expected_body_pattern!r}")
+    return body
+
+
+def preferred_option(
+    items: list[dict[str, object]],
+    *,
+    name_preferences: tuple[str, ...] = (),
+    path_preferences: tuple[str, ...] = (),
+) -> dict[str, object]:
+    if not items:
+        raise HaaCError("The expected option list is empty.")
+    if name_preferences:
+        for preferred in name_preferences:
+            for item in items:
+                if str(item.get("name") or "").strip().lower() == preferred.lower():
+                    return item
+    if path_preferences:
+        for preferred in path_preferences:
+            for item in items:
+                if str(item.get("path") or "").strip() == preferred:
+                    return item
+    return items[0]
+
+
+def seerr_admin_identity(env: dict[str, str]) -> tuple[str, str, str]:
+    username = (
+        env.get("JELLYFIN_ADMIN_USERNAME")
+        or env.get("HAAC_MAIN_USERNAME")
+        or env.get("AUTHELIA_ADMIN_USERNAME")
+        or "admin"
+    ).strip()
+    password = (
+        env.get("JELLYFIN_ADMIN_PASSWORD")
+        or env.get("HAAC_MAIN_PASSWORD")
+        or env.get("AUTHELIA_ADMIN_PASSWORD")
+        or ""
+    ).strip()
+    email = (
+        env.get("JELLYFIN_ADMIN_EMAIL")
+        or env.get("HAAC_MAIN_EMAIL")
+        or env.get("AUTHELIA_ADMIN_EMAIL")
+        or (f"{username}@{env.get('DOMAIN_NAME', '').strip()}" if env.get("DOMAIN_NAME") else username)
+    ).strip()
+    if not password:
+        raise HaaCError(
+            "Seerr bootstrap needs Jellyfin admin credentials. Set JELLYFIN_ADMIN_PASSWORD or let it derive from HAAC_MAIN_PASSWORD."
+        )
+    return username, password, email
+
+
+def seerr_public_settings(port: int) -> dict[str, object]:
+    response = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/public")
+    if not isinstance(response, dict):
+        raise HaaCError("Seerr public settings endpoint returned an unexpected response")
+    return response
+
+
+def seerr_login_with_jellyfin(
+    port: int,
+    *,
+    username: str,
+    password: str,
+    email: str,
+) -> urllib.request.OpenerDirector:
+    opener = build_cookie_opener()
+    payload = {"username": username, "password": password, "email": email}
+    status, body = http_request_text(
+        f"http://127.0.0.1:{port}/api/v1/auth/jellyfin",
+        method="POST",
+        payload=payload,
+        opener=opener,
+    )
+    if status < 200 or status >= 300:
+        raise HaaCError(
+            "Seerr could not authenticate against Jellyfin with the effective Jellyfin admin credentials.\n"
+            "Set JELLYFIN_ADMIN_USERNAME/JELLYFIN_ADMIN_PASSWORD explicitly if the Jellyfin admin differs from HAAC_MAIN_*.\n"
+            f"HTTP {status}\n{body}"
+        )
+    return opener
+
+
+def ensure_seerr_jellyfin_settings(
+    opener: urllib.request.OpenerDirector,
+    port: int,
+    *,
+    domain_name: str,
+) -> dict[str, object]:
+    current = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/jellyfin", opener=opener)
+    if not isinstance(current, dict):
+        raise HaaCError("Seerr Jellyfin settings returned an unexpected response")
+    api_key = str(current.get("apiKey") or "").strip()
+    if not api_key:
+        raise HaaCError("Seerr did not expose a Jellyfin API key after Jellyfin admin login.")
+    payload = {
+        "ip": "jellyfin.media.svc.cluster.local",
+        "port": 80,
+        "useSsl": False,
+        "urlBase": "",
+        "externalHostname": f"https://jellyfin.{domain_name}",
+        "jellyfinForgotPasswordUrl": f"https://jellyfin.{domain_name}/web/index.html#!/forgotpassword.html",
+        "apiKey": api_key,
+    }
+    saved = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/settings/jellyfin",
+        method="POST",
+        payload=payload,
+        opener=opener,
+    )
+    if not isinstance(saved, dict):
+        raise HaaCError("Seerr could not persist Jellyfin settings")
+
+    sync_url = f"http://127.0.0.1:{port}/api/v1/settings/jellyfin/library?sync=1"
+    http_request_json(sync_url, opener=opener)
+    refreshed = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/jellyfin", opener=opener)
+    if not isinstance(refreshed, dict):
+        raise HaaCError("Seerr Jellyfin settings refresh returned an unexpected response")
+    libraries = json_array(refreshed.get("libraries") if isinstance(refreshed, dict) else [])
+    library_ids = [str(item.get("id") or "").strip() for item in libraries if str(item.get("id") or "").strip()]
+    if library_ids:
+        enable_query = urllib.parse.urlencode({"sync": "1", "enable": ",".join(library_ids)})
+        http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/jellyfin/library?{enable_query}", opener=opener)
+        refreshed = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/jellyfin", opener=opener)
+        if not isinstance(refreshed, dict):
+            raise HaaCError("Seerr Jellyfin settings refresh returned an unexpected response")
+    return refreshed
+
+
+def ensure_seerr_radarr_settings(
+    opener: urllib.request.OpenerDirector,
+    port: int,
+    *,
+    domain_name: str,
+    radarr_api_key: str,
+) -> None:
+    current = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/radarr", opener=opener)
+    existing = json_array(current)
+    if existing:
+        return
+    test_payload = {
+        "hostname": "radarr.media.svc.cluster.local",
+        "port": 80,
+        "apiKey": radarr_api_key,
+        "baseUrl": "",
+        "useSsl": False,
+    }
+    test_response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/settings/radarr/test",
+        method="POST",
+        payload=test_payload,
+        opener=opener,
+    )
+    if not isinstance(test_response, dict):
+        raise HaaCError("Seerr Radarr test did not return a valid response")
+    profiles = json_array(test_response.get("profiles"))
+    root_folders = json_array(test_response.get("rootFolders"))
+    tags = json_array(test_response.get("tags"))
+    profile = preferred_option(profiles, name_preferences=("Any", "HD-1080p"))
+    root_folder = preferred_option(root_folders, path_preferences=("/data/media/movies", "/data/movies"))
+    payload = {
+        "name": "Radarr",
+        "hostname": test_payload["hostname"],
+        "port": 80,
+        "apiKey": radarr_api_key,
+        "useSsl": False,
+        "baseUrl": str(test_response.get("urlBase") or ""),
+        "activeProfileId": int(profile.get("id") or 0),
+        "activeProfileName": str(profile.get("name") or "default"),
+        "activeDirectory": str(root_folder.get("path") or ""),
+        "is4k": False,
+        "minimumAvailability": "released",
+        "tags": [int(tag.get("id") or 0) for tag in tags if str(tag.get("id") or "").isdigit()],
+        "isDefault": True,
+        "externalUrl": f"https://radarr.{domain_name}",
+        "syncEnabled": True,
+        "preventSearch": False,
+        "tagRequests": True,
+    }
+    if not payload["activeProfileId"] or not payload["activeDirectory"]:
+        raise HaaCError("Seerr Radarr bootstrap could not resolve a usable quality profile or root folder.")
+    http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/settings/radarr",
+        method="POST",
+        payload=payload,
+        opener=opener,
+    )
+
+
+def ensure_seerr_sonarr_settings(
+    opener: urllib.request.OpenerDirector,
+    port: int,
+    *,
+    domain_name: str,
+    sonarr_api_key: str,
+) -> None:
+    current = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/sonarr", opener=opener)
+    existing = json_array(current)
+    if existing:
+        return
+    test_payload = {
+        "hostname": "sonarr.media.svc.cluster.local",
+        "port": 80,
+        "apiKey": sonarr_api_key,
+        "baseUrl": "",
+        "useSsl": False,
+    }
+    test_response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/settings/sonarr/test",
+        method="POST",
+        payload=test_payload,
+        opener=opener,
+    )
+    if not isinstance(test_response, dict):
+        raise HaaCError("Seerr Sonarr test did not return a valid response")
+    profiles = json_array(test_response.get("profiles"))
+    root_folders = json_array(test_response.get("rootFolders"))
+    language_profiles = json_array(test_response.get("languageProfiles"))
+    tags = [int(tag.get("id") or 0) for tag in json_array(test_response.get("tags")) if str(tag.get("id") or "").isdigit()]
+    profile = preferred_option(profiles, name_preferences=("Any", "HD-1080p"))
+    root_folder = preferred_option(root_folders, path_preferences=("/data/media/tv", "/data/tv"))
+    language_profile = language_profiles[0] if language_profiles else {}
+    language_id = int(language_profile.get("id") or 0) if language_profile else 0
+    language_id_or_none = language_id or None
+    payload = {
+        "name": "Sonarr",
+        "hostname": test_payload["hostname"],
+        "port": 80,
+        "apiKey": sonarr_api_key,
+        "useSsl": False,
+        "baseUrl": str(test_response.get("urlBase") or ""),
+        "activeProfileId": int(profile.get("id") or 0),
+        "activeLanguageProfileId": language_id_or_none,
+        "activeProfileName": str(profile.get("name") or "default"),
+        "activeDirectory": str(root_folder.get("path") or ""),
+        "seriesType": "standard",
+        "animeSeriesType": "anime",
+        "activeAnimeProfileId": int(profile.get("id") or 0),
+        "activeAnimeLanguageProfileId": language_id_or_none,
+        "activeAnimeProfileName": str(profile.get("name") or "default"),
+        "activeAnimeDirectory": str(root_folder.get("path") or ""),
+        "tags": tags,
+        "animeTags": tags,
+        "is4k": False,
+        "isDefault": True,
+        "enableSeasonFolders": True,
+        "externalUrl": f"https://sonarr.{domain_name}",
+        "syncEnabled": True,
+        "preventSearch": False,
+        "tagRequests": True,
+        "monitorNewItems": "all",
+    }
+    if not payload["activeProfileId"] or not payload["activeDirectory"]:
+        raise HaaCError("Seerr Sonarr bootstrap could not resolve a usable quality profile or root folder.")
+    http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/settings/sonarr",
+        method="POST",
+        payload=payload,
+        opener=opener,
+    )
+
+
+def warm_flaresolverr_metrics(kubectl: str, kubeconfig: Path) -> None:
+    with kubectl_port_forward(kubectl, kubeconfig, "media", "svc/flaresolverr", 8191) as app_port:
+        http_request_text(
+            f"http://127.0.0.1:{app_port}/v1",
+            method="POST",
+            payload={"cmd": "request.get", "url": "https://example.com", "maxTimeout": 60000},
+        )
+
+
+def verify_media_metrics_surface(kubectl: str, kubeconfig: Path) -> None:
+    metric_checks = (
+        ("svc/flaresolverr", 8192, "flaresolverr_request_total"),
+        ("svc/radarr", 9707, "radarr_movie_total"),
+        ("svc/sonarr", 9708, "sonarr_series_total"),
+        ("svc/prowlarr", 9709, "prowlarr_indexer_total"),
+        ("svc/autobrr", 9074, "autobrr_info"),
+    )
+    for resource, remote_port, metric_name in metric_checks:
+        with kubectl_port_forward(kubectl, kubeconfig, "media", resource, remote_port) as local_port:
+            body = require_http_status(
+                f"http://127.0.0.1:{local_port}/metrics",
+                label=f"{resource} metrics",
+                expected_statuses=(200,),
+            )
+            if metric_name not in body:
+                raise HaaCError(f"{resource} metrics endpoint is reachable, but {metric_name} is still absent.")
+
+
+def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
+    env = merged_env()
+    require_env(["DOMAIN_NAME", "QUI_PASSWORD"], env)
+    username, password, email = seerr_admin_identity(env)
+
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        print("[stage] Media rollout gate")
+        for resource in (
+            "deployment/downloaders",
+            "deployment/flaresolverr",
+            "deployment/autobrr",
+            "deployment/radarr",
+            "deployment/sonarr",
+            "deployment/prowlarr",
+            "deployment/jellyfin",
+            "statefulset/seerr",
+        ):
+            wait_for_rollout(kubectl, session_kubeconfig, namespace="media", resource=resource)
+        print("[ok] Media rollout gate")
+
+        print("[stage] Downloader bootstrap gate")
+        try:
+            bootstrap_downloaders_session(kubectl, session_kubeconfig, env)
+        except HaaCError as exc:
+            vpn_blocker = detect_vpn_blocker(kubectl, session_kubeconfig)
+            if vpn_blocker:
+                raise HaaCError(
+                    "Downloader bootstrap is blocked by the ProtonVPN-backed downloader prerequisites.\n"
+                    "Check the ProtonVPN OpenVPN credentials or subscription, then rerun `task media:post-install`.\n"
+                    f"{vpn_blocker}"
+                ) from exc
+            raise
+        print("[ok] Downloader bootstrap gate")
+
+        print("[stage] Media service probes")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as port:
+            require_http_status(f"http://127.0.0.1:{port}/ping", label="Radarr /ping", expected_body_pattern="pong")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sonarr", 80) as port:
+            require_http_status(f"http://127.0.0.1:{port}/ping", label="Sonarr /ping", expected_body_pattern="pong")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/prowlarr", 80) as port:
+            require_http_status(f"http://127.0.0.1:{port}/ping", label="Prowlarr /ping", expected_body_pattern="pong")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/jellyfin", 80) as port:
+            require_http_status(f"http://127.0.0.1:{port}/health", label="Jellyfin /health")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/seerr", 80) as port:
+            public_settings = seerr_public_settings(port)
+            opener = seerr_login_with_jellyfin(port, username=username, password=password, email=email)
+            jellyfin_settings = ensure_seerr_jellyfin_settings(opener, port, domain_name=env["DOMAIN_NAME"])
+            libraries = json_array(jellyfin_settings.get("libraries") if isinstance(jellyfin_settings, dict) else [])
+            if not any(bool(item.get("enabled")) for item in libraries):
+                raise HaaCError("Seerr reached Jellyfin, but Jellyfin still exposes no enabled libraries for discovery.")
+            radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
+            sonarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "sonarr")
+            ensure_seerr_radarr_settings(opener, port, domain_name=env["DOMAIN_NAME"], radarr_api_key=radarr_api_key)
+            ensure_seerr_sonarr_settings(opener, port, domain_name=env["DOMAIN_NAME"], sonarr_api_key=sonarr_api_key)
+            if not bool(public_settings.get("initialized")):
+                initialized = http_request_json(
+                    f"http://127.0.0.1:{port}/api/v1/settings/initialize",
+                    method="POST",
+                    opener=opener,
+                )
+                if not isinstance(initialized, dict) or not bool(initialized.get("initialized")):
+                    raise HaaCError("Seerr did not finish initialization after the service bootstrap completed.")
+            final_public_settings = seerr_public_settings(port)
+            if not bool(final_public_settings.get("initialized")):
+                raise HaaCError("Seerr settings surface is still not initialized after media reconciliation.")
+        print("[ok] Media service probes")
+
+        print("[stage] Media metrics warmup")
+        warm_flaresolverr_metrics(kubectl, session_kubeconfig)
+        verify_media_metrics_surface(kubectl, session_kubeconfig)
+        print("[ok] Media metrics warmup")
 
 
 def tofu_output_json(tofu_dir: Path) -> dict:
@@ -5284,6 +5844,10 @@ def cmd_configure_apps(args: argparse.Namespace) -> None:
     bootstrap_downloaders(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
+def cmd_reconcile_media_stack(args: argparse.Namespace) -> None:
+    reconcile_media_stack(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
+
+
 def cmd_configure_argocd_local_auth(args: argparse.Namespace) -> None:
     configure_argocd_local_auth(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
@@ -5481,6 +6045,13 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--kubeconfig", required=True)
     command.add_argument("--kubectl", default="kubectl")
     command.set_defaults(func=cmd_configure_apps)
+
+    command = subparsers.add_parser("reconcile-media-stack")
+    command.add_argument("--master-ip", required=True)
+    command.add_argument("--proxmox-host", required=True)
+    command.add_argument("--kubeconfig", required=True)
+    command.add_argument("--kubectl", default="kubectl")
+    command.set_defaults(func=cmd_reconcile_media_stack)
 
     command = subparsers.add_parser("configure-argocd-local-auth")
     command.add_argument("--master-ip", required=True)

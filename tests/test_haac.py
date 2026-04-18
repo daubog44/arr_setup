@@ -76,6 +76,9 @@ class MergedEnvTests(unittest.TestCase):
         self.assertEqual(merged["GRAFANA_ADMIN_USERNAME"], "haacadmin")
         self.assertEqual(merged["SEMAPHORE_ADMIN_USERNAME"], "haacadmin")
         self.assertEqual(merged["LITMUS_ADMIN_USERNAME"], "haacadmin")
+        self.assertEqual(merged["JELLYFIN_ADMIN_USERNAME"], "haacadmin")
+        self.assertEqual(merged["JELLYFIN_ADMIN_PASSWORD"], "demo-secret")
+        self.assertEqual(merged["JELLYFIN_ADMIN_EMAIL"], "ops@example.com")
         self.assertNotIn("QBITTORRENT_USERNAME", merged)
         self.assertNotIn("QUI_PASSWORD", merged)
         self.assertEqual(merged["SEMAPHORE_ADMIN_EMAIL"], "ops@example.com")
@@ -1231,6 +1234,113 @@ class ArgocdRevisionGateTests(unittest.TestCase):
                                     )
 
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
+
+
+class ArrStackSurfaceTests(unittest.TestCase):
+    def test_up_task_phases_include_media_post_install(self) -> None:
+        self.assertEqual(haac.UP_TASK_PHASES["media:post-install"], "GitOps readiness")
+
+    def test_parser_registers_reconcile_media_stack(self) -> None:
+        parser = haac.build_parser()
+        args = parser.parse_args(
+            [
+                "reconcile-media-stack",
+                "--master-ip",
+                "192.168.0.211",
+                "--proxmox-host",
+                "pve",
+                "--kubeconfig",
+                "demo-kubeconfig",
+            ]
+        )
+
+        self.assertIs(args.func, haac.cmd_reconcile_media_stack)
+
+    def test_seerr_admin_identity_prefers_effective_jellyfin_overrides(self) -> None:
+        username, password, email = haac.seerr_admin_identity(
+            {
+                "DOMAIN_NAME": "example.com",
+                "HAAC_MAIN_USERNAME": "main-user",
+                "HAAC_MAIN_PASSWORD": "main-pass",
+                "JELLYFIN_ADMIN_USERNAME": "jf-admin",
+                "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
+                "JELLYFIN_ADMIN_EMAIL": "jf@example.com",
+            }
+        )
+
+        self.assertEqual(username, "jf-admin")
+        self.assertEqual(password, "jf-pass")
+        self.assertEqual(email, "jf@example.com")
+
+
+class ArrStackRepoFileTests(unittest.TestCase):
+    def test_taskfiles_wire_media_post_install(self) -> None:
+        taskfile = (ROOT / "Taskfile.yml").read_text(encoding="utf-8")
+        media_taskfile = (ROOT / "Taskfile.media.yml").read_text(encoding="utf-8")
+
+        self.assertIn("media:\n    taskfile: ./Taskfile.media.yml", taskfile)
+        self.assertIn("- task: media:post-install", taskfile)
+        self.assertIn("reconcile-media-stack", media_taskfile)
+
+    def test_env_example_documents_jellyfin_admin_overrides(self) -> None:
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("JELLYFIN_ADMIN_USERNAME", env_example)
+        self.assertIn("JELLYFIN_ADMIN_PASSWORD", env_example)
+        self.assertIn("JELLYFIN_ADMIN_EMAIL", env_example)
+
+    def test_readme_documents_media_post_install_surface(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("media:post-install", readme)
+        self.assertIn("JELLYFIN_ADMIN_*", readme)
+
+    def test_verify_public_auth_covers_seerr_and_arr_dashboard(self) -> None:
+        verifier = (ROOT / "scripts" / "verify-public-auth.mjs").read_text(encoding="utf-8")
+
+        self.assertIn('const GRAFANA_ARR_STACK_DASHBOARD_UID = "haac-arr-stack-overview";', verifier)
+        self.assertIn("radarr_movie_total", verifier)
+        self.assertIn("sonarr_series_total", verifier)
+        self.assertIn("prowlarr_indexer_total", verifier)
+        self.assertIn("autobrr_info", verifier)
+        self.assertIn("flaresolverr_request_total", verifier)
+        self.assertIn('seerr: { appNativeSelector:', verifier)
+        self.assertIn('bodyText.includes("Seerr")', verifier)
+
+    def test_arr_dashboard_configmap_is_repo_managed(self) -> None:
+        dashboard = (ROOT / "k8s" / "platform" / "observability" / "arr-stack-dashboard-configmap.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("arr-stack-overview.json", dashboard)
+        self.assertIn('"uid": "haac-arr-stack-overview"', dashboard)
+        self.assertIn("radarr_movie_total", dashboard)
+        self.assertIn("autobrr_info", dashboard)
+
+    def test_media_manifests_expose_supported_metrics(self) -> None:
+        autobrr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "autobrr.yaml"
+        ).read_text(encoding="utf-8")
+        flaresolverr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "helpers.yaml"
+        ).read_text(encoding="utf-8")
+        seerr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "seerr.yaml"
+        ).read_text(encoding="utf-8")
+        prometheus_app = (
+            ROOT / "k8s" / "platform" / "applications" / "kube-prometheus-stack-app.yaml.template"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("AUTOBRR__METRICS_ENABLED", autobrr)
+        self.assertIn("port: 9074", autobrr)
+        self.assertIn("PROMETHEUS_ENABLED", flaresolverr)
+        self.assertIn("kind: StatefulSet", seerr)
+        self.assertIn("/api/v1/settings/public", seerr)
+        self.assertIn("- name: flaresolverr", prometheus_app)
+        self.assertIn("- name: radarr", prometheus_app)
+        self.assertIn("- name: sonarr", prometheus_app)
+        self.assertIn("- name: prowlarr", prometheus_app)
+        self.assertIn("- name: autobrr", prometheus_app)
 
 
 if __name__ == "__main__":

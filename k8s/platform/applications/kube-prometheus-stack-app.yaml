@@ -167,6 +167,75 @@ spec:
                 - port: metrics
                   path: /metrics
                   interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
+            - name: flaresolverr
+              namespace: media
+              selector:
+                matchLabels:
+                  app: flaresolverr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
+            - name: radarr
+              namespace: media
+              selector:
+                matchLabels:
+                  app: radarr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
+            - name: sonarr
+              namespace: media
+              selector:
+                matchLabels:
+                  app: sonarr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
+            - name: prowlarr
+              namespace: media
+              selector:
+                matchLabels:
+                  app: prowlarr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
+            - name: autobrr
+              namespace: media
+              selector:
+                matchLabels:
+                  app: autobrr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "haacarr-master"
           prometheusSpec:
             securityContext:
               runAsNonRoot: false
