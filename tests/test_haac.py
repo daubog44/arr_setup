@@ -1299,6 +1299,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         verifier = (ROOT / "scripts" / "verify-public-auth.mjs").read_text(encoding="utf-8")
 
         self.assertIn('const GRAFANA_ARR_STACK_DASHBOARD_UID = "haac-arr-stack-overview";', verifier)
+        self.assertIn('async function visibleBodyText(page)', verifier)
+        self.assertIn('const body = await visibleBodyText(page);', verifier)
         self.assertIn("radarr_movie_total", verifier)
         self.assertIn("sonarr_series_total", verifier)
         self.assertIn("prowlarr_indexer_total", verifier)

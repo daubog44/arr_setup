@@ -398,6 +398,10 @@ async function screenshot(page, name) {
   await page.screenshot({ path: path.join(captureDir, `${name}.png`), fullPage: true });
 }
 
+async function visibleBodyText(page) {
+  return String((await page.locator("body").innerText().catch(() => "")) || "");
+}
+
 async function fetchJson(page, relativePath) {
   const response = await page.evaluate(async (targetPath) => {
     const result = await fetch(targetPath, { credentials: "same-origin" });
@@ -676,7 +680,7 @@ async function verifyAppNative(page, env, endpoint, screenshotName, options = {}
   if (currentHost === `auth.${env.DOMAIN_NAME}`) {
     throw new Error(`App-native route ${expectedHost} redirected to Authelia`);
   }
-  const body = String((await page.textContent("body").catch(() => "")) || "");
+  const body = await visibleBodyText(page);
   for (const marker of ["404 page not found", "Bad Gateway", "502", "Application is not available", "Internal Server Error"]) {
     if (body.includes(marker)) {
       throw new Error(`App-native route ${expectedHost} rendered an error page: ${marker}`);
