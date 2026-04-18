@@ -105,7 +105,7 @@ global:
       tag: 1.37.0
     alpine:
       repository: alpine
-      tag: 3.23
+      tag: "3.23"
     kubectl:
       repository: rancher/kubectl
       tag: "${HAAC_CLUSTER_KUBECTL_IMAGE_TAG}"

@@ -84,6 +84,7 @@ spec:
                 secretKeyRef:
                   name: recyclarr-secrets
                   key: BAZARR_API_KEY
+                  optional: true
             - name: LOG_LEVEL
               value: info
           ports:

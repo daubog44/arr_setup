@@ -32,25 +32,33 @@ spec:
 
               radarr_api_key = (os.environ.get("RADARR_API_KEY") or "").strip()
               sonarr_api_key = (os.environ.get("SONARR_API_KEY") or "").strip()
-              if not radarr_api_key or not sonarr_api_key:
-                  raise SystemExit("Unpackerr runtime secret is missing Radarr/Sonarr API keys.")
-              config = f"""
+              config = """
               [webserver]
                 metrics = true
                 listen_addr = "0.0.0.0:5656"
+              """.strip()
+
+              if radarr_api_key:
+                  config += f"""
 
               [[radarr]]
                 url = "http://radarr.media.svc.cluster.local"
                 api_key = "{radarr_api_key}"
                 paths = ['/data/torrents']
                 protocols = "torrent,TorrentDownloadProtocol"
+              """.rstrip()
+
+              if sonarr_api_key:
+                  config += f"""
 
               [[sonarr]]
                 url = "http://sonarr.media.svc.cluster.local"
                 api_key = "{sonarr_api_key}"
                 paths = ['/data/torrents']
                 protocols = "torrent,TorrentDownloadProtocol"
-              """.strip() + "\n"
+              """.rstrip()
+
+              config += "\n"
               pathlib.Path("/config/unpackerr.conf").write_text(config, encoding="utf-8")
               PY
               python3 /tmp/render-unpackerr.py
@@ -60,11 +68,13 @@ spec:
                 secretKeyRef:
                   name: recyclarr-secrets
                   key: RADARR_API_KEY
+                  optional: true
             - name: SONARR_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: recyclarr-secrets
                   key: SONARR_API_KEY
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /config
