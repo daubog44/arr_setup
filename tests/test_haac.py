@@ -1779,7 +1779,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("media:post-install", readme)
         self.assertIn("JELLYFIN_ADMIN_*", readme)
 
-    def test_recyclarr_config_template_uses_official_include_templates(self) -> None:
+    def test_recyclarr_config_template_vendors_official_profiles_with_secret_refs(self) -> None:
         config = (
             ROOT
             / "k8s"
@@ -1792,12 +1792,14 @@ class ArrStackRepoFileTests(unittest.TestCase):
             / "recyclarr.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("sonarr-quality-definition-series", config)
-        self.assertIn("sonarr-v4-quality-profile-web-1080p", config)
-        self.assertIn("sonarr-v4-custom-formats-web-1080p", config)
-        self.assertIn("radarr-quality-definition-movie", config)
-        self.assertIn("radarr-quality-profile-hd-bluray-web", config)
-        self.assertIn("radarr-custom-formats-hd-bluray-web", config)
+        self.assertIn("base_url: !secret radarr_main_base_url", config)
+        self.assertIn("api_key: !secret radarr_main_api_key", config)
+        self.assertIn("base_url: !secret sonarr_main_base_url", config)
+        self.assertIn("api_key: !secret sonarr_main_api_key", config)
+        self.assertIn("type: movie", config)
+        self.assertIn("type: series", config)
+        self.assertIn("name: HD Bluray + WEB", config)
+        self.assertIn("name: WEB-1080p", config)
 
     def test_verify_public_auth_covers_seerr_and_arr_dashboard(self) -> None:
         verifier = (ROOT / "scripts" / "verify-public-auth.mjs").read_text(encoding="utf-8")
