@@ -73,16 +73,6 @@ spec:
     spec:
       template:
         spec:
-          initContainers:
-            - name: recyclarr-init
-              image: >-
-                {{ .Values.global.images.recyclarr.repository }}:{{ .Values.global.images.recyclarr.tag }}
-              command: ["/bin/sh", "-c"]
-              args: ["if [ ! -f /config/recyclarr.yml ]; then recyclarr config create; fi"]
-              # Recyclarr >= 6.0 uses 'config create' instead of 'init'
-              volumeMounts:
-                - name: config
-                  mountPath: /config
           containers:
             - name: recyclarr
               image: >-
@@ -90,50 +80,19 @@ spec:
               args: ["sync"]
               volumeMounts:
                 - name: config
-                  mountPath: /config
+                  mountPath: /config/recyclarr.yml
+                  subPath: recyclarr.yml
+                  readOnly: true
+                - name: secrets
+                  mountPath: /config/secrets.yml
+                  subPath: secrets.yml
+                  readOnly: true
           volumes:
             - name: config
-              persistentVolumeClaim:
-                claimName: recyclarr-config
+              configMap:
+                name: recyclarr-config
+            - name: secrets
+              secret:
+                secretName: recyclarr-secrets
+                optional: true
           restartPolicy: OnFailure
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: recyclarr-pvc-binder
-  namespace: media
-  annotations:
-    argocd.argoproj.io/sync-wave: "3"
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
-spec:
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: binder
-          image: >-
-            {{ .Values.global.images.busybox.repository }}:{{ .Values.global.images.busybox.tag }}
-          command: ["sh", "-c", "echo 'Binding PVC for Local-Path provisioner'"]
-          volumeMounts:
-            - name: config
-              mountPath: /config
-      volumes:
-        - name: config
-          persistentVolumeClaim:
-            claimName: recyclarr-config
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: recyclarr-config
-  namespace: media
-  annotations:
-    argocd.argoproj.io/sync-wave: "3"
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 500Mi

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import hashlib
 import http.client
 import http.cookiejar
@@ -66,6 +67,11 @@ LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-c
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
+RECYCLARR_CONFIG_TEMPLATE = (
+    K8S_DIR / "charts" / "haac-stack" / "charts" / "media" / "files" / "recyclarr" / "recyclarr.yml"
+)
+RECYCLARR_CONFIG_MAP_NAME = "recyclarr-config"
+RECYCLARR_SECRET_NAME = "recyclarr-secrets"
 GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "argocd-apps.yaml",
     K8S_DIR / "bootstrap" / "root" / "applications" / "platform-root.yaml",
@@ -168,6 +174,36 @@ UP_TASK_PHASES = {
     "verify-endpoints": "Public URL verification",
     "internal:verify-endpoints": "Public URL verification",
     "internal:verify-browser-auth": "Public URL verification",
+}
+ARR_PING_SUCCESS_PATTERN = r'"status"\s*:\s*"OK"|pong'
+SEERR_JELLYFIN_INTERNAL_HOST = "jellyfin.media.svc.cluster.local"
+SEERR_JELLYFIN_INTERNAL_PORT = 80
+SEERR_JELLYFIN_SERVER_TYPE = 2
+QBITTORRENT_INTERNAL_HOST = "qbittorrent.media.svc.cluster.local"
+QBITTORRENT_INTERNAL_PORT = 8080
+PROWLARR_INTERNAL_URL = "http://prowlarr.media.svc.cluster.local"
+RADARR_INTERNAL_URL = "http://radarr.media.svc.cluster.local"
+SONARR_INTERNAL_URL = "http://sonarr.media.svc.cluster.local"
+ARR_QBITTORRENT_CLIENT_NAME = "qBittorrent"
+ARR_QBITTORRENT_CATEGORIES = {
+    "radarr": "radarr",
+    "sonarr": "tv-sonarr",
+    "prowlarr": "prowlarr",
+}
+ARR_QBITTORRENT_IMPORTED_CATEGORIES = {
+    "radarr": "radarr-imported",
+    "sonarr": "tv-sonarr-imported",
+}
+JELLYFIN_BOOTSTRAP_AUTH_HEADER = (
+    'MediaBrowser Client="HaaC Bootstrap", Device="HaaC Bootstrap", DeviceId="haac-bootstrap", Version="1.0.0"'
+)
+JELLYFIN_DEFAULT_LIBRARIES = (
+    {"name": "Movies", "collectionType": "movies", "path": "/data/movies"},
+    {"name": "TV Shows", "collectionType": "tvshows", "path": "/data/tv"},
+)
+ARR_DEFAULT_ROOT_FOLDERS = {
+    "radarr": "/data/media/movies",
+    "sonarr": "/data/media/tv",
 }
 UP_PHASE_ORDER = (
     "Preflight",
@@ -4537,8 +4573,6 @@ def configure_argocd_local_auth(master_ip: str, proxmox_host: str, kubeconfig: P
 
 def bootstrap_downloaders_session(kubectl: str, session_kubeconfig: Path, env: dict[str, str]) -> None:
     require_env(["QUI_PASSWORD"], env)
-    qui_password = env["QUI_PASSWORD"]
-    qbit_username = env.get("QBITTORRENT_USERNAME", "admin")
 
     deadline = time.time() + 600
     pod_name = ""
@@ -4549,32 +4583,10 @@ def bootstrap_downloaders_session(kubectl: str, session_kubeconfig: Path, env: d
             time.sleep(5)
             continue
         if pod_name:
-            health = run(
-                [
-                    kubectl,
-                    "--kubeconfig",
-                    str(session_kubeconfig),
-                    "exec",
-                    "-n",
-                    "media",
-                    pod_name,
-                    "-c",
-                    "port-sync",
-                    "--",
-                    "/bin/sh",
-                    "-ec",
-                    "curl -fsS http://127.0.0.1:7476/api/auth/me >/dev/null && "
-                    "version_code=$(curl -sS -o /tmp/qbit-version.txt -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version || true) && "
-                    "[ \"$version_code\" = \"200\" ] || [ \"$version_code\" = \"403\" ]",
-                ],
-                check=False,
-                capture_output=True,
-            )
-            if health.returncode == 0:
-                break
+            break
         time.sleep(5)
     else:
-        raise HaaCError("QUI API did not become available before timeout")
+        raise HaaCError("Downloader pod did not become available before timeout")
 
     def exec_port_sync(script: str, *, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
         return run(
@@ -4597,108 +4609,97 @@ def bootstrap_downloaders_session(kubectl: str, session_kubeconfig: Path, env: d
             capture_output=capture_output,
         )
 
-    qbit_username_q = shlex.quote(qbit_username)
-    qbit_password_q = shlex.quote(qui_password)
-    qbit_login_check = (
-        f"QBIT_USERNAME={qbit_username_q}; "
-        f"QBIT_PASSWORD={qbit_password_q}; "
-        "login_code=$(curl -sS -o /tmp/qbit-login.txt -w '%{http_code}' "
-        "--connect-timeout 5 --max-time 20 "
-        "--data-urlencode \"username=${QBIT_USERNAME}\" "
-        "--data-urlencode \"password=${QBIT_PASSWORD}\" "
-        "http://127.0.0.1:8080/api/v2/auth/login || true); "
-        "[ \"$login_code\" = \"200\" ] && grep -q 'Ok\\.' /tmp/qbit-login.txt"
+    readiness_probe = exec_port_sync(downloaders_readiness_probe_script(), check=False, capture_output=True)
+    if readiness_probe.returncode != 0:
+        readiness_error = (readiness_probe.stderr or readiness_probe.stdout).strip()
+        raise HaaCError(readiness_error or "Downloader APIs did not become ready before timeout.")
+
+    bootstrap_deadline = time.time() + 120
+    latest_logs = ""
+    while time.time() < bootstrap_deadline:
+        latest_logs = run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "logs",
+                "-n",
+                "media",
+                pod_name,
+                "-c",
+                "port-sync",
+                "--tail=120",
+            ],
+            check=False,
+            capture_output=True,
+        ).stdout
+        if downloaders_bootstrap_succeeded_from_logs(latest_logs):
+            return
+        time.sleep(5)
+
+    raise HaaCError(
+        "Downloader bootstrap did not reach the supported port-sync steady state before timeout.\n"
+        + "\n".join(latest_logs.splitlines()[-20:])
     )
-
-    logs = run(
-        [
-            kubectl,
-            "--kubeconfig",
-            str(session_kubeconfig),
-            "logs",
-            "-n",
-            "media",
-            pod_name,
-            "-c",
-            "qbittorrent",
-        ],
-        check=False,
-        capture_output=True,
-    ).stdout
-    temp_password = ""
-    for line in logs.splitlines():
-        if "A temporary password is provided for this session:" in line:
-            temp_password = line.split()[-1]
-
-    if exec_port_sync(qbit_login_check, check=False).returncode != 0:
-        if not temp_password:
-            raise HaaCError(
-                "qBittorrent is not accepting the desired password and no temporary password was found in container logs."
-            )
-
-        exec_port_sync(
-            f"QBIT_USERNAME={qbit_username_q}; "
-            f"TEMP_PASSWORD={shlex.quote(temp_password)}; "
-            f"QBIT_PASSWORD={qbit_password_q}; "
-            "curl -fsS --connect-timeout 5 --max-time 20 -c /tmp/qbit-cookies.txt "
-            "--data-urlencode \"username=${QBIT_USERNAME}\" "
-            "--data-urlencode \"password=${TEMP_PASSWORD}\" "
-            "http://127.0.0.1:8080/api/v2/auth/login >/dev/null && "
-            "curl -fsS --connect-timeout 5 --max-time 20 -b /tmp/qbit-cookies.txt "
-            "--data-urlencode \"new_password=${QBIT_PASSWORD}\" "
-            "http://127.0.0.1:8080/api/v2/auth/changePassword >/dev/null"
-        )
-
-    if exec_port_sync(qbit_login_check, check=False).returncode != 0:
-        raise HaaCError("qBittorrent did not accept the reconciled password.")
-
-    upsert_instance_script = (
-        f"QBIT_USERNAME={qbit_username_q}; "
-        f"QBIT_PASSWORD={qbit_password_q}; "
-        "ESCAPED_QBIT_PASSWORD=$(printf '%s' \"$QBIT_PASSWORD\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
-        "extract_instance_id() { "
-        "compact=\"$1\"; "
-        "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\),\"name\":\"qBittorrent\".*/\\1/p'); "
-        "if [ -z \"$instance_id\" ]; then "
-        "instance_id=$(printf '%s' \"$compact\" | sed -n 's/.*\"name\":\"qBittorrent\",\"id\":\\([0-9][0-9]*\\).*/\\1/p'); "
-        "fi; "
-        "printf '%s' \"$instance_id\"; "
-        "}; "
-        "ESCAPED_QBIT_USERNAME=$(printf '%s' \"$QBIT_USERNAME\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); "
-        "INSTANCE_PAYLOAD=$(printf '{\"name\":\"qBittorrent\",\"host\":\"http://127.0.0.1:8080\",\"username\":\"%s\",\"password\":\"%s\",\"hasLocalFilesystemAccess\":true}' \"$ESCAPED_QBIT_USERNAME\" \"$ESCAPED_QBIT_PASSWORD\"); "
-        "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
-        "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
-        "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
-        "if [ -n \"$INSTANCE_ID\" ]; then "
-        "curl -fsS --connect-timeout 5 --max-time 20 -X PUT -H 'Content-Type: application/json' --data \"$INSTANCE_PAYLOAD\" "
-        "\"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}\" >/dev/null; "
-        "else "
-        "CREATE_CODE=$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/qui-instance-create.json -w '%{http_code}' -H 'Content-Type: application/json' "
-        "--data \"$INSTANCE_PAYLOAD\" http://127.0.0.1:7476/api/instances || true); "
-        "if [ \"$CREATE_CODE\" != \"200\" ] && [ \"$CREATE_CODE\" != \"201\" ]; then "
-        "cat /tmp/qui-instance-create.json >&2; exit 1; "
-        "fi; "
-        "INSTANCES=$(curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:7476/api/instances); "
-        "INSTANCES_COMPACT=$(printf '%s' \"$INSTANCES\" | tr -d '\\n '); "
-        "INSTANCE_ID=$(extract_instance_id \"$INSTANCES_COMPACT\"); "
-        "fi; "
-        "[ -n \"$INSTANCE_ID\" ]; "
-        "TEST_RESPONSE=''; "
-        "for _ in $(seq 1 24); do "
-        "TEST_RESPONSE=$(curl -sS --connect-timeout 5 --max-time 20 -X POST \"http://127.0.0.1:7476/api/instances/${INSTANCE_ID}/test\" || true); "
-        "if printf '%s' \"$TEST_RESPONSE\" | grep -q '\"connected\":true'; then exit 0; fi; "
-        "sleep 5; "
-        "done; "
-        "printf '%s\\n' \"$TEST_RESPONSE\" >&2; "
-        "exit 1"
-    )
-    exec_port_sync(upsert_instance_script)
 
 
 def bootstrap_downloaders(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         bootstrap_downloaders_session(kubectl, session_kubeconfig, env)
+
+
+def downloaders_readiness_probe_script() -> str:
+    return (
+        "wait_http() { "
+        "url=\"$1\"; accepted_codes=\"$2\"; attempts=\"$3\"; count=0; "
+        "while true; do "
+        "code=$(curl --connect-timeout 5 --max-time 20 -sS -o /tmp/wait-http.txt -w '%{http_code}' \"$url\" || true); "
+        "if printf '%s\\n' \"$accepted_codes\" | tr ', ' '\\n' | grep -qx \"$code\"; then return 0; fi; "
+        "count=$((count + 1)); "
+        "if [ \"$attempts\" -gt 0 ] && [ \"$count\" -ge \"$attempts\" ]; then "
+        "echo \"Timed out waiting for $url (last HTTP $code)\" >&2; return 1; "
+        "fi; "
+        "sleep 5; "
+        "done; "
+        "}; "
+        "wait_http 'http://127.0.0.1:7476/api/auth/me' '200' 120; "
+        "wait_http 'http://127.0.0.1:8080/api/v2/app/version' '200 403' 120"
+    )
+
+
+def downloaders_bootstrap_succeeded_from_logs(logs: str) -> bool:
+    normalized = "\n".join(line.strip().lower() for line in logs.splitlines() if line.strip())
+    return (
+        "qui instance connectivity test passed." in normalized
+        and "bootstrap complete. starting port-forward sync loop..." in normalized
+    )
+
+
+def detect_vpn_blocker_from_logs(logs: str) -> str:
+    lines = [line.strip() for line in logs.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    normalized = "\n".join(line.lower() for line in lines)
+    if "initialization sequence completed" in normalized and "port forwarded is" in normalized:
+        return ""
+    blocker_markers = (
+        "auth failed",
+        "auth_failed",
+        "cannot authenticate",
+        "your credentials might be wrong",
+        "subscription",
+        "plan doesn't support",
+        "plan does not support",
+        "make sure you have +pmp",
+        "port forwarding failed",
+        "failed to get port forwarded",
+        "failed to start the vpn",
+    )
+    matching = [line for line in lines if any(marker in line.lower() for marker in blocker_markers)]
+    if not matching:
+        return ""
+    return "\n".join(matching[-5:])
 
 
 def detect_vpn_blocker(kubectl: str, kubeconfig: Path) -> str:
@@ -4722,20 +4723,7 @@ def detect_vpn_blocker(kubectl: str, kubeconfig: Path) -> str:
         check=False,
         capture_output=True,
     ).stdout
-    markers = (
-        "auth failed",
-        "auth_failed",
-        "subscription",
-        "plan",
-        "credentials",
-        "openvpn",
-        "cannot authenticate",
-        "failed to start",
-    )
-    matching = [line.strip() for line in logs.splitlines() if any(marker in line.lower() for marker in markers)]
-    if not matching:
-        return ""
-    return "\n".join(matching[-5:])
+    return detect_vpn_blocker_from_logs(logs)
 
 
 def read_arr_service_api_key(kubectl: str, kubeconfig: Path, app_name: str) -> str:
@@ -4795,6 +4783,386 @@ def preferred_option(
     return items[0]
 
 
+def ensure_arr_root_folder(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    path: str,
+) -> list[dict[str, object]]:
+    headers = {"X-Api-Key": api_key}
+    current = json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/rootfolder", headers=headers))
+    if any(str(item.get("path") or "").strip() == path for item in current):
+        return current
+    status, body = http_request_text(
+        f"http://127.0.0.1:{port}/api/v3/rootfolder",
+        method="POST",
+        payload={"path": path},
+        headers=headers,
+    )
+    if status not in (200, 201):
+        raise HaaCError(f"{app_name} root-folder bootstrap failed for {path}.\nHTTP {status}\n{body}")
+    current = json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/rootfolder", headers=headers))
+    if not any(str(item.get("path") or "").strip() == path for item in current):
+        raise HaaCError(f"{app_name} root-folder bootstrap did not persist {path}.")
+    return current
+
+
+def schema_item_by_implementation(
+    schema_items: list[dict[str, object]],
+    *,
+    implementation: str,
+    label: str,
+) -> dict[str, object]:
+    for item in schema_items:
+        if str(item.get("implementation") or "").strip() == implementation:
+            return copy.deepcopy(item)
+    raise HaaCError(f"{label} schema does not expose implementation {implementation}.")
+
+
+def field_value(fields: list[dict[str, object]], name: str) -> object:
+    for field in fields:
+        if str(field.get("name") or "").strip() == name:
+            return field.get("value")
+    return None
+
+
+def set_field_value(fields: list[dict[str, object]], name: str, value: object, *, required: bool = True) -> None:
+    for field in fields:
+        if str(field.get("name") or "").strip() == name:
+            field["value"] = value
+            return
+    if required:
+        raise HaaCError(f"Schema field {name!r} is missing from the requested payload.")
+
+
+def find_service_integration(
+    items: list[dict[str, object]],
+    *,
+    implementation: str,
+    name: str | None = None,
+) -> dict[str, object] | None:
+    exact_name = None
+    fallback = None
+    for item in items:
+        if str(item.get("implementation") or "").strip() != implementation:
+            continue
+        if fallback is None:
+            fallback = copy.deepcopy(item)
+        if name and str(item.get("name") or "").strip() == name:
+            exact_name = copy.deepcopy(item)
+            break
+    return exact_name or fallback
+
+
+def ensure_arr_qbittorrent_download_client(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    username: str,
+    password: str,
+) -> list[dict[str, object]]:
+    app_key = app_name.strip().lower()
+    if app_key not in ("radarr", "sonarr"):
+        raise HaaCError(f"Unsupported ARR qBittorrent target: {app_name}")
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v3/downloadclient"
+    current = json_array(http_request_json(base_url, headers=headers))
+    existing = find_service_integration(current, implementation="QBittorrent", name=ARR_QBITTORRENT_CLIENT_NAME)
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = schema_item_by_implementation(
+            schema,
+            implementation="QBittorrent",
+            label=f"{app_name} download client",
+        )
+    fields = json_array(payload.get("fields"))
+    payload["enable"] = True
+    payload["name"] = ARR_QBITTORRENT_CLIENT_NAME
+    set_field_value(fields, "host", QBITTORRENT_INTERNAL_HOST)
+    set_field_value(fields, "port", QBITTORRENT_INTERNAL_PORT)
+    set_field_value(fields, "useSsl", False, required=False)
+    set_field_value(fields, "urlBase", "", required=False)
+    set_field_value(fields, "username", username)
+    set_field_value(fields, "password", password)
+    if app_key == "radarr":
+        set_field_value(fields, "movieCategory", ARR_QBITTORRENT_CATEGORIES["radarr"])
+        set_field_value(
+            fields,
+            "movieImportedCategory",
+            ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"],
+            required=False,
+        )
+    else:
+        set_field_value(fields, "tvCategory", ARR_QBITTORRENT_CATEGORIES["sonarr"])
+        set_field_value(
+            fields,
+            "tvImportedCategory",
+            ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"],
+            required=False,
+        )
+    payload["fields"] = fields
+    test_status, test_body = http_request_text(
+        f"{base_url}/test",
+        method="POST",
+        payload=payload,
+        headers=headers,
+    )
+    if test_status not in (200, 204):
+        raise HaaCError(f"{app_name} qBittorrent test failed.\nHTTP {test_status}\n{test_body}")
+    if existing and payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"{app_name} qBittorrent bootstrap failed.\nHTTP {status}\n{body}")
+    current = json_array(http_request_json(base_url, headers=headers))
+    configured = find_service_integration(current, implementation="QBittorrent", name=ARR_QBITTORRENT_CLIENT_NAME)
+    if not configured:
+        raise HaaCError(f"{app_name} qBittorrent client did not persist.")
+    configured_fields = json_array(configured.get("fields"))
+    if str(field_value(configured_fields, "host") or "").strip() != QBITTORRENT_INTERNAL_HOST:
+        raise HaaCError(f"{app_name} qBittorrent client persisted with an unexpected host.")
+    return current
+
+
+def ensure_prowlarr_qbittorrent_download_client(
+    port: int,
+    *,
+    api_key: str,
+    username: str,
+    password: str,
+) -> list[dict[str, object]]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v1/downloadclient"
+    current = json_array(http_request_json(base_url, headers=headers))
+    existing = find_service_integration(current, implementation="QBittorrent", name=ARR_QBITTORRENT_CLIENT_NAME)
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = schema_item_by_implementation(
+            schema,
+            implementation="QBittorrent",
+            label="Prowlarr download client",
+        )
+    fields = json_array(payload.get("fields"))
+    payload["enable"] = True
+    payload["name"] = ARR_QBITTORRENT_CLIENT_NAME
+    set_field_value(fields, "host", QBITTORRENT_INTERNAL_HOST)
+    set_field_value(fields, "port", QBITTORRENT_INTERNAL_PORT)
+    set_field_value(fields, "useSsl", False, required=False)
+    set_field_value(fields, "urlBase", "", required=False)
+    set_field_value(fields, "username", username)
+    set_field_value(fields, "password", password)
+    set_field_value(fields, "category", ARR_QBITTORRENT_CATEGORIES["prowlarr"])
+    payload["fields"] = fields
+    if existing and payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"Prowlarr qBittorrent bootstrap failed.\nHTTP {status}\n{body}")
+    current = json_array(http_request_json(base_url, headers=headers))
+    configured = find_service_integration(current, implementation="QBittorrent", name=ARR_QBITTORRENT_CLIENT_NAME)
+    if not configured:
+        raise HaaCError("Prowlarr qBittorrent client did not persist.")
+    configured_fields = json_array(configured.get("fields"))
+    if str(field_value(configured_fields, "host") or "").strip() != QBITTORRENT_INTERNAL_HOST:
+        raise HaaCError("Prowlarr qBittorrent client persisted with an unexpected host.")
+    return current
+
+
+def ensure_prowlarr_application(
+    port: int,
+    *,
+    api_key: str,
+    implementation: str,
+    downstream_api_key: str,
+    downstream_url: str,
+) -> list[dict[str, object]]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v1/applications"
+    current = json_array(http_request_json(base_url, headers=headers))
+    existing = find_service_integration(current, implementation=implementation, name=implementation)
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = schema_item_by_implementation(
+            schema,
+            implementation=implementation,
+            label="Prowlarr application",
+        )
+    fields = json_array(payload.get("fields"))
+    payload["enable"] = True
+    payload["name"] = implementation
+    payload["syncLevel"] = str(payload.get("syncLevel") or "fullSync")
+    set_field_value(fields, "prowlarrUrl", PROWLARR_INTERNAL_URL)
+    set_field_value(fields, "baseUrl", downstream_url)
+    set_field_value(fields, "apiKey", downstream_api_key)
+    payload["fields"] = fields
+    if existing and payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"Prowlarr {implementation} bootstrap failed.\nHTTP {status}\n{body}")
+    current = json_array(http_request_json(base_url, headers=headers))
+    configured = find_service_integration(current, implementation=implementation, name=implementation)
+    if not configured:
+        raise HaaCError(f"Prowlarr {implementation} application did not persist.")
+    configured_fields = json_array(configured.get("fields"))
+    if str(field_value(configured_fields, "baseUrl") or "").strip() != downstream_url:
+        raise HaaCError(f"Prowlarr {implementation} application persisted with an unexpected URL.")
+    return current
+
+
+def indent_block(text: str, prefix: str = "    ") -> str:
+    stripped = text.rstrip("\n")
+    if not stripped:
+        return prefix.rstrip()
+    return "\n".join(f"{prefix}{line}" if line else prefix.rstrip() for line in stripped.splitlines())
+
+
+def recyclarr_config_text() -> str:
+    return RECYCLARR_CONFIG_TEMPLATE.read_text(encoding="utf-8").rstrip() + "\n"
+
+
+def recyclarr_runtime_secrets_text(*, radarr_api_key: str, sonarr_api_key: str) -> str:
+    return (
+        f"radarr_main_base_url: {RADARR_INTERNAL_URL}\n"
+        f"radarr_main_api_key: {radarr_api_key}\n"
+        f"sonarr_main_base_url: {SONARR_INTERNAL_URL}\n"
+        f"sonarr_main_api_key: {sonarr_api_key}\n"
+    )
+
+
+def apply_manifest_text(kubectl: str, kubeconfig: Path, manifest: str, *, label: str) -> None:
+    completed = run(
+        [kubectl, "--kubeconfig", str(kubeconfig), "apply", "-f", "-"],
+        capture_output=True,
+        check=False,
+        input_text=manifest,
+    )
+    if completed.returncode != 0:
+        raise HaaCError(f"{label} apply failed.\n{completed.stderr or completed.stdout}")
+
+
+def ensure_recyclarr_runtime_secret(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    radarr_api_key: str,
+    sonarr_api_key: str,
+) -> None:
+    manifest = (
+        "apiVersion: v1\n"
+        "kind: Secret\n"
+        "metadata:\n"
+        f"  name: {RECYCLARR_SECRET_NAME}\n"
+        "  namespace: media\n"
+        "type: Opaque\n"
+        "stringData:\n"
+        "  secrets.yml: |\n"
+        f"{indent_block(recyclarr_runtime_secrets_text(radarr_api_key=radarr_api_key, sonarr_api_key=sonarr_api_key))}\n"
+    )
+    apply_manifest_text(kubectl, kubeconfig, manifest, label="Recyclarr runtime secret")
+
+
+def run_recyclarr_sync_job(kubectl: str, kubeconfig: Path, *, timeout_seconds: int = 300) -> None:
+    job_name = f"recyclarr-sync-{uuid.uuid4().hex[:8]}"
+    created = run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "create",
+            "job",
+            job_name,
+            "--from=cronjob/recyclarr",
+            "-n",
+            "media",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if created.returncode != 0:
+        raise HaaCError(f"Recyclarr sync job could not be created.\n{created.stderr or created.stdout}")
+    try:
+        waited = run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(kubeconfig),
+                "wait",
+                "--for=condition=complete",
+                f"job/{job_name}",
+                "-n",
+                "media",
+                f"--timeout={timeout_seconds}s",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if waited.returncode == 0:
+            return
+        logs = ""
+        try:
+            pod_name = latest_pod_name(kubectl, kubeconfig, "media", f"job-name={job_name}")
+        except HaaCError:
+            pod_name = ""
+        if pod_name:
+            logs = run(
+                [kubectl, "--kubeconfig", str(kubeconfig), "logs", "-n", "media", pod_name],
+                capture_output=True,
+                check=False,
+            ).stdout
+        raise HaaCError(
+            f"Recyclarr sync job failed or timed out.\n{waited.stderr or waited.stdout}\n{logs}".strip()
+        )
+    finally:
+        run(
+            [kubectl, "--kubeconfig", str(kubeconfig), "delete", "job", job_name, "-n", "media", "--ignore-not-found=true"],
+            capture_output=True,
+            check=False,
+        )
+
+
+def verify_recyclarr_sync_surface(port: int, *, app_name: str, api_key: str, expected_profile: str) -> None:
+    headers = {"X-Api-Key": api_key}
+    quality_profiles = json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/qualityprofile", headers=headers))
+    if not any(str(item.get("name") or "").strip() == expected_profile for item in quality_profiles):
+        raise HaaCError(f"{app_name} does not expose the expected Recyclarr-managed quality profile {expected_profile}.")
+    custom_formats = json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/customformat", headers=headers))
+    if not custom_formats:
+        raise HaaCError(f"{app_name} still exposes no custom formats after Recyclarr sync.")
+
+
 def seerr_admin_identity(env: dict[str, str]) -> tuple[str, str, str]:
     username = (
         env.get("JELLYFIN_ADMIN_USERNAME")
@@ -4828,15 +5196,138 @@ def seerr_public_settings(port: int) -> dict[str, object]:
     return response
 
 
+def jellyfin_public_info(port: int) -> dict[str, object]:
+    response = http_request_json(f"http://127.0.0.1:{port}/System/Info/Public")
+    if not isinstance(response, dict):
+        raise HaaCError("Jellyfin public info endpoint returned an unexpected response")
+    return response
+
+
+def jellyfin_startup_incomplete(public_info: dict[str, object]) -> bool:
+    return not bool(public_info.get("StartupWizardCompleted"))
+
+
+def authenticate_jellyfin_admin(port: int, *, username: str, password: str) -> dict[str, object]:
+    auth = http_request_json(
+        f"http://127.0.0.1:{port}/Users/AuthenticateByName",
+        method="POST",
+        payload={"Username": username, "Pw": password},
+        headers={"Authorization": JELLYFIN_BOOTSTRAP_AUTH_HEADER},
+    )
+    if not isinstance(auth, dict) or not str(auth.get("AccessToken") or "").strip():
+        raise HaaCError("Jellyfin admin authentication did not return an access token.")
+    return auth
+
+
+def jellyfin_auth_headers(access_token: str) -> dict[str, str]:
+    return {"Authorization": f"{JELLYFIN_BOOTSTRAP_AUTH_HEADER}, Token={access_token}"}
+
+
+def jellyfin_virtual_folder_matches(folder: dict[str, object], *, name: str, path: str) -> bool:
+    folder_name = str(folder.get("Name") or folder.get("name") or "").strip()
+    locations = json_array(folder.get("Locations") if "Locations" in folder else folder.get("locations"))
+    return folder_name.lower() == name.lower() or path in [str(item).strip() for item in locations]
+
+
+def ensure_jellyfin_admin_ready(
+    port: int,
+    *,
+    username: str,
+    password: str,
+    domain_name: str,
+) -> dict[str, object]:
+    public_info = jellyfin_public_info(port)
+    if jellyfin_startup_incomplete(public_info):
+        first_user = http_request_json(f"http://127.0.0.1:{port}/Startup/User")
+        if not isinstance(first_user, dict) or not str(first_user.get("Name") or "").strip():
+            raise HaaCError("Jellyfin startup user endpoint did not expose an initial user placeholder.")
+        current = http_request_json(f"http://127.0.0.1:{port}/Startup/Configuration")
+        if not isinstance(current, dict):
+            raise HaaCError("Jellyfin startup configuration returned an unexpected response")
+        config_payload = {
+            "ServerName": str(current.get("ServerName") or f"jellyfin.{domain_name}"),
+            "UICulture": str(current.get("UICulture") or "en-US"),
+            "MetadataCountryCode": str(current.get("MetadataCountryCode") or "IT"),
+            "PreferredMetadataLanguage": str(current.get("PreferredMetadataLanguage") or "en"),
+        }
+        for url, payload in (
+            (f"http://127.0.0.1:{port}/Startup/Configuration", config_payload),
+            (f"http://127.0.0.1:{port}/Startup/User", {"Name": username, "Password": password}),
+        ):
+            status, body = http_request_text(url, method="POST", payload=payload)
+            if status not in (200, 204):
+                raise HaaCError(f"Jellyfin startup bootstrap failed: POST {url}\nHTTP {status}\n{body}")
+        status, body = http_request_text(
+            f"http://127.0.0.1:{port}/Startup/Complete",
+            method="POST",
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        if status not in (200, 204):
+            raise HaaCError(f"Jellyfin startup completion failed.\nHTTP {status}\n{body}")
+        public_info = jellyfin_public_info(port)
+        if jellyfin_startup_incomplete(public_info):
+            raise HaaCError("Jellyfin startup wizard is still incomplete after bootstrap reconciliation.")
+    authenticate_jellyfin_admin(port, username=username, password=password)
+    return public_info
+
+
+def ensure_jellyfin_libraries(port: int, *, access_token: str) -> list[dict[str, object]]:
+    headers = jellyfin_auth_headers(access_token)
+    current = http_request_json(f"http://127.0.0.1:{port}/Library/VirtualFolders", headers=headers)
+    folders = json_array(current)
+    for library in JELLYFIN_DEFAULT_LIBRARIES:
+        if any(jellyfin_virtual_folder_matches(folder, name=library["name"], path=library["path"]) for folder in folders):
+            continue
+        query = urllib.parse.urlencode(
+            {
+                "name": library["name"],
+                "collectionType": library["collectionType"],
+                "paths": library["path"],
+                "refreshLibrary": "true",
+            }
+        )
+        status, body = http_request_text(
+            f"http://127.0.0.1:{port}/Library/VirtualFolders?{query}",
+            method="POST",
+            headers=headers,
+        )
+        if status not in (200, 204):
+            raise HaaCError(
+                f"Jellyfin library bootstrap failed for {library['name']}.\nHTTP {status}\n{body}"
+            )
+        current = http_request_json(f"http://127.0.0.1:{port}/Library/VirtualFolders", headers=headers)
+        folders = json_array(current)
+    return folders
+
+
 def seerr_login_with_jellyfin(
     port: int,
     *,
     username: str,
     password: str,
     email: str,
+    public_settings: dict[str, object] | None = None,
 ) -> urllib.request.OpenerDirector:
     opener = build_cookie_opener()
-    payload = {"username": username, "password": password, "email": email}
+    payload = {
+        "username": username,
+        "password": password,
+        "email": email,
+    }
+    try:
+        configured_server_type = int((public_settings or {}).get("mediaServerType", 0))
+    except (TypeError, ValueError):
+        configured_server_type = 0
+    if configured_server_type != SEERR_JELLYFIN_SERVER_TYPE:
+        payload.update(
+            {
+                "hostname": SEERR_JELLYFIN_INTERNAL_HOST,
+                "port": SEERR_JELLYFIN_INTERNAL_PORT,
+                "useSsl": False,
+                "urlBase": "",
+                "serverType": SEERR_JELLYFIN_SERVER_TYPE,
+            }
+        )
     status, body = http_request_text(
         f"http://127.0.0.1:{port}/api/v1/auth/jellyfin",
         method="POST",
@@ -4865,8 +5356,8 @@ def ensure_seerr_jellyfin_settings(
     if not api_key:
         raise HaaCError("Seerr did not expose a Jellyfin API key after Jellyfin admin login.")
     payload = {
-        "ip": "jellyfin.media.svc.cluster.local",
-        "port": 80,
+        "ip": SEERR_JELLYFIN_INTERNAL_HOST,
+        "port": SEERR_JELLYFIN_INTERNAL_PORT,
         "useSsl": False,
         "urlBase": "",
         "externalHostname": f"https://jellyfin.{domain_name}",
@@ -4904,6 +5395,7 @@ def ensure_seerr_radarr_settings(
     *,
     domain_name: str,
     radarr_api_key: str,
+    fallback_root_folders: list[dict[str, object]] | None = None,
 ) -> None:
     current = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/radarr", opener=opener)
     existing = json_array(current)
@@ -4926,6 +5418,8 @@ def ensure_seerr_radarr_settings(
         raise HaaCError("Seerr Radarr test did not return a valid response")
     profiles = json_array(test_response.get("profiles"))
     root_folders = json_array(test_response.get("rootFolders"))
+    if not root_folders and fallback_root_folders:
+        root_folders = fallback_root_folders
     tags = json_array(test_response.get("tags"))
     profile = preferred_option(profiles, name_preferences=("Any", "HD-1080p"))
     root_folder = preferred_option(root_folders, path_preferences=("/data/media/movies", "/data/movies"))
@@ -4964,6 +5458,7 @@ def ensure_seerr_sonarr_settings(
     *,
     domain_name: str,
     sonarr_api_key: str,
+    fallback_root_folders: list[dict[str, object]] | None = None,
 ) -> None:
     current = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/sonarr", opener=opener)
     existing = json_array(current)
@@ -4986,13 +5481,14 @@ def ensure_seerr_sonarr_settings(
         raise HaaCError("Seerr Sonarr test did not return a valid response")
     profiles = json_array(test_response.get("profiles"))
     root_folders = json_array(test_response.get("rootFolders"))
+    if not root_folders and fallback_root_folders:
+        root_folders = fallback_root_folders
     language_profiles = json_array(test_response.get("languageProfiles"))
     tags = [int(tag.get("id") or 0) for tag in json_array(test_response.get("tags")) if str(tag.get("id") or "").isdigit()]
     profile = preferred_option(profiles, name_preferences=("Any", "HD-1080p"))
     root_folder = preferred_option(root_folders, path_preferences=("/data/media/tv", "/data/tv"))
     language_profile = language_profiles[0] if language_profiles else {}
     language_id = int(language_profile.get("id") or 0) if language_profile else 0
-    language_id_or_none = language_id or None
     payload = {
         "name": "Sonarr",
         "hostname": test_payload["hostname"],
@@ -5001,13 +5497,11 @@ def ensure_seerr_sonarr_settings(
         "useSsl": False,
         "baseUrl": str(test_response.get("urlBase") or ""),
         "activeProfileId": int(profile.get("id") or 0),
-        "activeLanguageProfileId": language_id_or_none,
         "activeProfileName": str(profile.get("name") or "default"),
         "activeDirectory": str(root_folder.get("path") or ""),
         "seriesType": "standard",
         "animeSeriesType": "anime",
         "activeAnimeProfileId": int(profile.get("id") or 0),
-        "activeAnimeLanguageProfileId": language_id_or_none,
         "activeAnimeProfileName": str(profile.get("name") or "default"),
         "activeAnimeDirectory": str(root_folder.get("path") or ""),
         "tags": tags,
@@ -5021,6 +5515,9 @@ def ensure_seerr_sonarr_settings(
         "tagRequests": True,
         "monitorNewItems": "all",
     }
+    if language_id:
+        payload["activeLanguageProfileId"] = language_id
+        payload["activeAnimeLanguageProfileId"] = language_id
     if not payload["activeProfileId"] or not payload["activeDirectory"]:
         raise HaaCError("Seerr Sonarr bootstrap could not resolve a usable quality profile or root folder.")
     http_request_json(
@@ -5063,8 +5560,15 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
     env = merged_env()
     require_env(["DOMAIN_NAME", "QUI_PASSWORD"], env)
     username, password, email = seerr_admin_identity(env)
+    downloader_username = env.get("QBITTORRENT_USERNAME", "admin").strip() or "admin"
+    downloader_password = env["QUI_PASSWORD"]
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
+        sonarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "sonarr")
+        prowlarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "prowlarr")
+        radarr_root_folders: list[dict[str, object]] = []
+        sonarr_root_folders: list[dict[str, object]] = []
         print("[stage] Media rollout gate")
         for resource in (
             "deployment/downloaders",
@@ -5095,24 +5599,102 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
 
         print("[stage] Media service probes")
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as port:
-            require_http_status(f"http://127.0.0.1:{port}/ping", label="Radarr /ping", expected_body_pattern="pong")
+            require_http_status(
+                f"http://127.0.0.1:{port}/ping",
+                label="Radarr /ping",
+                expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
+            )
+            radarr_root_folders = ensure_arr_root_folder(
+                port,
+                app_name="Radarr",
+                api_key=radarr_api_key,
+                path=ARR_DEFAULT_ROOT_FOLDERS["radarr"],
+            )
+            ensure_arr_qbittorrent_download_client(
+                port,
+                app_name="Radarr",
+                api_key=radarr_api_key,
+                username=downloader_username,
+                password=downloader_password,
+            )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sonarr", 80) as port:
-            require_http_status(f"http://127.0.0.1:{port}/ping", label="Sonarr /ping", expected_body_pattern="pong")
+            require_http_status(
+                f"http://127.0.0.1:{port}/ping",
+                label="Sonarr /ping",
+                expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
+            )
+            sonarr_root_folders = ensure_arr_root_folder(
+                port,
+                app_name="Sonarr",
+                api_key=sonarr_api_key,
+                path=ARR_DEFAULT_ROOT_FOLDERS["sonarr"],
+            )
+            ensure_arr_qbittorrent_download_client(
+                port,
+                app_name="Sonarr",
+                api_key=sonarr_api_key,
+                username=downloader_username,
+                password=downloader_password,
+            )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/prowlarr", 80) as port:
-            require_http_status(f"http://127.0.0.1:{port}/ping", label="Prowlarr /ping", expected_body_pattern="pong")
+            require_http_status(
+                f"http://127.0.0.1:{port}/ping",
+                label="Prowlarr /ping",
+                expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
+            )
+            ensure_prowlarr_qbittorrent_download_client(
+                port,
+                api_key=prowlarr_api_key,
+                username=downloader_username,
+                password=downloader_password,
+            )
+            ensure_prowlarr_application(
+                port,
+                api_key=prowlarr_api_key,
+                implementation="Radarr",
+                downstream_api_key=radarr_api_key,
+                downstream_url=RADARR_INTERNAL_URL,
+            )
+            ensure_prowlarr_application(
+                port,
+                api_key=prowlarr_api_key,
+                implementation="Sonarr",
+                downstream_api_key=sonarr_api_key,
+                downstream_url=SONARR_INTERNAL_URL,
+            )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/jellyfin", 80) as port:
             require_http_status(f"http://127.0.0.1:{port}/health", label="Jellyfin /health")
+            if jellyfin_startup_incomplete(jellyfin_public_info(port)):
+                ensure_jellyfin_admin_ready(port, username=username, password=password, domain_name=env["DOMAIN_NAME"])
+            jellyfin_auth = authenticate_jellyfin_admin(port, username=username, password=password)
+            ensure_jellyfin_libraries(port, access_token=str(jellyfin_auth["AccessToken"]))
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/seerr", 80) as port:
             public_settings = seerr_public_settings(port)
-            opener = seerr_login_with_jellyfin(port, username=username, password=password, email=email)
+            opener = seerr_login_with_jellyfin(
+                port,
+                username=username,
+                password=password,
+                email=email,
+                public_settings=public_settings,
+            )
             jellyfin_settings = ensure_seerr_jellyfin_settings(opener, port, domain_name=env["DOMAIN_NAME"])
             libraries = json_array(jellyfin_settings.get("libraries") if isinstance(jellyfin_settings, dict) else [])
             if not any(bool(item.get("enabled")) for item in libraries):
                 raise HaaCError("Seerr reached Jellyfin, but Jellyfin still exposes no enabled libraries for discovery.")
-            radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
-            sonarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "sonarr")
-            ensure_seerr_radarr_settings(opener, port, domain_name=env["DOMAIN_NAME"], radarr_api_key=radarr_api_key)
-            ensure_seerr_sonarr_settings(opener, port, domain_name=env["DOMAIN_NAME"], sonarr_api_key=sonarr_api_key)
+            ensure_seerr_radarr_settings(
+                opener,
+                port,
+                domain_name=env["DOMAIN_NAME"],
+                radarr_api_key=radarr_api_key,
+                fallback_root_folders=radarr_root_folders,
+            )
+            ensure_seerr_sonarr_settings(
+                opener,
+                port,
+                domain_name=env["DOMAIN_NAME"],
+                sonarr_api_key=sonarr_api_key,
+                fallback_root_folders=sonarr_root_folders,
+            )
             if not bool(public_settings.get("initialized")):
                 initialized = http_request_json(
                     f"http://127.0.0.1:{port}/api/v1/settings/initialize",
@@ -5125,6 +5707,30 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             if not bool(final_public_settings.get("initialized")):
                 raise HaaCError("Seerr settings surface is still not initialized after media reconciliation.")
         print("[ok] Media service probes")
+
+        print("[stage] Media quality policy")
+        ensure_recyclarr_runtime_secret(
+            kubectl,
+            session_kubeconfig,
+            radarr_api_key=radarr_api_key,
+            sonarr_api_key=sonarr_api_key,
+        )
+        run_recyclarr_sync_job(kubectl, session_kubeconfig)
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as port:
+            verify_recyclarr_sync_surface(
+                port,
+                app_name="Radarr",
+                api_key=radarr_api_key,
+                expected_profile="HD Bluray + WEB",
+            )
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sonarr", 80) as port:
+            verify_recyclarr_sync_surface(
+                port,
+                app_name="Sonarr",
+                api_key=sonarr_api_key,
+                expected_profile="WEB-1080p",
+            )
+        print("[ok] Media quality policy")
 
         print("[stage] Media metrics warmup")
         warm_flaresolverr_metrics(kubectl, session_kubeconfig)

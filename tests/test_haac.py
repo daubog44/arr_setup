@@ -1138,6 +1138,56 @@ class DownloadersTemplateContractTests(unittest.TestCase):
             template,
         )
 
+    def test_downloaders_readiness_probe_accepts_qui_ready_and_qbit_403(self) -> None:
+        script = haac.downloaders_readiness_probe_script()
+
+        self.assertIn("http://127.0.0.1:7476/api/auth/me", script)
+        self.assertIn("http://127.0.0.1:8080/api/v2/app/version", script)
+        self.assertIn("'200 403'", script)
+
+    def test_downloaders_bootstrap_succeeded_from_logs_requires_port_sync_steady_state(self) -> None:
+        healthy_logs = "\n".join(
+            (
+                "Waiting for qBittorrent and QUI endpoints...",
+                "qBittorrent credentials reconciled. Upserting QUI instance...",
+                "QUI instance connectivity test passed.",
+                "Bootstrap complete. Starting port-forward sync loop...",
+            )
+        )
+        incomplete_logs = "\n".join(
+            (
+                "Waiting for qBittorrent and QUI endpoints...",
+                "qBittorrent credentials reconciled. Upserting QUI instance...",
+            )
+        )
+
+        self.assertTrue(haac.downloaders_bootstrap_succeeded_from_logs(healthy_logs))
+        self.assertFalse(haac.downloaders_bootstrap_succeeded_from_logs(incomplete_logs))
+
+    def test_detect_vpn_blocker_from_logs_ignores_healthy_gluetun_steady_state(self) -> None:
+        logs = "\n".join(
+            (
+                "2026-04-18T10:00:00Z INFO OpenVPN 2.6.0 x86_64-pc-linux-gnu",
+                "2026-04-18T10:00:03Z INFO Initialization Sequence Completed",
+                "2026-04-18T10:00:05Z INFO port forwarded is 61123",
+            )
+        )
+
+        self.assertEqual(haac.detect_vpn_blocker_from_logs(logs), "")
+
+    def test_detect_vpn_blocker_from_logs_reports_real_proton_failure(self) -> None:
+        logs = "\n".join(
+            (
+                "2026-04-18T10:00:00Z ERROR Your credentials might be wrong",
+                "2026-04-18T10:00:01Z ERROR make sure you have +pmp included in your subscription",
+            )
+        )
+
+        blocker = haac.detect_vpn_blocker_from_logs(logs)
+
+        self.assertIn("Your credentials might be wrong", blocker)
+        self.assertIn("+pmp", blocker)
+
 
 class ArgocdRevisionGateTests(unittest.TestCase):
     def test_repo_managed_application_revision_must_match_expected_sha(self) -> None:
@@ -1240,6 +1290,440 @@ class ArrStackSurfaceTests(unittest.TestCase):
     def test_up_task_phases_include_media_post_install(self) -> None:
         self.assertEqual(haac.UP_TASK_PHASES["media:post-install"], "GitOps readiness")
 
+    def test_arr_ping_success_pattern_accepts_ok_json_and_legacy_pong(self) -> None:
+        self.assertRegex('{\n  "status": "OK"\n}', haac.ARR_PING_SUCCESS_PATTERN)
+        self.assertRegex("pong", haac.ARR_PING_SUCCESS_PATTERN)
+        self.assertNotRegex('{"status":"ERROR"}', haac.ARR_PING_SUCCESS_PATTERN)
+
+    def test_seerr_login_with_jellyfin_uses_internal_service_payload(self) -> None:
+        opener = object()
+        with mock.patch.object(haac, "build_cookie_opener", return_value=opener):
+            with mock.patch.object(haac, "http_request_text", return_value=(200, "{}")) as request:
+                result = haac.seerr_login_with_jellyfin(
+                    5055,
+                    username="jf-admin",
+                    password="secret-pass",
+                    email="jf@example.com",
+                )
+
+        payload = request.call_args.kwargs["payload"]
+
+        self.assertIs(result, opener)
+        self.assertEqual(payload["hostname"], haac.SEERR_JELLYFIN_INTERNAL_HOST)
+        self.assertEqual(payload["port"], haac.SEERR_JELLYFIN_INTERNAL_PORT)
+        self.assertEqual(payload["serverType"], haac.SEERR_JELLYFIN_SERVER_TYPE)
+        self.assertFalse(payload["useSsl"])
+        self.assertEqual(payload["urlBase"], "")
+
+    def test_seerr_login_with_jellyfin_omits_server_details_on_rerun(self) -> None:
+        opener = object()
+        with mock.patch.object(haac, "build_cookie_opener", return_value=opener):
+            with mock.patch.object(haac, "http_request_text", return_value=(200, "{}")) as request:
+                result = haac.seerr_login_with_jellyfin(
+                    5055,
+                    username="jf-admin",
+                    password="secret-pass",
+                    email="jf@example.com",
+                    public_settings={"mediaServerType": haac.SEERR_JELLYFIN_SERVER_TYPE},
+                )
+
+        payload = request.call_args.kwargs["payload"]
+
+        self.assertIs(result, opener)
+        self.assertEqual(payload["username"], "jf-admin")
+        self.assertEqual(payload["password"], "secret-pass")
+        self.assertEqual(payload["email"], "jf@example.com")
+        self.assertNotIn("hostname", payload)
+        self.assertNotIn("port", payload)
+        self.assertNotIn("useSsl", payload)
+        self.assertNotIn("urlBase", payload)
+        self.assertNotIn("serverType", payload)
+
+    def test_jellyfin_startup_incomplete_uses_public_info_flag(self) -> None:
+        self.assertTrue(haac.jellyfin_startup_incomplete({"StartupWizardCompleted": False}))
+        self.assertFalse(haac.jellyfin_startup_incomplete({"StartupWizardCompleted": True}))
+
+    def test_jellyfin_auth_headers_include_access_token(self) -> None:
+        headers = haac.jellyfin_auth_headers("demo-token")
+
+        self.assertIn("Authorization", headers)
+        self.assertIn("Token=demo-token", headers["Authorization"])
+
+    def test_ensure_arr_root_folder_creates_missing_path(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[[], [{"path": haac.ARR_DEFAULT_ROOT_FOLDERS["radarr"], "id": 1}]],
+        ) as request_json:
+            with mock.patch.object(haac, "http_request_text", return_value=(201, '{"id":1}')) as request_text:
+                result = haac.ensure_arr_root_folder(
+                    7878,
+                    app_name="Radarr",
+                    api_key="api-key",
+                    path=haac.ARR_DEFAULT_ROOT_FOLDERS["radarr"],
+                )
+
+        self.assertEqual(result[0]["path"], haac.ARR_DEFAULT_ROOT_FOLDERS["radarr"])
+        self.assertEqual(request_json.call_count, 2)
+        self.assertEqual(request_text.call_args.kwargs["payload"], {"path": haac.ARR_DEFAULT_ROOT_FOLDERS["radarr"]})
+
+    def test_ensure_arr_root_folder_noops_when_path_exists(self) -> None:
+        existing = [{"path": haac.ARR_DEFAULT_ROOT_FOLDERS["sonarr"], "id": 1}]
+        with mock.patch.object(haac, "http_request_json", return_value=existing) as request_json:
+            with mock.patch.object(haac, "http_request_text") as request_text:
+                result = haac.ensure_arr_root_folder(
+                    8989,
+                    app_name="Sonarr",
+                    api_key="api-key",
+                    path=haac.ARR_DEFAULT_ROOT_FOLDERS["sonarr"],
+                )
+
+        self.assertEqual(result, existing)
+        self.assertEqual(request_json.call_count, 1)
+        request_text.assert_not_called()
+
+    def test_ensure_arr_qbittorrent_download_client_creates_missing_radarr_client(self) -> None:
+        schema_item = {
+            "implementation": "QBittorrent",
+            "implementationName": "qBittorrent",
+            "name": "",
+            "fields": [
+                {"name": "host", "value": "localhost"},
+                {"name": "port", "value": 8080},
+                {"name": "username", "value": None},
+                {"name": "password", "value": None},
+                {"name": "movieCategory", "value": "radarr"},
+                {"name": "movieImportedCategory", "value": None},
+            ],
+        }
+        final = [
+            {
+                "id": 1,
+                "implementation": "QBittorrent",
+                "name": haac.ARR_QBITTORRENT_CLIENT_NAME,
+                "fields": [
+                    {"name": "host", "value": haac.QBITTORRENT_INTERNAL_HOST},
+                    {"name": "port", "value": haac.QBITTORRENT_INTERNAL_PORT},
+                    {"name": "username", "value": "admin"},
+                    {"name": "password", "value": "********"},
+                    {"name": "movieCategory", "value": haac.ARR_QBITTORRENT_CATEGORIES["radarr"]},
+                    {"name": "movieImportedCategory", "value": haac.ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"]},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[[], [schema_item], final]) as request_json:
+            with mock.patch.object(haac, "http_request_text", side_effect=[(200, "{}"), (201, '{"id":1}')]) as request_text:
+                result = haac.ensure_arr_qbittorrent_download_client(
+                    7878,
+                    app_name="Radarr",
+                    api_key="api-key",
+                    username="admin",
+                    password="secret",
+                )
+
+        self.assertEqual(result, final)
+        self.assertTrue(request_text.call_args_list[0].args[0].endswith("/api/v3/downloadclient/test"))
+        payload = request_text.call_args_list[1].kwargs["payload"]
+        self.assertEqual(payload["name"], haac.ARR_QBITTORRENT_CLIENT_NAME)
+        fields = payload["fields"]
+        self.assertEqual(haac.field_value(fields, "host"), haac.QBITTORRENT_INTERNAL_HOST)
+        self.assertEqual(haac.field_value(fields, "username"), "admin")
+        self.assertEqual(haac.field_value(fields, "movieImportedCategory"), haac.ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"])
+        self.assertEqual(request_json.call_count, 3)
+
+    def test_ensure_arr_qbittorrent_download_client_updates_existing_sonarr_client(self) -> None:
+        current = [
+            {
+                "id": 7,
+                "implementation": "QBittorrent",
+                "name": "legacy",
+                "fields": [
+                    {"name": "host", "value": "legacy-host"},
+                    {"name": "port", "value": 8080},
+                    {"name": "username", "value": "legacy"},
+                    {"name": "password", "value": "********"},
+                    {"name": "tvCategory", "value": "legacy"},
+                    {"name": "tvImportedCategory", "value": None},
+                ],
+            }
+        ]
+        final = [
+            {
+                "id": 7,
+                "implementation": "QBittorrent",
+                "name": haac.ARR_QBITTORRENT_CLIENT_NAME,
+                "fields": [
+                    {"name": "host", "value": haac.QBITTORRENT_INTERNAL_HOST},
+                    {"name": "port", "value": haac.QBITTORRENT_INTERNAL_PORT},
+                    {"name": "username", "value": "admin"},
+                    {"name": "password", "value": "********"},
+                    {"name": "tvCategory", "value": haac.ARR_QBITTORRENT_CATEGORIES["sonarr"]},
+                    {"name": "tvImportedCategory", "value": haac.ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"]},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[current, final]):
+            with mock.patch.object(haac, "http_request_text", side_effect=[(200, "{}"), (202, "{}")]) as request_text:
+                result = haac.ensure_arr_qbittorrent_download_client(
+                    8989,
+                    app_name="Sonarr",
+                    api_key="api-key",
+                    username="admin",
+                    password="secret",
+                )
+
+        self.assertEqual(result, final)
+        self.assertTrue(request_text.call_args_list[1].args[0].endswith("/api/v3/downloadclient/7"))
+        payload = request_text.call_args_list[1].kwargs["payload"]
+        self.assertEqual(payload["name"], haac.ARR_QBITTORRENT_CLIENT_NAME)
+        self.assertEqual(haac.field_value(payload["fields"], "tvCategory"), haac.ARR_QBITTORRENT_CATEGORIES["sonarr"])
+
+    def test_ensure_prowlarr_qbittorrent_download_client_creates_missing_client(self) -> None:
+        schema_item = {
+            "implementation": "QBittorrent",
+            "implementationName": "qBittorrent",
+            "name": "",
+            "fields": [
+                {"name": "host", "value": "localhost"},
+                {"name": "port", "value": 8080},
+                {"name": "username", "value": None},
+                {"name": "password", "value": None},
+                {"name": "category", "value": "prowlarr"},
+            ],
+        }
+        final = [
+            {
+                "id": 3,
+                "implementation": "QBittorrent",
+                "name": haac.ARR_QBITTORRENT_CLIENT_NAME,
+                "fields": [
+                    {"name": "host", "value": haac.QBITTORRENT_INTERNAL_HOST},
+                    {"name": "port", "value": haac.QBITTORRENT_INTERNAL_PORT},
+                    {"name": "username", "value": "admin"},
+                    {"name": "password", "value": "********"},
+                    {"name": "category", "value": haac.ARR_QBITTORRENT_CATEGORIES["prowlarr"]},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[[], [schema_item], final]):
+            with mock.patch.object(haac, "http_request_text", return_value=(201, '{"id":3}')) as request_text:
+                result = haac.ensure_prowlarr_qbittorrent_download_client(
+                    9696,
+                    api_key="api-key",
+                    username="admin",
+                    password="secret",
+                )
+
+        self.assertEqual(result, final)
+        payload = request_text.call_args.kwargs["payload"]
+        self.assertEqual(haac.field_value(payload["fields"], "category"), haac.ARR_QBITTORRENT_CATEGORIES["prowlarr"])
+
+    def test_ensure_prowlarr_application_updates_existing_sonarr_link(self) -> None:
+        current = [
+            {
+                "id": 11,
+                "implementation": "Sonarr",
+                "name": "legacy",
+                "syncLevel": "fullSync",
+                "fields": [
+                    {"name": "prowlarrUrl", "value": "http://old-prowlarr"},
+                    {"name": "baseUrl", "value": "http://old-sonarr"},
+                    {"name": "apiKey", "value": "old-key"},
+                ],
+            }
+        ]
+        final = [
+            {
+                "id": 11,
+                "implementation": "Sonarr",
+                "name": "Sonarr",
+                "syncLevel": "fullSync",
+                "fields": [
+                    {"name": "prowlarrUrl", "value": haac.PROWLARR_INTERNAL_URL},
+                    {"name": "baseUrl", "value": haac.SONARR_INTERNAL_URL},
+                    {"name": "apiKey", "value": "new-key"},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[current, final]):
+            with mock.patch.object(haac, "http_request_text", return_value=(202, "{}")) as request_text:
+                result = haac.ensure_prowlarr_application(
+                    9696,
+                    api_key="prowlarr-key",
+                    implementation="Sonarr",
+                    downstream_api_key="new-key",
+                    downstream_url=haac.SONARR_INTERNAL_URL,
+                )
+
+        self.assertEqual(result, final)
+        self.assertTrue(request_text.call_args.args[0].endswith("/api/v1/applications/11"))
+        payload = request_text.call_args.kwargs["payload"]
+        self.assertEqual(payload["name"], "Sonarr")
+        self.assertEqual(haac.field_value(payload["fields"], "prowlarrUrl"), haac.PROWLARR_INTERNAL_URL)
+        self.assertEqual(haac.field_value(payload["fields"], "baseUrl"), haac.SONARR_INTERNAL_URL)
+
+    def test_recyclarr_runtime_secrets_text_uses_internal_urls(self) -> None:
+        content = haac.recyclarr_runtime_secrets_text(radarr_api_key="radarr-key", sonarr_api_key="sonarr-key")
+
+        self.assertIn(f"radarr_main_base_url: {haac.RADARR_INTERNAL_URL}", content)
+        self.assertIn("radarr_main_api_key: radarr-key", content)
+        self.assertIn(f"sonarr_main_base_url: {haac.SONARR_INTERNAL_URL}", content)
+        self.assertIn("sonarr_main_api_key: sonarr-key", content)
+
+    def test_ensure_recyclarr_runtime_secret_applies_stringdata_manifest(self) -> None:
+        with mock.patch.object(haac, "run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
+            haac.ensure_recyclarr_runtime_secret(
+                "kubectl",
+                Path("demo-kubeconfig"),
+                radarr_api_key="radarr-key",
+                sonarr_api_key="sonarr-key",
+            )
+
+        command = run.call_args.args[0]
+        manifest = run.call_args.kwargs["input_text"]
+        self.assertEqual(command[:4], ["kubectl", "--kubeconfig", "demo-kubeconfig", "apply"])
+        self.assertIn("name: recyclarr-secrets", manifest)
+        self.assertIn("radarr_main_api_key: radarr-key", manifest)
+        self.assertIn("sonarr_main_api_key: sonarr-key", manifest)
+
+    def test_verify_recyclarr_sync_surface_requires_profile_and_custom_formats(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [{"name": "HD Bluray + WEB"}],
+                [{"id": 1, "name": "Preferred Words"}],
+            ],
+        ):
+            haac.verify_recyclarr_sync_surface(
+                7878,
+                app_name="Radarr",
+                api_key="api-key",
+                expected_profile="HD Bluray + WEB",
+            )
+
+    def test_ensure_seerr_radarr_settings_prefers_test_root_folder_when_present(self) -> None:
+        opener = object()
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [],
+                {
+                    "profiles": [{"id": 4, "name": "HD-1080p"}],
+                    "rootFolders": [{"id": 1, "path": "/data/media/movies"}],
+                    "tags": [],
+                    "urlBase": "",
+                },
+                {"id": 0},
+            ],
+        ) as request_json:
+            haac.ensure_seerr_radarr_settings(
+                opener,
+                5055,
+                domain_name="example.com",
+                radarr_api_key="radarr-key",
+                fallback_root_folders=[{"id": 99, "path": "/fallback/movies"}],
+            )
+
+        payload = request_json.call_args_list[-1].kwargs["payload"]
+        self.assertEqual(payload["activeDirectory"], "/data/media/movies")
+
+    def test_ensure_seerr_sonarr_settings_uses_fallback_root_folder_when_test_is_stale(self) -> None:
+        opener = object()
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [],
+                {
+                    "profiles": [{"id": 4, "name": "HD-1080p"}],
+                    "rootFolders": [],
+                    "languageProfiles": None,
+                    "tags": [],
+                    "urlBase": "",
+                },
+                {"id": 0},
+            ],
+        ) as request_json:
+            haac.ensure_seerr_sonarr_settings(
+                opener,
+                5055,
+                domain_name="example.com",
+                sonarr_api_key="sonarr-key",
+                fallback_root_folders=[{"id": 1, "path": "/data/media/tv"}],
+            )
+
+        payload = request_json.call_args_list[-1].kwargs["payload"]
+        self.assertEqual(payload["activeDirectory"], "/data/media/tv")
+        self.assertNotIn("activeLanguageProfileId", payload)
+        self.assertNotIn("activeAnimeLanguageProfileId", payload)
+
+    def test_jellyfin_default_libraries_match_movies_and_tv_paths(self) -> None:
+        self.assertEqual(
+            haac.JELLYFIN_DEFAULT_LIBRARIES,
+            (
+                {"name": "Movies", "collectionType": "movies", "path": "/data/movies"},
+                {"name": "TV Shows", "collectionType": "tvshows", "path": "/data/tv"},
+            ),
+        )
+
+    def test_ensure_jellyfin_admin_ready_bootstraps_first_run_then_authenticates(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                {"StartupWizardCompleted": False},
+                {"Name": "root"},
+                {
+                    "ServerName": "",
+                    "UICulture": "en-US",
+                    "MetadataCountryCode": "US",
+                    "PreferredMetadataLanguage": "en",
+                },
+                {"StartupWizardCompleted": True},
+                {"AccessToken": "token"},
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_text", side_effect=[(204, ""), (204, ""), (204, "")]) as request:
+                info = haac.ensure_jellyfin_admin_ready(
+                    8096,
+                    username="jf-admin",
+                    password="secret-pass",
+                    domain_name="example.com",
+                )
+
+        self.assertTrue(info["StartupWizardCompleted"])
+        config_payload = request.call_args_list[0].kwargs["payload"]
+        user_payload = request.call_args_list[1].kwargs["payload"]
+        self.assertEqual(config_payload["ServerName"], "jellyfin.example.com")
+        self.assertEqual(user_payload["Name"], "jf-admin")
+        self.assertEqual(user_payload["Password"], "secret-pass")
+
+    def test_ensure_jellyfin_libraries_creates_missing_virtual_folders(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [],
+                [{"Name": "Movies", "Locations": ["/data/movies"]}],
+                [
+                    {"Name": "Movies", "Locations": ["/data/movies"]},
+                    {"Name": "TV Shows", "Locations": ["/data/tv"]},
+                ],
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_text", side_effect=[(204, ""), (204, "")]) as request:
+                folders = haac.ensure_jellyfin_libraries(8096, access_token="demo-token")
+
+        self.assertEqual(len(folders), 2)
+        first_url = request.call_args_list[0].args[0]
+        second_url = request.call_args_list[1].args[0]
+        self.assertIn("collectionType=movies", first_url)
+        self.assertIn("paths=%2Fdata%2Fmovies", first_url)
+        self.assertIn("collectionType=tvshows", second_url)
+        self.assertIn("paths=%2Fdata%2Ftv", second_url)
+
     def test_parser_registers_reconcile_media_stack(self) -> None:
         parser = haac.build_parser()
         args = parser.parse_args(
@@ -1294,6 +1778,26 @@ class ArrStackRepoFileTests(unittest.TestCase):
 
         self.assertIn("media:post-install", readme)
         self.assertIn("JELLYFIN_ADMIN_*", readme)
+
+    def test_recyclarr_config_template_uses_official_include_templates(self) -> None:
+        config = (
+            ROOT
+            / "k8s"
+            / "charts"
+            / "haac-stack"
+            / "charts"
+            / "media"
+            / "files"
+            / "recyclarr"
+            / "recyclarr.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("sonarr-quality-definition-series", config)
+        self.assertIn("sonarr-v4-quality-profile-web-1080p", config)
+        self.assertIn("sonarr-v4-custom-formats-web-1080p", config)
+        self.assertIn("radarr-quality-definition-movie", config)
+        self.assertIn("radarr-quality-profile-hd-bluray-web", config)
+        self.assertIn("radarr-custom-formats-hd-bluray-web", config)
 
     def test_verify_public_auth_covers_seerr_and_arr_dashboard(self) -> None:
         verifier = (ROOT / "scripts" / "verify-public-auth.mjs").read_text(encoding="utf-8")
@@ -1363,6 +1867,16 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("- name: autobrr", prometheus_app)
         self.assertIn("namespaceSelector:\n                matchNames:\n                  - media", prometheus_app)
         self.assertIn("argocd.argoproj.io/hook: PreSync", prometheus_app)
+
+    def test_recyclarr_cronjob_mounts_repo_config_and_runtime_secret(self) -> None:
+        helpers = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "helpers.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("name: recyclarr", helpers)
+        self.assertIn("configMap:\n                name: recyclarr-config", helpers)
+        self.assertIn("secret:\n                secretName: recyclarr-secrets", helpers)
+        self.assertNotIn("persistentVolumeClaim:\n                claimName: recyclarr-config", helpers)
 
     def test_haac_stack_app_ignores_seerr_pvc_template_status(self) -> None:
         haac_stack_app = (ROOT / "k8s" / "workloads" / "applications" / "haac-stack.yaml").read_text(encoding="utf-8")
