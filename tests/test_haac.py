@@ -1145,8 +1145,9 @@ class DownloadersTemplateContractTests(unittest.TestCase):
 
         self.assertIn("value: /data/torrents", template)
         self.assertIn("value: /data/torrents/incomplete", template)
-        self.assertIn('Session\\\\DefaultSavePath=', template)
-        self.assertIn('Downloads\\\\TempPathEnabled=true', template)
+        self.assertIn("parser = configparser.RawConfigParser(interpolation=None)", template)
+        self.assertIn('parser["BitTorrent"]["Session\\\\DefaultSavePath"] = os.environ["QBITTORRENT_SAVE_PATH"]', template)
+        self.assertIn('parser["Preferences"]["Downloads\\\\TempPathEnabled"] = "true"', template)
         self.assertIn('qBittorrent did not persist the supported shared download paths.', template)
 
     def test_downloaders_readiness_probe_accepts_qui_ready_and_qbit_403(self) -> None:
@@ -1604,12 +1605,16 @@ class ArrStackSurfaceTests(unittest.TestCase):
                 Path("demo-kubeconfig"),
                 radarr_api_key="radarr-key",
                 sonarr_api_key="sonarr-key",
+                bazarr_api_key="bazarr-key",
             )
 
         command = run.call_args.args[0]
         manifest = run.call_args.kwargs["input_text"]
         self.assertEqual(command[:4], ["kubectl", "--kubeconfig", "demo-kubeconfig", "apply"])
         self.assertIn("name: recyclarr-secrets", manifest)
+        self.assertIn("RADARR_API_KEY: radarr-key", manifest)
+        self.assertIn("SONARR_API_KEY: sonarr-key", manifest)
+        self.assertIn("BAZARR_API_KEY: bazarr-key", manifest)
         self.assertIn("radarr_main_api_key: radarr-key", manifest)
         self.assertIn("sonarr_main_api_key: sonarr-key", manifest)
 
@@ -1904,10 +1909,14 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("labels:\n    app: sonarr", sonarr)
         self.assertIn("labels:\n    app: prowlarr", prowlarr)
         self.assertIn("labels:\n    app: downloaders", downloaders)
+        self.assertIn("name: bazarr-exportarr", bazarr)
         self.assertIn('args: ["bazarr"]', bazarr)
-        self.assertIn("FORM_AUTH", bazarr)
-        self.assertIn("labels:\n    app: bazarr", bazarr)
+        self.assertIn("API_KEY", bazarr)
+        self.assertIn("labels:\n        app: bazarr-exportarr", bazarr)
+        self.assertIn("name: bazarr-metrics", bazarr)
         self.assertIn('listen_addr = "0.0.0.0:5656"', unpackerr)
+        self.assertIn("RADARR_API_KEY", unpackerr)
+        self.assertIn("SONARR_API_KEY", unpackerr)
         self.assertIn("labels:\n    app: unpackerr", unpackerr)
         self.assertIn("kind: StatefulSet", seerr)
         self.assertIn("/api/v1/settings/public", seerr)

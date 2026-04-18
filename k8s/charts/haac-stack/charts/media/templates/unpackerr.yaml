@@ -28,20 +28,12 @@ spec:
               apk add --no-cache python3 >/dev/null
               cat > /tmp/render-unpackerr.py <<'PY'
               import pathlib
-              import xml.etree.ElementTree as ET
+              import os
 
-              def read_api_key(path_str: str) -> str:
-                  path = pathlib.Path(path_str)
-                  if not path.exists():
-                      raise SystemExit(f"Missing ARR config: {path}")
-                  tree = ET.parse(path)
-                  api_key = (tree.findtext("./ApiKey") or "").strip()
-                  if not api_key:
-                      raise SystemExit(f"ARR config does not expose ApiKey: {path}")
-                  return api_key
-
-              radarr_api_key = read_api_key("/arr-config/radarr/config.xml")
-              sonarr_api_key = read_api_key("/arr-config/sonarr/config.xml")
+              radarr_api_key = (os.environ.get("RADARR_API_KEY") or "").strip()
+              sonarr_api_key = (os.environ.get("SONARR_API_KEY") or "").strip()
+              if not radarr_api_key or not sonarr_api_key:
+                  raise SystemExit("Unpackerr runtime secret is missing Radarr/Sonarr API keys.")
               config = f"""
               [webserver]
                 metrics = true
@@ -62,15 +54,20 @@ spec:
               pathlib.Path("/config/unpackerr.conf").write_text(config, encoding="utf-8")
               PY
               python3 /tmp/render-unpackerr.py
+          env:
+            - name: RADARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: recyclarr-secrets
+                  key: RADARR_API_KEY
+            - name: SONARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: recyclarr-secrets
+                  key: SONARR_API_KEY
           volumeMounts:
             - name: config
               mountPath: /config
-            - name: radarr-config
-              mountPath: /arr-config/radarr
-              readOnly: true
-            - name: sonarr-config
-              mountPath: /arr-config/sonarr
-              readOnly: true
       containers:
         - name: unpackerr
           image: >-
@@ -103,12 +100,6 @@ spec:
           hostPath:
             path: /data
             type: Directory
-        - name: radarr-config
-          persistentVolumeClaim:
-            claimName: radarr-config
-        - name: sonarr-config
-          persistentVolumeClaim:
-            claimName: sonarr-config
 
 ---
 apiVersion: v1

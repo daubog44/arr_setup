@@ -65,7 +65,6 @@ LITMUS_MONGODB_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-mongodb-
 LITMUS_MONGODB_SECRET_NAME = "litmus-mongodb-credentials"
 LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
-MEDIA_AUTH_SECRET_OUTPUT = SECRETS_DIR / "media-auth-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 RECYCLARR_CONFIG_TEMPLATE = (
@@ -93,7 +92,6 @@ GITOPS_GENERATED_OUTPUTS = (
     ARGOCD_OIDC_SECRET_OUTPUT,
     LITMUS_ADMIN_SECRET_OUTPUT,
     LITMUS_MONGODB_SECRET_OUTPUT,
-    MEDIA_AUTH_SECRET_OUTPUT,
     *GITOPS_RENDERED_OUTPUTS,
 )
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
@@ -282,16 +280,6 @@ def merged_env() -> dict[str, str]:
                     "QBITTORRENT_USERNAME": merged.get("QBITTORRENT_USERNAME", "admin"),
                     "QUI_PASSWORD": merged["QUI_PASSWORD"],
                     "QBITTORRENT_PASSWORD_PBKDF2": merged["QBITTORRENT_PASSWORD_PBKDF2"],
-                }
-            ),
-        )
-    if merged.get("BAZARR_AUTH_USERNAME") and merged.get("BAZARR_AUTH_PASSWORD"):
-        merged.setdefault(
-            "MEDIA_AUTH_SECRET_SHA256",
-            stable_secret_checksum(
-                {
-                    "BAZARR_AUTH_USERNAME": merged["BAZARR_AUTH_USERNAME"],
-                    "BAZARR_AUTH_PASSWORD": merged["BAZARR_AUTH_PASSWORD"],
                 }
             ),
         )
@@ -1799,16 +1787,6 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
                 "QBITTORRENT_USERNAME": env.get("QBITTORRENT_USERNAME", "admin"),
                 "QUI_PASSWORD": env["QUI_PASSWORD"],
                 "QBITTORRENT_PASSWORD_PBKDF2": env["QBITTORRENT_PASSWORD_PBKDF2"],
-            },
-            None,
-        ),
-        (
-            "media-auth",
-            "media",
-            MEDIA_AUTH_SECRET_OUTPUT,
-            {
-                "BAZARR_AUTH_USERNAME": env["BAZARR_AUTH_USERNAME"],
-                "BAZARR_AUTH_PASSWORD": env["BAZARR_AUTH_PASSWORD"],
             },
             None,
         ),
@@ -5196,7 +5174,9 @@ def ensure_recyclarr_runtime_secret(
     *,
     radarr_api_key: str,
     sonarr_api_key: str,
+    bazarr_api_key: str = "",
 ) -> None:
+    bazarr_line = f"  BAZARR_API_KEY: {bazarr_api_key}\n" if bazarr_api_key else ""
     manifest = (
         "apiVersion: v1\n"
         "kind: Secret\n"
@@ -5205,6 +5185,9 @@ def ensure_recyclarr_runtime_secret(
         "  namespace: media\n"
         "type: Opaque\n"
         "stringData:\n"
+        f"  RADARR_API_KEY: {radarr_api_key}\n"
+        f"  SONARR_API_KEY: {sonarr_api_key}\n"
+        f"{bazarr_line}"
         "  secrets.yml: |\n"
         f"{indent_block(recyclarr_runtime_secrets_text(radarr_api_key=radarr_api_key, sonarr_api_key=sonarr_api_key))}\n"
     )
@@ -5854,7 +5837,7 @@ def verify_media_metrics_surface(kubectl: str, kubeconfig: Path) -> None:
         ("svc/sonarr", 9708, "sonarr_series_total"),
         ("svc/prowlarr", 9709, "prowlarr_indexer_total"),
         ("svc/autobrr", 9074, "autobrr_info"),
-        ("svc/bazarr", 9710, "bazarr_system_status"),
+        ("svc/bazarr-metrics", 9710, "bazarr_system_status"),
         ("svc/unpackerr", 5656, "unpackerr_uptime_seconds_total"),
     )
     for resource, remote_port, metric_name in metric_checks:
@@ -5891,7 +5874,6 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             "deployment/sonarr",
             "deployment/prowlarr",
             "deployment/bazarr",
-            "deployment/unpackerr",
             "deployment/jellyfin",
             "statefulset/seerr",
         ):
@@ -5991,6 +5973,29 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 radarr_api_key=radarr_api_key,
                 sonarr_api_key=sonarr_api_key,
             )
+        ensure_recyclarr_runtime_secret(
+            kubectl,
+            session_kubeconfig,
+            radarr_api_key=radarr_api_key,
+            sonarr_api_key=sonarr_api_key,
+            bazarr_api_key=bazarr_api_key,
+        )
+        for resource in ("deployment/bazarr-exportarr", "deployment/unpackerr"):
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "-n",
+                    "media",
+                    "rollout",
+                    "restart",
+                    resource,
+                ],
+                check=False,
+                capture_output=True,
+            )
+            wait_for_rollout(kubectl, session_kubeconfig, namespace="media", resource=resource)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/jellyfin", 80) as port:
             require_http_status(f"http://127.0.0.1:{port}/health", label="Jellyfin /health")
             if jellyfin_startup_incomplete(jellyfin_public_info(port)):
@@ -6043,6 +6048,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             session_kubeconfig,
             radarr_api_key=radarr_api_key,
             sonarr_api_key=sonarr_api_key,
+            bazarr_api_key=bazarr_api_key,
         )
         run_recyclarr_sync_job(kubectl, session_kubeconfig)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as port:

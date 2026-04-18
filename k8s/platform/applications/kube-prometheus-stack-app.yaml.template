@@ -260,7 +260,7 @@ spec:
                   - media
               selector:
                 matchLabels:
-                  app: bazarr
+                  app: bazarr-exportarr
               endpoints:
                 - port: metrics
                   path: /metrics

@@ -27,7 +27,7 @@ spec:
       initContainers:
         - name: qbittorrent-webui-config
           image: >-
-            {{ printf "%s:%s" .Values.global.images.busybox.repository .Values.global.images.busybox.tag }}
+            {{ printf "%s:%s" .Values.global.images.alpine.repository .Values.global.images.alpine.tag }}
           env:
             - name: QBITTORRENT_USERNAME
               valueFrom:
@@ -47,115 +47,37 @@ spec:
           args:
             - |
               set -eu
+              apk add --no-cache python3 >/dev/null
 
-              config_dir="/config/qBittorrent"
-              config_file="${config_dir}/qBittorrent.conf"
-              tmp_file="${config_file}.tmp"
-              mkdir -p "$config_dir"
               mkdir -p "$QBITTORRENT_SAVE_PATH" "$QBITTORRENT_TEMP_PATH"
-              touch "$config_file"
+              python3 <<'PY'
+              import configparser
+              import os
+              from pathlib import Path
 
-              awk -v quser="$QBITTORRENT_USERNAME" -v qhash="$QBITTORRENT_PASSWORD_PBKDF2" -v qsave="$QBITTORRENT_SAVE_PATH" -v qtemp="$QBITTORRENT_TEMP_PATH" '
-                BEGIN {
-                  in_bittorrent = 0
-                  in_preferences = 0
-                  bittorrent_found = 0
-                  preferences_found = 0
-                  wrote_bittorrent = 0
-                  wrote_preferences = 0
-                }
-                {
-                  if ($0 == "[BitTorrent]") {
-                    if (in_preferences && !wrote_preferences) {
-                      print "WebUI\\Username=" quser
-                      print "WebUI\\Password_PBKDF2=" qhash
-                      print "Downloads\\SavePath=" qsave
-                      print "Downloads\\TempPath=" qtemp
-                      print "Downloads\\TempPathEnabled=true"
-                      wrote_preferences = 1
-                    }
-                    in_preferences = 0
-                    bittorrent_found = 1
-                    in_bittorrent = 1
-                    print
-                    next
-                  }
-                  if ($0 == "[Preferences]") {
-                    if (in_bittorrent && !wrote_bittorrent) {
-                      print "Session\\DefaultSavePath=" qsave
-                      print "Session\\TempPath=" qtemp
-                      wrote_bittorrent = 1
-                    }
-                    in_bittorrent = 0
-                    preferences_found = 1
-                    in_preferences = 1
-                    print
-                    next
-                  }
-                  if (in_bittorrent && $0 ~ /^\[/) {
-                    if (!wrote_bittorrent) {
-                      print "Session\\DefaultSavePath=" qsave
-                      print "Session\\TempPath=" qtemp
-                      wrote_bittorrent = 1
-                    }
-                    in_bittorrent = 0
-                  }
-                  if (in_preferences && $0 ~ /^\[/) {
-                    if (!wrote_preferences) {
-                      print "WebUI\\Username=" quser
-                      print "WebUI\\Password_PBKDF2=" qhash
-                      print "Downloads\\SavePath=" qsave
-                      print "Downloads\\TempPath=" qtemp
-                      print "Downloads\\TempPathEnabled=true"
-                      wrote_preferences = 1
-                    }
-                    in_preferences = 0
-                  }
-                  if (
-                    in_bittorrent &&
-                    (
-                      $0 ~ /^Session\\DefaultSavePath=/ ||
-                      $0 ~ /^Session\\TempPath=/
-                    )
-                  ) {
-                    next
-                  }
-                  if (
-                    in_preferences &&
-                    (
-                      $0 ~ /^WebUI\\Username=/ ||
-                      $0 ~ /^WebUI\\Password_PBKDF2=/ ||
-                      $0 ~ /^Downloads\\SavePath=/ ||
-                      $0 ~ /^Downloads\\TempPath=/ ||
-                      $0 ~ /^Downloads\\TempPathEnabled=/
-                    )
-                  ) {
-                    next
-                  }
-                  print
-                }
-                END {
-                  if (!bittorrent_found) {
-                    print "[BitTorrent]"
-                  }
-                  if (!wrote_bittorrent) {
-                    print "Session\\DefaultSavePath=" qsave
-                    print "Session\\TempPath=" qtemp
-                  }
-                  if (!preferences_found) {
-                    print "[Preferences]"
-                  }
-                  if (!wrote_preferences) {
-                    print "WebUI\\Username=" quser
-                    print "WebUI\\Password_PBKDF2=" qhash
-                    print "Downloads\\SavePath=" qsave
-                    print "Downloads\\TempPath=" qtemp
-                    print "Downloads\\TempPathEnabled=true"
-                  }
-                }
-              ' "$config_file" > "$tmp_file"
+              config_dir = Path("/config/qBittorrent")
+              config_dir.mkdir(parents=True, exist_ok=True)
+              config_file = config_dir / "qBittorrent.conf"
 
-              mv "$tmp_file" "$config_file"
+              parser = configparser.RawConfigParser(interpolation=None)
+              parser.optionxform = str
+              if config_file.exists():
+                  parser.read(config_file, encoding="utf-8")
+              for section in ("BitTorrent", "Preferences"):
+                  if not parser.has_section(section):
+                      parser.add_section(section)
+
+              parser["BitTorrent"]["Session\\DefaultSavePath"] = os.environ["QBITTORRENT_SAVE_PATH"]
+              parser["BitTorrent"]["Session\\TempPath"] = os.environ["QBITTORRENT_TEMP_PATH"]
+              parser["Preferences"]["WebUI\\Username"] = os.environ["QBITTORRENT_USERNAME"]
+              parser["Preferences"]["WebUI\\Password_PBKDF2"] = os.environ["QBITTORRENT_PASSWORD_PBKDF2"]
+              parser["Preferences"]["Downloads\\SavePath"] = os.environ["QBITTORRENT_SAVE_PATH"]
+              parser["Preferences"]["Downloads\\TempPath"] = os.environ["QBITTORRENT_TEMP_PATH"]
+              parser["Preferences"]["Downloads\\TempPathEnabled"] = "true"
+
+              with config_file.open("w", encoding="utf-8", newline="\n") as handle:
+                  parser.write(handle, space_around_delimiters=False)
+              PY
           volumeMounts:
             - name: config
               mountPath: /config
