@@ -59,6 +59,7 @@ ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / 
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
 LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
 LITMUS_MONGODB_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-mongodb-credentials-sealed-secret.yaml"
+LITMUS_MONGODB_SECRET_NAME = "litmus-mongodb-credentials"
 LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
@@ -3822,13 +3823,13 @@ def reconcile_litmus_chaos(master_ip: str, proxmox_host: str, kubeconfig: Path, 
         mongodb_secret = kubectl_json(
             kubectl,
             session_kubeconfig,
-            ["get", "secret", "litmus-mongodb", "-n", "chaos", "-o", "json"],
+            ["get", "secret", LITMUS_MONGODB_SECRET_NAME, "-n", "chaos", "-o", "json"],
             context="Unable to read Litmus MongoDB secret",
         )
         mongodb_data = decode_secret_data(mongodb_secret)
         mongodb_root_password = mongodb_data.get("mongodb-root-password")
         if not mongodb_root_password:
-            raise HaaCError("Litmus MongoDB root password is missing from secret litmus-mongodb")
+            raise HaaCError(f"Litmus MongoDB root password is missing from secret {LITMUS_MONGODB_SECRET_NAME}")
         mongo_uri = (
             "mongodb://root:"
             f"{urllib.parse.quote(mongodb_root_password, safe='')}"
@@ -3938,13 +3939,13 @@ def reconcile_litmus_admin_session(kubectl: str, kubeconfig: Path, *, username: 
     mongodb_secret = kubectl_json(
         kubectl,
         kubeconfig,
-        ["get", "secret", "litmus-mongodb", "-n", "chaos", "-o", "json"],
+        ["get", "secret", LITMUS_MONGODB_SECRET_NAME, "-n", "chaos", "-o", "json"],
         context="Unable to read Litmus MongoDB secret",
     )
     mongodb_data = decode_secret_data(mongodb_secret)
     mongodb_root_password = mongodb_data.get("mongodb-root-password")
     if not mongodb_root_password:
-        raise HaaCError("Litmus MongoDB root password is missing from secret litmus-mongodb")
+        raise HaaCError(f"Litmus MongoDB root password is missing from secret {LITMUS_MONGODB_SECRET_NAME}")
     mongo_uri = (
         "mongodb://root:"
         f"{urllib.parse.quote(mongodb_root_password, safe='')}"

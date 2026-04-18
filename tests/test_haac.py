@@ -836,7 +836,7 @@ class LitmusBootstrapRecoveryTests(unittest.TestCase):
                 return {"spec": {"ports": [{"name": "auth-server", "port": 9003}]}}
             if command[:3] == ["get", "svc", "litmus-server-service"]:
                 return {"spec": {"ports": [{"port": 9002}]}}
-            if command[:3] == ["get", "secret", "litmus-mongodb"]:
+            if command[:3] == ["get", "secret", haac.LITMUS_MONGODB_SECRET_NAME]:
                 return {"data": {}}
             raise AssertionError(command)
 
