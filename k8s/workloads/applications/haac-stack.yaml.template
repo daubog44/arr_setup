@@ -21,6 +21,12 @@ spec:
         - values.yaml
   destination:
     server: https://kubernetes.default.svc
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: seerr
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates[]?.status
   syncPolicy:
     automated:
       prune: true

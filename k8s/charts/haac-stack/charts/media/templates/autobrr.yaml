@@ -65,6 +65,8 @@ metadata:
   namespace: media
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: autobrr
 spec:
   selector:
     app: autobrr

@@ -82,6 +82,8 @@ metadata:
   namespace: media
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: sonarr
 spec:
   selector:
     app: sonarr

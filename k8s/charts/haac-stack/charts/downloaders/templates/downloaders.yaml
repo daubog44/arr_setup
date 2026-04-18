@@ -452,6 +452,8 @@ metadata:
   namespace: media
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: downloaders
 spec:
   selector:
     app: downloaders

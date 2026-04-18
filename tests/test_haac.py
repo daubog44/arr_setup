@@ -1318,11 +1318,23 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("autobrr_info", dashboard)
 
     def test_media_manifests_expose_supported_metrics(self) -> None:
+        downloaders = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "downloaders" / "templates" / "downloaders.yaml"
+        ).read_text(encoding="utf-8")
         autobrr = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "autobrr.yaml"
         ).read_text(encoding="utf-8")
         flaresolverr = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "helpers.yaml"
+        ).read_text(encoding="utf-8")
+        radarr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "radarr.yaml"
+        ).read_text(encoding="utf-8")
+        sonarr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "sonarr.yaml"
+        ).read_text(encoding="utf-8")
+        prowlarr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "prowlarr.yaml"
         ).read_text(encoding="utf-8")
         seerr = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "seerr.yaml"
@@ -1333,7 +1345,13 @@ class ArrStackRepoFileTests(unittest.TestCase):
 
         self.assertIn("AUTOBRR__METRICS_ENABLED", autobrr)
         self.assertIn("port: 9074", autobrr)
+        self.assertIn("labels:\n    app: autobrr", autobrr)
         self.assertIn("PROMETHEUS_ENABLED", flaresolverr)
+        self.assertIn("labels:\n    app: flaresolverr", flaresolverr)
+        self.assertIn("labels:\n    app: radarr", radarr)
+        self.assertIn("labels:\n    app: sonarr", sonarr)
+        self.assertIn("labels:\n    app: prowlarr", prowlarr)
+        self.assertIn("labels:\n    app: downloaders", downloaders)
         self.assertIn("kind: StatefulSet", seerr)
         self.assertIn("/api/v1/settings/public", seerr)
         self.assertIn("- name: flaresolverr", prometheus_app)
