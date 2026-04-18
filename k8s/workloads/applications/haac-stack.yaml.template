@@ -27,6 +27,12 @@ spec:
       name: seerr
       jqPathExpressions:
         - .spec.volumeClaimTemplates[]?.status
+    - group: ""
+      kind: Secret
+      namespace: media
+      name: recyclarr-secrets
+      jsonPointers:
+        - /data
   syncPolicy:
     automated:
       prune: true

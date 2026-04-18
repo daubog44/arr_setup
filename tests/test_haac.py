@@ -1934,11 +1934,22 @@ class ArrStackRepoFileTests(unittest.TestCase):
         helpers = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "helpers.yaml"
         ).read_text(encoding="utf-8")
+        runtime_secret = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "recyclarr-runtime-secret.yaml"
+        ).read_text(encoding="utf-8")
+        haac_stack_template = (
+            ROOT / "k8s" / "workloads" / "applications" / "haac-stack.yaml.template"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("name: recyclarr", helpers)
         self.assertIn("configMap:\n                name: recyclarr-config", helpers)
         self.assertIn("secret:\n                secretName: recyclarr-secrets", helpers)
         self.assertNotIn("persistentVolumeClaim:\n                claimName: recyclarr-config", helpers)
+        self.assertIn("RADARR_API_KEY: bootstrap-placeholder", runtime_secret)
+        self.assertIn("SONARR_API_KEY: bootstrap-placeholder", runtime_secret)
+        self.assertIn("BAZARR_API_KEY: bootstrap-placeholder", runtime_secret)
+        self.assertIn("name: recyclarr-secrets", haac_stack_template)
+        self.assertIn("jsonPointers:\n        - /data", haac_stack_template)
 
     def test_haac_stack_app_ignores_seerr_pvc_template_status(self) -> None:
         haac_stack_app = (ROOT / "k8s" / "workloads" / "applications" / "haac-stack.yaml").read_text(encoding="utf-8")
