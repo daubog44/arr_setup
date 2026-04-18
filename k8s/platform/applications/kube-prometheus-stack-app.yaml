@@ -140,6 +140,12 @@ spec:
                 revision: 1
                 datasource: Prometheus
 
+        prometheusOperator:
+          admissionWebhooks:
+            annotations:
+              argocd.argoproj.io/hook: PreSync
+              argocd.argoproj.io/hook-delete-policy: HookSucceeded
+
         prometheus:
           additionalServiceMonitors:
             - name: argocd
@@ -159,7 +165,9 @@ spec:
                       targetLabel: cluster
                       replacement: "haacarr-master"
             - name: qbittorrent
-              namespace: media
+              namespaceSelector:
+                matchNames:
+                  - media
               selector:
                 matchLabels:
                   app: downloaders
@@ -172,7 +180,9 @@ spec:
                       targetLabel: cluster
                       replacement: "haacarr-master"
             - name: flaresolverr
-              namespace: media
+              namespaceSelector:
+                matchNames:
+                  - media
               selector:
                 matchLabels:
                   app: flaresolverr
@@ -185,7 +195,9 @@ spec:
                       targetLabel: cluster
                       replacement: "haacarr-master"
             - name: radarr
-              namespace: media
+              namespaceSelector:
+                matchNames:
+                  - media
               selector:
                 matchLabels:
                   app: radarr
@@ -198,7 +210,9 @@ spec:
                       targetLabel: cluster
                       replacement: "haacarr-master"
             - name: sonarr
-              namespace: media
+              namespaceSelector:
+                matchNames:
+                  - media
               selector:
                 matchLabels:
                   app: sonarr
@@ -211,7 +225,9 @@ spec:
                       targetLabel: cluster
                       replacement: "haacarr-master"
             - name: prowlarr
-              namespace: media
+              namespaceSelector:
+                matchNames:
+                  - media
               selector:
                 matchLabels:
                   app: prowlarr
@@ -224,7 +240,9 @@ spec:
                       targetLabel: cluster
                       replacement: "haacarr-master"
             - name: autobrr
-              namespace: media
+              namespaceSelector:
+                matchNames:
+                  - media
               selector:
                 matchLabels:
                   app: autobrr

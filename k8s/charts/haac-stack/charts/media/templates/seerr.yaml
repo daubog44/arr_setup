@@ -44,6 +44,7 @@ spec:
           ports:
             - containerPort: 5055
               name: http
+              protocol: TCP
           readinessProbe:
             httpGet:
               path: /api/v1/settings/public
@@ -76,11 +77,19 @@ spec:
             runAsGroup: 1000
             seccompProfile:
               type: RuntimeDefault
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           volumeMounts:
             - name: config
               mountPath: /app/config
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: config
         annotations:
           argocd.argoproj.io/sync-wave: "3"

@@ -1341,6 +1341,15 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("- name: sonarr", prometheus_app)
         self.assertIn("- name: prowlarr", prometheus_app)
         self.assertIn("- name: autobrr", prometheus_app)
+        self.assertIn("namespaceSelector:\n                matchNames:\n                  - media", prometheus_app)
+        self.assertIn("argocd.argoproj.io/hook: PreSync", prometheus_app)
+
+    def test_haac_stack_app_ignores_seerr_pvc_template_status(self) -> None:
+        haac_stack_app = (ROOT / "k8s" / "workloads" / "applications" / "haac-stack.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("ignoreDifferences:", haac_stack_app)
+        self.assertIn("name: seerr", haac_stack_app)
+        self.assertIn(".spec.volumeClaimTemplates[]?.status", haac_stack_app)
 
 
 if __name__ == "__main__":
