@@ -6,11 +6,11 @@ metadata:
   namespace: media
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   replicas: 1
   strategy:
     type: Recreate
-    rollingUpdate: null
   selector:
     matchLabels:
       app: jellyfin
