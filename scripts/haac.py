@@ -6072,6 +6072,8 @@ def verify_media_metrics_surface(kubectl: str, kubeconfig: Path) -> None:
 def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     require_env(["DOMAIN_NAME", "QUI_PASSWORD"], env)
+    downloader_username = env.get("QBITTORRENT_USERNAME", "admin").strip() or "admin"
+    downloader_password = env["QUI_PASSWORD"].strip()
     username, password, email = seerr_admin_identity(env)
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:

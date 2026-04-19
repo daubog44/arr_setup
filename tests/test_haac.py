@@ -1900,6 +1900,46 @@ class ArrStackSurfaceTests(unittest.TestCase):
 
         self.assertIs(args.func, haac.cmd_reconcile_media_stack)
 
+    def test_reconcile_media_stack_uses_downloader_credentials_from_env(self) -> None:
+        @contextlib.contextmanager
+        def fake_cluster_session(*_args, **_kwargs):
+            yield Path("demo-kubeconfig")
+
+        @contextlib.contextmanager
+        def fake_port_forward(*_args, **_kwargs):
+            yield 8080
+
+        env = {
+            "DOMAIN_NAME": "example.com",
+            "QUI_PASSWORD": "qui-secret",
+            "QBITTORRENT_USERNAME": "qbit-user",
+        }
+
+        with mock.patch.object(haac, "merged_env", return_value=env):
+            with mock.patch.object(haac, "cluster_session", fake_cluster_session):
+                with mock.patch.object(haac, "seerr_admin_identity", return_value=("jf-admin", "jf-pass", "jf@example.com")):
+                    with mock.patch.object(haac, "read_arr_service_api_key", side_effect=["radarr-key", "sonarr-key", "prowlarr-key"]):
+                        with mock.patch.object(haac, "wait_for_rollout"):
+                            with mock.patch.object(haac, "bootstrap_downloaders_session"):
+                                with mock.patch.object(haac, "kubectl_port_forward", fake_port_forward):
+                                    with mock.patch.object(haac, "require_http_status"):
+                                        with mock.patch.object(haac, "ensure_arr_root_folder", return_value=[]):
+                                            with mock.patch.object(
+                                                haac,
+                                                "ensure_arr_qbittorrent_download_client",
+                                                side_effect=RuntimeError("stop-after-radarr"),
+                                            ) as ensure_client:
+                                                with self.assertRaisesRegex(RuntimeError, "stop-after-radarr"):
+                                                    haac.reconcile_media_stack(
+                                                        "192.168.0.211",
+                                                        "192.168.0.200",
+                                                        Path("demo-kubeconfig"),
+                                                        "kubectl",
+                                                    )
+
+        self.assertEqual(ensure_client.call_args.kwargs["username"], "qbit-user")
+        self.assertEqual(ensure_client.call_args.kwargs["password"], "qui-secret")
+
     def test_seerr_admin_identity_prefers_effective_jellyfin_overrides(self) -> None:
         username, password, email = haac.seerr_admin_identity(
             {
