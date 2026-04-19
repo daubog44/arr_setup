@@ -53,9 +53,14 @@ spec:
               additionalLabels:
                 release: kube-prometheus-stack
           persistentVolume:
-            enabled: true
-            storageClassName: ${HAAC_STATEFUL_STORAGE_CLASS}
-            size: 1Gi
+            config:
+              enabled: true
+              storageClassName: ${HAAC_STATEFUL_STORAGE_CLASS}
+              size: 100Mi
+            data:
+              enabled: true
+              storageClassName: ${HAAC_STATEFUL_STORAGE_CLASS}
+              size: 1Gi
           resources:
             requests:
               cpu: 100m

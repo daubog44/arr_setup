@@ -53,9 +53,14 @@ spec:
               additionalLabels:
                 release: kube-prometheus-stack
           persistentVolume:
-            enabled: true
-            storageClassName: local-path
-            size: 1Gi
+            config:
+              enabled: true
+              storageClassName: local-path
+              size: 100Mi
+            data:
+              enabled: true
+              storageClassName: local-path
+              size: 1Gi
           resources:
             requests:
               cpu: 100m
