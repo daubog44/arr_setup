@@ -239,6 +239,36 @@ spec:
                     - action: replace
                       targetLabel: cluster
                       replacement: "${LXC_MASTER_HOSTNAME}"
+            - name: lidarr
+              namespaceSelector:
+                matchNames:
+                  - media
+              selector:
+                matchLabels:
+                  app: lidarr
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "${LXC_MASTER_HOSTNAME}"
+            - name: sabnzbd
+              namespaceSelector:
+                matchNames:
+                  - media
+              selector:
+                matchLabels:
+                  app: sabnzbd
+              endpoints:
+                - port: metrics
+                  path: /metrics
+                  interval: 30s
+                  relabelings:
+                    - action: replace
+                      targetLabel: cluster
+                      replacement: "${LXC_MASTER_HOSTNAME}"
             - name: autobrr
               namespaceSelector:
                 matchNames:

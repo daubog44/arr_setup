@@ -14,7 +14,7 @@ vars:
 
 tasks:
   post-install:
-    desc: "Reconcile the repo-managed media surface after workloads are healthy: downloader bootstrap, Seerr first-run wiring, and metrics warmup."
+    desc: "Reconcile the repo-managed media surface after workloads are healthy: downloader bootstrap, Lidarr/SAB wiring, Seerr first-run wiring, and metrics warmup."
     cmds:
       - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'

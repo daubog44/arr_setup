@@ -187,24 +187,47 @@ BAZARR_INTERNAL_URL = "http://bazarr.media.svc.cluster.local"
 PROWLARR_INTERNAL_URL = "http://prowlarr.media.svc.cluster.local"
 RADARR_INTERNAL_URL = "http://radarr.media.svc.cluster.local"
 SONARR_INTERNAL_URL = "http://sonarr.media.svc.cluster.local"
+LIDARR_INTERNAL_URL = "http://lidarr.media.svc.cluster.local"
+SABNZBD_INTERNAL_URL = "http://sabnzbd.media.svc.cluster.local"
+SABNZBD_INTERNAL_HOST = "sabnzbd.media.svc.cluster.local"
+SABNZBD_INTERNAL_PORT = 80
+SABNZBD_COMPLETE_DOWNLOAD_PATH = "/data/usenet/complete"
+SABNZBD_INCOMPLETE_DOWNLOAD_PATH = "/data/usenet/incomplete"
 BAZARR_DEFAULT_LANGUAGE_CODES = ("it", "en")
 BAZARR_DEFAULT_PROFILE_ID = 1
 ARR_QBITTORRENT_CLIENT_NAME = "qBittorrent"
+ARR_SABNZBD_CLIENT_NAME = "SABnzbd"
 ARR_QBITTORRENT_CATEGORIES = {
     "radarr": "radarr",
     "sonarr": "tv-sonarr",
+    "lidarr": "lidarr",
     "prowlarr": "prowlarr",
 }
 ARR_QBITTORRENT_IMPORTED_CATEGORIES = {
     "radarr": "radarr-imported",
     "sonarr": "tv-sonarr-imported",
+    "lidarr": "lidarr-imported",
 }
 ARR_QBITTORRENT_CATEGORY_SAVE_PATHS = {
     ARR_QBITTORRENT_CATEGORIES["radarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/radarr",
     ARR_QBITTORRENT_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr",
+    ARR_QBITTORRENT_CATEGORIES["lidarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/lidarr",
     ARR_QBITTORRENT_CATEGORIES["prowlarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/prowlarr",
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/radarr-imported",
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr-imported",
+    ARR_QBITTORRENT_IMPORTED_CATEGORIES["lidarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/lidarr-imported",
+}
+ARR_SABNZBD_CATEGORIES = {
+    "radarr": "movies",
+    "sonarr": "tv",
+    "lidarr": "music",
+    "prowlarr": "prowlarr",
+}
+ARR_SABNZBD_CATEGORY_SAVE_PATHS = {
+    ARR_SABNZBD_CATEGORIES["radarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/movies",
+    ARR_SABNZBD_CATEGORIES["sonarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/tv",
+    ARR_SABNZBD_CATEGORIES["lidarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/music",
+    ARR_SABNZBD_CATEGORIES["prowlarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/prowlarr",
 }
 JELLYFIN_BOOTSTRAP_AUTH_HEADER = (
     'MediaBrowser Client="HaaC Bootstrap", Device="HaaC Bootstrap", DeviceId="haac-bootstrap", Version="1.0.0"'
@@ -216,6 +239,7 @@ JELLYFIN_DEFAULT_LIBRARIES = (
 ARR_DEFAULT_ROOT_FOLDERS = {
     "radarr": "/data/media/movies",
     "sonarr": "/data/media/tv",
+    "lidarr": "/data/media/music",
 }
 UP_PHASE_ORDER = (
     "Preflight",
@@ -3252,6 +3276,12 @@ def json_array(value: dict[str, object] | list[object]) -> list[dict[str, object
     return [item for item in value if isinstance(item, dict)]
 
 
+def json_object(value: dict[str, object] | list[object]) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
 def xml_element_text(root: ET.Element, name: str) -> str:
     for element in root.iter():
         local_name = element.tag.split("}", 1)[-1]
@@ -5041,6 +5071,47 @@ def read_arr_service_api_key(kubectl: str, kubeconfig: Path, app_name: str) -> s
     return api_key
 
 
+def read_sabnzbd_service_api_key(kubectl: str, kubeconfig: Path) -> str:
+    pod_name = latest_pod_name(kubectl, kubeconfig, "media", "app=sabnzbd")
+    script = r"""
+set -eu
+python3 <<'PY'
+from pathlib import Path
+import configparser
+
+candidates = [Path("/config/sabnzbd.ini")]
+config_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+if config_path is None:
+    for root in (Path("/config"),):
+        if not root.exists():
+            continue
+        matches = sorted(root.rglob("sabnzbd.ini"))
+        if matches:
+            config_path = matches[0]
+            break
+if config_path is None:
+    raise SystemExit("SABnzbd sabnzbd.ini not found under /config")
+parser = configparser.ConfigParser(interpolation=None)
+parser.read(config_path, encoding="utf-8")
+api_key = parser.get("misc", "api_key", fallback="").strip()
+if not api_key:
+    raise SystemExit("SABnzbd config does not expose an api_key yet.")
+print(api_key)
+PY
+"""
+    api_key = kubectl_exec_stdout(
+        kubectl,
+        kubeconfig,
+        namespace="media",
+        pod=pod_name,
+        container="sabnzbd",
+        script=script,
+    ).strip()
+    if not api_key:
+        raise HaaCError("SABnzbd config does not expose an api_key yet.")
+    return api_key
+
+
 def require_http_status(
     url: str,
     *,
@@ -5084,20 +5155,22 @@ def ensure_arr_root_folder(
     app_name: str,
     api_key: str,
     path: str,
+    api_version: str = "v3",
 ) -> list[dict[str, object]]:
     headers = {"X-Api-Key": api_key}
-    current = json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/rootfolder", headers=headers))
+    base_url = f"http://127.0.0.1:{port}/api/{api_version}/rootfolder"
+    current = json_array(http_request_json(base_url, headers=headers))
     if any(str(item.get("path") or "").strip() == path for item in current):
         return current
     status, body = http_request_text(
-        f"http://127.0.0.1:{port}/api/v3/rootfolder",
+        base_url,
         method="POST",
         payload={"path": path},
         headers=headers,
     )
     if status not in (200, 201):
         raise HaaCError(f"{app_name} root-folder bootstrap failed for {path}.\nHTTP {status}\n{body}")
-    current = json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/rootfolder", headers=headers))
+    current = json_array(http_request_json(base_url, headers=headers))
     if not any(str(item.get("path") or "").strip() == path for item in current):
         raise HaaCError(f"{app_name} root-folder bootstrap did not persist {path}.")
     return current
@@ -5110,7 +5183,7 @@ def schema_item_by_implementation(
     label: str,
 ) -> dict[str, object]:
     for item in schema_items:
-        if str(item.get("implementation") or "").strip() == implementation:
+        if str(item.get("implementation") or "").strip().lower() == implementation.lower():
             return copy.deepcopy(item)
     raise HaaCError(f"{label} schema does not expose implementation {implementation}.")
 
@@ -5140,7 +5213,7 @@ def find_service_integration(
     exact_name = None
     fallback = None
     for item in items:
-        if str(item.get("implementation") or "").strip() != implementation:
+        if str(item.get("implementation") or "").strip().lower() != implementation.lower():
             continue
         if fallback is None:
             fallback = copy.deepcopy(item)
@@ -5150,6 +5223,15 @@ def find_service_integration(
     return exact_name or fallback
 
 
+def set_first_field_value(fields: list[dict[str, object]], names: tuple[str, ...], value: object) -> str | None:
+    for name in names:
+        for field in fields:
+            if str(field.get("name") or "").strip() == name:
+                field["value"] = value
+                return name
+    return None
+
+
 def ensure_arr_qbittorrent_download_client(
     port: int,
     *,
@@ -5157,12 +5239,13 @@ def ensure_arr_qbittorrent_download_client(
     api_key: str,
     username: str,
     password: str,
+    api_version: str = "v3",
 ) -> list[dict[str, object]]:
     app_key = app_name.strip().lower()
-    if app_key not in ("radarr", "sonarr"):
+    if app_key not in ("radarr", "sonarr", "lidarr"):
         raise HaaCError(f"Unsupported ARR qBittorrent target: {app_name}")
     headers = {"X-Api-Key": api_key}
-    base_url = f"http://127.0.0.1:{port}/api/v3/downloadclient"
+    base_url = f"http://127.0.0.1:{port}/api/{api_version}/downloadclient"
     current = json_array(http_request_json(base_url, headers=headers))
     existing = find_service_integration(current, implementation="QBittorrent", name=ARR_QBITTORRENT_CLIENT_NAME)
     if existing:
@@ -5191,13 +5274,21 @@ def ensure_arr_qbittorrent_download_client(
             ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"],
             required=False,
         )
-    else:
+    elif app_key == "sonarr":
         set_field_value(fields, "tvCategory", ARR_QBITTORRENT_CATEGORIES["sonarr"])
         set_field_value(
             fields,
             "tvImportedCategory",
             ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"],
             required=False,
+        )
+    else:
+        if not set_first_field_value(fields, ("category", "musicCategory"), ARR_QBITTORRENT_CATEGORIES["lidarr"]):
+            raise HaaCError("Lidarr qBittorrent schema does not expose a supported category field.")
+        set_first_field_value(
+            fields,
+            ("postImportCategory", "importedCategory", "postImportCompletedCategory"),
+            ARR_QBITTORRENT_IMPORTED_CATEGORIES["lidarr"],
         )
     payload["fields"] = fields
     test_status, test_body = http_request_text(
@@ -5228,6 +5319,83 @@ def ensure_arr_qbittorrent_download_client(
     configured_fields = json_array(configured.get("fields"))
     if str(field_value(configured_fields, "host") or "").strip() != QBITTORRENT_INTERNAL_HOST:
         raise HaaCError(f"{app_name} qBittorrent client persisted with an unexpected host.")
+    return current
+
+
+def ensure_arr_sabnzbd_download_client(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    sabnzbd_api_key: str,
+    api_version: str = "v3",
+) -> list[dict[str, object]]:
+    app_key = app_name.strip().lower()
+    if app_key not in ("radarr", "sonarr", "lidarr"):
+        raise HaaCError(f"Unsupported ARR SABnzbd target: {app_name}")
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/{api_version}/downloadclient"
+    current = json_array(http_request_json(base_url, headers=headers))
+    existing = find_service_integration(current, implementation="Sabnzbd", name=ARR_SABNZBD_CLIENT_NAME)
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = schema_item_by_implementation(
+            schema,
+            implementation="Sabnzbd",
+            label=f"{app_name} download client",
+        )
+    fields = json_array(payload.get("fields"))
+    payload["enable"] = True
+    payload["name"] = ARR_SABNZBD_CLIENT_NAME
+    set_field_value(fields, "host", SABNZBD_INTERNAL_HOST)
+    set_field_value(fields, "port", SABNZBD_INTERNAL_PORT)
+    set_field_value(fields, "useSsl", False, required=False)
+    set_field_value(fields, "urlBase", "", required=False)
+    set_field_value(fields, "apiKey", sabnzbd_api_key)
+    set_field_value(fields, "username", "", required=False)
+    set_field_value(fields, "password", "", required=False)
+    category_name = ARR_SABNZBD_CATEGORIES[app_key]
+    if app_key == "radarr":
+        if not set_first_field_value(fields, ("movieCategory", "category"), category_name):
+            raise HaaCError("Radarr SABnzbd schema does not expose a supported category field.")
+    elif app_key == "sonarr":
+        if not set_first_field_value(fields, ("tvCategory", "category"), category_name):
+            raise HaaCError("Sonarr SABnzbd schema does not expose a supported category field.")
+    else:
+        if not set_first_field_value(fields, ("musicCategory", "category"), category_name):
+            raise HaaCError("Lidarr SABnzbd schema does not expose a supported category field.")
+    set_first_field_value(fields, ("recentTvPriority", "olderTvPriority", "priority"), -100)
+    payload["fields"] = fields
+    test_status, test_body = http_request_text(
+        f"{base_url}/test",
+        method="POST",
+        payload=payload,
+        headers=headers,
+    )
+    if test_status not in (200, 204):
+        raise HaaCError(f"{app_name} SABnzbd test failed.\nHTTP {test_status}\n{test_body}")
+    if existing and payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"{app_name} SABnzbd bootstrap failed.\nHTTP {status}\n{body}")
+    current = json_array(http_request_json(base_url, headers=headers))
+    configured = find_service_integration(current, implementation="Sabnzbd", name=ARR_SABNZBD_CLIENT_NAME)
+    if not configured:
+        raise HaaCError(f"{app_name} SABnzbd client did not persist.")
+    configured_fields = json_array(configured.get("fields"))
+    if str(field_value(configured_fields, "host") or "").strip() != SABNZBD_INTERNAL_HOST:
+        raise HaaCError(f"{app_name} SABnzbd client persisted with an unexpected host.")
     return current
 
 
@@ -5285,6 +5453,58 @@ def ensure_prowlarr_qbittorrent_download_client(
     return current
 
 
+def ensure_prowlarr_sabnzbd_download_client(
+    port: int,
+    *,
+    api_key: str,
+    sabnzbd_api_key: str,
+) -> list[dict[str, object]]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v1/downloadclient"
+    current = json_array(http_request_json(base_url, headers=headers))
+    existing = find_service_integration(current, implementation="Sabnzbd", name=ARR_SABNZBD_CLIENT_NAME)
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = schema_item_by_implementation(
+            schema,
+            implementation="Sabnzbd",
+            label="Prowlarr download client",
+        )
+    fields = json_array(payload.get("fields"))
+    payload["enable"] = True
+    payload["name"] = ARR_SABNZBD_CLIENT_NAME
+    set_field_value(fields, "host", SABNZBD_INTERNAL_HOST)
+    set_field_value(fields, "port", SABNZBD_INTERNAL_PORT)
+    set_field_value(fields, "useSsl", False, required=False)
+    set_field_value(fields, "urlBase", "", required=False)
+    set_field_value(fields, "apiKey", sabnzbd_api_key)
+    set_field_value(fields, "username", "", required=False)
+    set_field_value(fields, "password", "", required=False)
+    if not set_first_field_value(fields, ("category",), ARR_SABNZBD_CATEGORIES["prowlarr"]):
+        raise HaaCError("Prowlarr SABnzbd schema does not expose a supported category field.")
+    payload["fields"] = fields
+    if existing and payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"Prowlarr SABnzbd bootstrap failed.\nHTTP {status}\n{body}")
+    current = json_array(http_request_json(base_url, headers=headers))
+    configured = find_service_integration(current, implementation="Sabnzbd", name=ARR_SABNZBD_CLIENT_NAME)
+    if not configured:
+        raise HaaCError("Prowlarr SABnzbd client did not persist.")
+    return current
+
+
 def ensure_prowlarr_application(
     port: int,
     *,
@@ -5337,6 +5557,120 @@ def ensure_prowlarr_application(
     return current
 
 
+def sabnzbd_api_request_json(
+    port: int,
+    *,
+    api_key: str | None = None,
+    timeout: int = 60,
+    **params: object,
+) -> dict[str, object]:
+    query_params: dict[str, object] = {"output": "json", **params}
+    if api_key:
+        query_params["apikey"] = api_key
+    query = urllib.parse.urlencode([(key, str(value)) for key, value in query_params.items()], doseq=True)
+    response = http_request_json(f"http://127.0.0.1:{port}/api?{query}", timeout=timeout)
+    return json_object(response)
+
+
+def sabnzbd_section_config(payload: dict[str, object], section: str) -> dict[str, object]:
+    config = payload.get("config")
+    if isinstance(config, dict):
+        nested = config.get(section)
+        if isinstance(nested, dict):
+            return nested
+        return config
+    return payload
+
+
+def sabnzbd_category_names(payload: dict[str, object]) -> list[str]:
+    raw = payload.get("categories")
+    if raw is None:
+        raw = payload.get("cats")
+    if raw is None:
+        raw = sabnzbd_section_config(payload, "categories")
+    categories: list[str] = []
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            name = str((value.get("name") if isinstance(value, dict) else key) or key).strip()
+            if name and name not in categories:
+                categories.append(name)
+        return categories
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("category") or "").strip()
+            else:
+                name = str(item or "").strip()
+            if name and name not in categories:
+                categories.append(name)
+    return categories
+
+
+def ensure_sabnzbd_bootstrap(port: int, *, api_key: str, domain_name: str) -> None:
+    misc_settings = {
+        "host": "0.0.0.0",
+        "download_dir": SABNZBD_INCOMPLETE_DOWNLOAD_PATH,
+        "complete_dir": SABNZBD_COMPLETE_DOWNLOAD_PATH,
+    }
+    for keyword, value in misc_settings.items():
+        sabnzbd_api_request_json(
+            port,
+            api_key=api_key,
+            mode="set_config",
+            section="misc",
+            keyword=keyword,
+            value=value,
+        )
+    sabnzbd_api_request_json(
+        port,
+        api_key=api_key,
+        mode="set_config",
+        section="special",
+        keyword="host_whitelist",
+        value=",".join(
+            (
+                f"sabnzbd.{domain_name}",
+                "sabnzbd.media.svc.cluster.local",
+                "localhost",
+                "127.0.0.1",
+            )
+        ),
+    )
+    for category, save_path in ARR_SABNZBD_CATEGORY_SAVE_PATHS.items():
+        sabnzbd_api_request_json(
+            port,
+            api_key=api_key,
+            mode="set_config",
+            section="categories",
+            name=category,
+            dir=save_path,
+        )
+    misc = sabnzbd_section_config(
+        sabnzbd_api_request_json(port, api_key=api_key, mode="get_config", section="misc"),
+        "misc",
+    )
+    if str(misc.get("host") or "").strip() != "0.0.0.0":
+        raise HaaCError("SABnzbd persisted settings, but it is still not bound to 0.0.0.0.")
+    if str(misc.get("download_dir") or "").strip() != SABNZBD_INCOMPLETE_DOWNLOAD_PATH:
+        raise HaaCError("SABnzbd persisted settings, but the incomplete download path is still unexpected.")
+    if str(misc.get("complete_dir") or "").strip() != SABNZBD_COMPLETE_DOWNLOAD_PATH:
+        raise HaaCError("SABnzbd persisted settings, but the complete download path is still unexpected.")
+    category_names = sabnzbd_category_names(sabnzbd_api_request_json(port, api_key=api_key, mode="get_cats"))
+    missing = sorted(set(ARR_SABNZBD_CATEGORY_SAVE_PATHS) - set(category_names))
+    if missing:
+        raise HaaCError(f"SABnzbd persisted settings, but categories are still missing: {', '.join(missing)}")
+    version_payload = sabnzbd_api_request_json(port, api_key=api_key, mode="version")
+    version = str(version_payload.get("version") or "").strip()
+    if not version:
+        raise HaaCError("SABnzbd API is reachable, but it did not return a version payload.")
+    require_http_status(
+        f"http://127.0.0.1:{port}/",
+        label="SABnzbd /",
+        expected_statuses=(200,),
+        expected_body_pattern=r"SABnzbd",
+    )
+
+
 def indent_block(text: str, prefix: str = "    ") -> str:
     stripped = text.rstrip("\n")
     if not stripped:
@@ -5375,8 +5709,10 @@ def ensure_recyclarr_runtime_secret(
     radarr_api_key: str,
     sonarr_api_key: str,
     bazarr_api_key: str = "",
+    sabnzbd_api_key: str = "",
 ) -> None:
     bazarr_line = f"  BAZARR_API_KEY: {bazarr_api_key}\n" if bazarr_api_key else ""
+    sabnzbd_line = f"  SABNZBD_API_KEY: {sabnzbd_api_key}\n" if sabnzbd_api_key else ""
     manifest = (
         "apiVersion: v1\n"
         "kind: Secret\n"
@@ -5388,6 +5724,7 @@ def ensure_recyclarr_runtime_secret(
         f"  RADARR_API_KEY: {radarr_api_key}\n"
         f"  SONARR_API_KEY: {sonarr_api_key}\n"
         f"{bazarr_line}"
+        f"{sabnzbd_line}"
         "  secrets.yml: |\n"
         f"{indent_block(recyclarr_runtime_secrets_text(radarr_api_key=radarr_api_key, sonarr_api_key=sonarr_api_key))}\n"
     )
@@ -6054,6 +6391,8 @@ def verify_media_metrics_surface(kubectl: str, kubeconfig: Path) -> None:
         ("svc/radarr", 9707, "radarr_movie_total"),
         ("svc/sonarr", 9708, "sonarr_series_total"),
         ("svc/prowlarr", 9709, "prowlarr_indexer_total"),
+        ("svc/lidarr", 9711, "lidarr_artists_total"),
+        ("svc/sabnzbd", 9712, "sabnzbd_info"),
         ("svc/autobrr", 9074, "autobrr_info"),
         ("svc/bazarr-metrics", 9710, "bazarr_system_status"),
         ("svc/unpackerr", 5656, "unpackerr_uptime_seconds_total"),
@@ -6078,11 +6417,14 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         bazarr_api_key = ""
-        radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
-        sonarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "sonarr")
-        prowlarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "prowlarr")
+        sabnzbd_api_key = ""
+        radarr_api_key = ""
+        sonarr_api_key = ""
+        prowlarr_api_key = ""
+        lidarr_api_key = ""
         radarr_root_folders: list[dict[str, object]] = []
         sonarr_root_folders: list[dict[str, object]] = []
+        lidarr_root_folders: list[dict[str, object]] = []
         print("[stage] Media rollout gate")
         for resource in (
             "deployment/downloaders",
@@ -6091,12 +6433,20 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             "deployment/radarr",
             "deployment/sonarr",
             "deployment/prowlarr",
+            "deployment/lidarr",
+            "deployment/sabnzbd",
             "deployment/bazarr",
             "deployment/jellyfin",
             "statefulset/seerr",
         ):
             wait_for_rollout(kubectl, session_kubeconfig, namespace="media", resource=resource)
         print("[ok] Media rollout gate")
+
+        radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
+        sonarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "sonarr")
+        prowlarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "prowlarr")
+        lidarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "lidarr")
+        sabnzbd_api_key = read_sabnzbd_service_api_key(kubectl, session_kubeconfig)
 
         print("[stage] Downloader bootstrap gate")
         try:
@@ -6113,6 +6463,8 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
         print("[ok] Downloader bootstrap gate")
 
         print("[stage] Media service probes")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sabnzbd", 80) as port:
+            ensure_sabnzbd_bootstrap(port, api_key=sabnzbd_api_key, domain_name=env["DOMAIN_NAME"])
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as port:
             require_http_status(
                 f"http://127.0.0.1:{port}/ping",
@@ -6131,6 +6483,12 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 api_key=radarr_api_key,
                 username=downloader_username,
                 password=downloader_password,
+            )
+            ensure_arr_sabnzbd_download_client(
+                port,
+                app_name="Radarr",
+                api_key=radarr_api_key,
+                sabnzbd_api_key=sabnzbd_api_key,
             )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sonarr", 80) as port:
             require_http_status(
@@ -6151,6 +6509,40 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 username=downloader_username,
                 password=downloader_password,
             )
+            ensure_arr_sabnzbd_download_client(
+                port,
+                app_name="Sonarr",
+                api_key=sonarr_api_key,
+                sabnzbd_api_key=sabnzbd_api_key,
+            )
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/lidarr", 80) as port:
+            require_http_status(
+                f"http://127.0.0.1:{port}/ping",
+                label="Lidarr /ping",
+                expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
+            )
+            lidarr_root_folders = ensure_arr_root_folder(
+                port,
+                app_name="Lidarr",
+                api_key=lidarr_api_key,
+                path=ARR_DEFAULT_ROOT_FOLDERS["lidarr"],
+                api_version="v1",
+            )
+            ensure_arr_qbittorrent_download_client(
+                port,
+                app_name="Lidarr",
+                api_key=lidarr_api_key,
+                username=downloader_username,
+                password=downloader_password,
+                api_version="v1",
+            )
+            ensure_arr_sabnzbd_download_client(
+                port,
+                app_name="Lidarr",
+                api_key=lidarr_api_key,
+                sabnzbd_api_key=sabnzbd_api_key,
+                api_version="v1",
+            )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/prowlarr", 80) as port:
             require_http_status(
                 f"http://127.0.0.1:{port}/ping",
@@ -6162,6 +6554,11 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 api_key=prowlarr_api_key,
                 username=downloader_username,
                 password=downloader_password,
+            )
+            ensure_prowlarr_sabnzbd_download_client(
+                port,
+                api_key=prowlarr_api_key,
+                sabnzbd_api_key=sabnzbd_api_key,
             )
             ensure_prowlarr_application(
                 port,
@@ -6176,6 +6573,13 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 implementation="Sonarr",
                 downstream_api_key=sonarr_api_key,
                 downstream_url=SONARR_INTERNAL_URL,
+            )
+            ensure_prowlarr_application(
+                port,
+                api_key=prowlarr_api_key,
+                implementation="Lidarr",
+                downstream_api_key=lidarr_api_key,
+                downstream_url=LIDARR_INTERNAL_URL,
             )
         bazarr_api_key = read_bazarr_service_api_key(kubectl, session_kubeconfig)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/bazarr", 80) as port:
@@ -6197,8 +6601,9 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             radarr_api_key=radarr_api_key,
             sonarr_api_key=sonarr_api_key,
             bazarr_api_key=bazarr_api_key,
+            sabnzbd_api_key=sabnzbd_api_key,
         )
-        for resource in ("deployment/bazarr-exportarr", "deployment/unpackerr"):
+        for resource in ("deployment/sabnzbd", "deployment/bazarr-exportarr", "deployment/unpackerr"):
             run(
                 [
                     kubectl,

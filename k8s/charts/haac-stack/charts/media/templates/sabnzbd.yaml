@@ -1,0 +1,112 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sabnzbd
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    matchLabels:
+      app: sabnzbd
+  template:
+    metadata:
+      labels:
+        app: sabnzbd
+    spec:
+      containers:
+        - name: sabnzbd
+          image: >-
+            {{ .Values.global.images.sabnzbd.repository }}:{{ .Values.global.images.sabnzbd.tag }}
+          ports:
+            - containerPort: 8080
+              name: http
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          env:
+            - name: PUID
+              value: "{{ .Values.global.storage.uid }}"
+            - name: PGID
+              value: "{{ .Values.global.storage.gid }}"
+            - name: TZ
+              value: Europe/Rome
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+        - name: exportarr
+          image: >-
+            {{ .Values.global.images.exportarr.repository }}:{{ .Values.global.images.exportarr.tag }}
+          args: ["sabnzbd"]
+          env:
+            - name: PORT
+              value: "9712"
+            - name: URL
+              value: "http://127.0.0.1:8080"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: recyclarr-secrets
+                  key: SABNZBD_API_KEY
+                  optional: true
+            - name: LOG_LEVEL
+              value: info
+          ports:
+            - containerPort: 9712
+              name: metrics
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: sabnzbd-config
+        - name: media
+          hostPath:
+            path: /data
+            type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sabnzbd
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: sabnzbd
+spec:
+  selector:
+    app: sabnzbd
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+    - port: 9712
+      targetPort: 9712
+      name: metrics
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sabnzbd-config
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

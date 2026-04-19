@@ -1,0 +1,112 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lidarr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    matchLabels:
+      app: lidarr
+  template:
+    metadata:
+      labels:
+        app: lidarr
+    spec:
+      containers:
+        - name: lidarr
+          image: >-
+            {{ .Values.global.images.lidarr.repository }}:{{ .Values.global.images.lidarr.tag }}
+          ports:
+            - containerPort: 8686
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8686
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8686
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          env:
+            - name: PUID
+              value: "{{ .Values.global.storage.uid }}"
+            - name: PGID
+              value: "{{ .Values.global.storage.gid }}"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+        - name: exportarr
+          image: >-
+            {{ .Values.global.images.exportarr.repository }}:{{ .Values.global.images.exportarr.tag }}
+          args: ["lidarr"]
+          env:
+            - name: PORT
+              value: "9711"
+            - name: URL
+              value: "http://127.0.0.1:8686"
+            - name: CONFIG
+              value: /config/config.xml
+            - name: LOG_LEVEL
+              value: info
+          ports:
+            - containerPort: 9711
+              name: metrics
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: lidarr-config
+        - name: media
+          hostPath:
+            path: /data
+            type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lidarr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: lidarr
+spec:
+  selector:
+    app: lidarr
+  ports:
+    - port: 80
+      targetPort: 8686
+      name: http
+    - port: 9711
+      targetPort: 9711
+      name: metrics
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lidarr-config
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

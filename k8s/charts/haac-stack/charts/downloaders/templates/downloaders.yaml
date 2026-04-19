@@ -55,9 +55,11 @@ spec:
                 "$QBITTORRENT_TEMP_PATH" \
                 /data/torrents/radarr \
                 /data/torrents/tv-sonarr \
+                /data/torrents/lidarr \
                 /data/torrents/prowlarr \
                 /data/torrents/radarr-imported \
-                /data/torrents/tv-sonarr-imported
+                /data/torrents/tv-sonarr-imported \
+                /data/torrents/lidarr-imported
               python3 <<'PY'
               import configparser
               import os

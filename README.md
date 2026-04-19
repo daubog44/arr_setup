@@ -155,21 +155,25 @@ The main operator identity is the default login layer for local Authelia auth, A
 
 Opaque machine secrets stay separate. OIDC client secrets, cookie keys, encryption keys, DB passwords, and similar bootstrap internals do not derive from `HAAC_MAIN_PASSWORD`. Grafana no longer falls back to downloader credentials either; it uses the effective admin identity layer only.
 
-The supported media rerun path is `task media:post-install`. It waits for the media workloads, reuses the downloader bootstrap, wires Bazarr and Seerr against the repo-managed Jellyfin/Radarr/Sonarr surfaces when the effective admin identities are valid, warms the supported media metrics, and fails closed with an explicit ProtonVPN blocker when the downloader path cannot come up.
+The supported media rerun path is `task media:post-install`. It waits for the media workloads, reuses the downloader bootstrap, wires Bazarr, Lidarr, SABnzbd, and Seerr against the repo-managed Jellyfin/Radarr/Sonarr/Prowlarr surfaces when the effective admin identities are valid, warms the supported media metrics, and fails closed with an explicit ProtonVPN blocker when the downloader path cannot come up.
 
 The repo-managed ARR best-practice automation surface currently includes:
 
 - ProtonVPN-backed downloader bootstrap through `PROTONVPN_OPENVPN_USERNAME`, `PROTONVPN_OPENVPN_PASSWORD`, and `PROTONVPN_SERVER_COUNTRIES`
 - the generated ProtonVPN secret normalizes the OpenVPN username so the manual port-forwarding suffix ends in `+pmp`; the operator input should stay the raw OpenVPN username from Proton
 - qBittorrent default save and temp paths under `/data/torrents`
-- explicit qBittorrent category routing for `radarr`, `tv-sonarr`, `prowlarr`, `radarr-imported`, and `tv-sonarr-imported`
-- Radarr, Sonarr, and Prowlarr internal-service download client and application wiring
+- explicit qBittorrent category routing for `radarr`, `tv-sonarr`, `lidarr`, `prowlarr`, `radarr-imported`, `tv-sonarr-imported`, and `lidarr-imported`
+- SABnzbd default incomplete/complete paths under `/data/usenet/incomplete` and `/data/usenet/complete`, plus managed categories for `movies`, `tv`, `music`, and `prowlarr`
+- Radarr, Sonarr, Lidarr, and Prowlarr internal-service download client and application wiring
 - Jellyfin first-run admin bootstrap plus the default Movies and TV libraries
-- Seerr first-run login through Jellyfin and persistence of the repo-managed Jellyfin, Radarr, and Sonarr settings
+- Seerr first-run login through Jellyfin and persistence of the repo-managed Jellyfin, Radarr, and Sonarr settings; music stays outside the Seerr contract because Seerr is still movies/TV-only
 - Bazarr language defaults plus Radarr and Sonarr integration wiring
 - Recyclarr runtime secret generation and an immediate sync against the vendored TRaSH-oriented profiles
+- Grafana visibility for Radarr, Sonarr, Lidarr, Prowlarr, FlareSolverr, SABnzbd, Bazarr, Unpackerr, and Autobrr through native metrics or supported exporters
 
 There is no separate `.env` knob for qBittorrent categories. The managed category contract is intentionally fixed so reruns stay deterministic and hardlink-friendly.
+
+The auxiliary wave intentionally stops at `Lidarr` and `SABnzbd`. `Huntarr` stays deferred because the current external reference stack marks it as deprecated, and `Readarr`, `Mylar`, `Tdarr`, and adjacent apps stay out of this wave until they have a dedicated spec with their own storage and lifecycle contract.
 
 The supported login model is:
 

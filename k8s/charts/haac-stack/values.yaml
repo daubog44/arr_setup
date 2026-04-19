@@ -44,7 +44,7 @@ global:
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "3b9abbabb43f600b644178a97619b6cb42f355559559ec395af98baa9214927a"
+    homepageConfigChecksum: "cd828ee38fdd45851a3d3f6cc0fdce7dc21667392dc600b791f195e1336a5e32"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -74,6 +74,12 @@ global:
     bazarr:
       repository: lscr.io/linuxserver/bazarr
       tag: 1.5.3
+    lidarr:
+      repository: lscr.io/linuxserver/lidarr
+      tag: 3.1.0
+    sabnzbd:
+      repository: lscr.io/linuxserver/sabnzbd
+      tag: 4.5.5
     exportarr:
       repository: ghcr.io/onedr0p/exportarr
       tag: v2.3.0
@@ -287,6 +293,28 @@ ingresses:
     homepage_name: Bazarr
     homepage_icon: bazarr.png
     homepage_description: Subtitle Automation
+  lidarr:
+    enabled: true
+    subdomain: lidarr
+    service: lidarr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Lidarr
+    homepage_icon: lidarr.png
+    homepage_description: Music
+  sabnzbd:
+    enabled: true
+    subdomain: sabnzbd
+    service: sabnzbd
+    port: 80
+    namespace: media
+    auth_strategy: edge_forward_auth
+    homepage_group: Media
+    homepage_name: SABnzbd
+    homepage_icon: sabnzbd.png
+    homepage_description: Usenet Client
   qbittorrent:
     enabled: true
     subdomain: qui
