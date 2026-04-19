@@ -43,6 +43,7 @@ global:
     autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "${DOWNLOADERS_AUTH_SECRET_SHA256}"
+    protonvpnSecretChecksum: "${PROTONVPN_SECRET_SHA256}"
     homepageConfigChecksum: "${HOMEPAGE_CONFIG_CHECKSUM}"
     homepageWidgetsChecksum: "${HOMEPAGE_WIDGETS_SECRET_SHA256}"
   images:

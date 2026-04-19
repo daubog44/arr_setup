@@ -54,6 +54,25 @@ class MergedEnvTests(unittest.TestCase):
         self.assertIn("DOWNLOADERS_AUTH_SECRET_SHA256", merged)
         self.assertIn("HOMEPAGE_WIDGETS_SECRET_SHA256", merged)
 
+    def test_protonvpn_credentials_derive_repo_managed_secret_checksum(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={"PROTONVPN_OPENVPN_USERNAME": "demo-user+pmp+nr", "PROTONVPN_OPENVPN_PASSWORD": "secret"},
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertEqual(
+            merged["PROTONVPN_SECRET_SHA256"],
+            haac.stable_secret_checksum(
+                {
+                    "OPENVPN_USER": "demo-user+pmp",
+                    "OPENVPN_PASSWORD": "secret",
+                }
+            ),
+        )
+
     def test_main_identity_derives_supported_login_defaults(self) -> None:
         with mock.patch.object(
             haac,
@@ -99,6 +118,12 @@ class MergedEnvTests(unittest.TestCase):
 
         self.assertEqual(merged["QBITTORRENT_USERNAME"], "haacadmin")
         self.assertEqual(merged["QUI_PASSWORD"], "demo-secret")
+
+    def test_protonvpn_port_forward_username_appends_pmp_and_strips_legacy_nr_suffix(self) -> None:
+        self.assertEqual(haac.protonvpn_port_forward_username("demo-user"), "demo-user+pmp")
+        self.assertEqual(haac.protonvpn_port_forward_username("demo-user+pmp"), "demo-user+pmp")
+        self.assertEqual(haac.protonvpn_port_forward_username("demo-user+pmp+nr"), "demo-user+pmp")
+        self.assertEqual(haac.protonvpn_port_forward_username("demo-user+f2"), "demo-user+f2+pmp")
 
     def test_authelia_admin_password_seeds_other_control_plane_passwords(self) -> None:
         with mock.patch.object(
@@ -1143,12 +1168,16 @@ class DownloadersTemplateContractTests(unittest.TestCase):
             haac.K8S_DIR / "charts" / "haac-stack" / "charts" / "downloaders" / "templates" / "downloaders.yaml"
         ).read_text(encoding="utf-8")
 
+        self.assertIn('checksum/protonvpn-secret: {{ .Values.global.auth.protonvpnSecretChecksum | quote }}', template)
         self.assertIn("value: /data/torrents", template)
         self.assertIn("value: /data/torrents/incomplete", template)
         self.assertIn("parser = configparser.RawConfigParser(interpolation=None)", template)
         self.assertIn('parser["BitTorrent"]["Session\\\\DefaultSavePath"] = os.environ["QBITTORRENT_SAVE_PATH"]', template)
         self.assertIn('parser["Preferences"]["Downloads\\\\TempPathEnabled"] = "true"', template)
         self.assertIn('qBittorrent did not persist the supported shared download paths.', template)
+        self.assertIn("/api/v2/torrents/createCategory", template)
+        self.assertIn("/api/v2/torrents/editCategory", template)
+        self.assertIn("qBittorrent category routing reconciled.", template)
 
     def test_downloaders_readiness_probe_accepts_qui_ready_and_qbit_403(self) -> None:
         script = haac.downloaders_readiness_probe_script()
@@ -1173,10 +1202,95 @@ class DownloadersTemplateContractTests(unittest.TestCase):
         self.assertTrue(haac.qbittorrent_shared_paths_supported(supported))
         self.assertFalse(haac.qbittorrent_shared_paths_supported(unsupported))
 
+    def test_qbittorrent_managed_category_paths_cover_arr_clients_and_imported_buckets(self) -> None:
+        self.assertEqual(
+            haac.ARR_QBITTORRENT_CATEGORY_SAVE_PATHS,
+            {
+                "radarr": "/data/torrents/radarr",
+                "tv-sonarr": "/data/torrents/tv-sonarr",
+                "prowlarr": "/data/torrents/prowlarr",
+                "radarr-imported": "/data/torrents/radarr-imported",
+                "tv-sonarr-imported": "/data/torrents/tv-sonarr-imported",
+            },
+        )
+
+    def test_qbittorrent_categories_state_reads_save_paths(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            return_value={
+                "radarr": {"name": "radarr", "savePath": "/data/torrents/radarr/"},
+                "tv-sonarr": {"name": "tv-sonarr", "savePath": "/data/torrents/tv-sonarr"},
+            },
+        ):
+            result = haac.qbittorrent_categories_state(8080, opener=object())
+
+        self.assertEqual(
+            result,
+            {
+                "radarr": "/data/torrents/radarr",
+                "tv-sonarr": "/data/torrents/tv-sonarr",
+            },
+        )
+
+    def test_ensure_qbittorrent_category_paths_creates_and_updates_drifted_categories(self) -> None:
+        with mock.patch.object(haac, "qbittorrent_login", return_value=object()):
+            with mock.patch.object(
+                haac,
+                "qbittorrent_categories_state",
+                side_effect=[
+                    {
+                        "radarr": "/legacy/radarr",
+                        "tv-sonarr": "/data/torrents/tv-sonarr",
+                    },
+                    haac.ARR_QBITTORRENT_CATEGORY_SAVE_PATHS,
+                ],
+            ):
+                with mock.patch.object(haac, "http_request_form_text", return_value=(200, "")) as request:
+                    result = haac.ensure_qbittorrent_category_paths(
+                        8080,
+                        username="admin",
+                        password="secret",
+                    )
+
+        self.assertEqual(result, haac.ARR_QBITTORRENT_CATEGORY_SAVE_PATHS)
+        endpoints = [call.args[0] for call in request.call_args_list]
+        self.assertIn("http://127.0.0.1:8080/api/v2/torrents/editCategory", endpoints)
+        self.assertIn("http://127.0.0.1:8080/api/v2/torrents/createCategory", endpoints)
+
+    def test_qbittorrent_port_sync_authenticated_script_uses_in_pod_credentials(self) -> None:
+        script = haac.qbittorrent_port_sync_authenticated_script("echo ok")
+
+        self.assertIn("username=${QBIT_USER}", script)
+        self.assertIn("password=${QBIT_PASS}", script)
+        self.assertIn("echo ok", script)
+
+    def test_ensure_qbittorrent_category_paths_in_session_uses_port_sync_container_api(self) -> None:
+        with mock.patch.object(
+            haac,
+            "qbittorrent_categories_state_in_session",
+            side_effect=[
+                {"radarr": "/legacy/radarr"},
+                haac.ARR_QBITTORRENT_CATEGORY_SAVE_PATHS,
+            ],
+        ):
+            with mock.patch.object(haac, "kubectl_exec_stdout", return_value="") as exec_stdout:
+                result = haac.ensure_qbittorrent_category_paths_in_session(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    pod_name="downloaders-abc",
+                )
+
+        self.assertEqual(result, haac.ARR_QBITTORRENT_CATEGORY_SAVE_PATHS)
+        executed_scripts = [call.kwargs["script"] for call in exec_stdout.call_args_list]
+        self.assertTrue(any("/api/v2/torrents/editCategory" in script for script in executed_scripts))
+        self.assertTrue(any("/api/v2/torrents/createCategory" in script for script in executed_scripts))
+
     def test_downloaders_bootstrap_succeeded_from_logs_requires_port_sync_steady_state(self) -> None:
         healthy_logs = "\n".join(
             (
                 "Waiting for qBittorrent and QUI endpoints...",
+                "qBittorrent category routing reconciled.",
                 "qBittorrent credentials reconciled. Upserting QUI instance...",
                 "QUI instance connectivity test passed.",
                 "Bootstrap complete. Starting port-forward sync loop...",
@@ -1818,6 +1932,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("BAZARR_AUTH_USERNAME", env_example)
         self.assertIn("BAZARR_AUTH_PASSWORD", env_example)
         self.assertIn("BAZARR_LANGUAGES", env_example)
+        self.assertIn("appends the required `+pmp` suffix automatically", env_example)
 
     def test_readme_documents_media_post_install_surface(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -1826,6 +1941,10 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("JELLYFIN_ADMIN_*", readme)
         self.assertIn("BAZARR_AUTH_*", readme)
         self.assertIn("BAZARR_LANGUAGES", readme)
+        self.assertIn("PROTONVPN_OPENVPN_USERNAME", readme)
+        self.assertIn("ends in `+pmp`", readme)
+        self.assertIn("radarr-imported", readme)
+        self.assertIn("tv-sonarr-imported", readme)
 
     def test_recyclarr_config_template_vendors_official_profiles_with_secret_refs(self) -> None:
         config = (
@@ -1920,6 +2039,11 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("labels:\n    app: sonarr", sonarr)
         self.assertIn("labels:\n    app: prowlarr", prowlarr)
         self.assertIn("labels:\n    app: downloaders", downloaders)
+        self.assertIn("/data/torrents/radarr", downloaders)
+        self.assertIn("/data/torrents/tv-sonarr", downloaders)
+        self.assertIn("/data/torrents/prowlarr", downloaders)
+        self.assertIn("/data/torrents/radarr-imported", downloaders)
+        self.assertIn("/data/torrents/tv-sonarr-imported", downloaders)
         self.assertIn("name: bazarr-exportarr", bazarr)
         self.assertIn('args: ["bazarr"]', bazarr)
         self.assertIn("API_KEY", bazarr)

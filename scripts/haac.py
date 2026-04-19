@@ -199,6 +199,13 @@ ARR_QBITTORRENT_IMPORTED_CATEGORIES = {
     "radarr": "radarr-imported",
     "sonarr": "tv-sonarr-imported",
 }
+ARR_QBITTORRENT_CATEGORY_SAVE_PATHS = {
+    ARR_QBITTORRENT_CATEGORIES["radarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/radarr",
+    ARR_QBITTORRENT_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr",
+    ARR_QBITTORRENT_CATEGORIES["prowlarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/prowlarr",
+    ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/radarr-imported",
+    ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr-imported",
+}
 JELLYFIN_BOOTSTRAP_AUTH_HEADER = (
     'MediaBrowser Client="HaaC Bootstrap", Device="HaaC Bootstrap", DeviceId="haac-bootstrap", Version="1.0.0"'
 )
@@ -283,6 +290,16 @@ def merged_env() -> dict[str, str]:
                 }
             ),
         )
+    if merged.get("PROTONVPN_OPENVPN_USERNAME") and merged.get("PROTONVPN_OPENVPN_PASSWORD"):
+        merged.setdefault(
+            "PROTONVPN_SECRET_SHA256",
+            stable_secret_checksum(
+                {
+                    "OPENVPN_USER": protonvpn_port_forward_username(merged["PROTONVPN_OPENVPN_USERNAME"]),
+                    "OPENVPN_PASSWORD": merged["PROTONVPN_OPENVPN_PASSWORD"],
+                }
+            ),
+        )
     if merged.get("QUI_PASSWORD") and merged.get("GRAFANA_ADMIN_PASSWORD"):
         merged.setdefault(
             "HOMEPAGE_WIDGETS_SECRET_SHA256",
@@ -297,6 +314,17 @@ def merged_env() -> dict[str, str]:
         )
     merged.setdefault("HOMEPAGE_CONFIG_CHECKSUM", homepage_config_checksum(merged))
     return merged
+
+
+def protonvpn_port_forward_username(username: str) -> str:
+    raw = str(username or "").strip()
+    if not raw:
+        return ""
+    parts = [part for part in raw.split("+") if part]
+    base = parts[0]
+    suffixes = [part for part in parts[1:] if part.lower() not in {"pmp", "nr"}]
+    suffixes.append("pmp")
+    return "+".join((base, *suffixes))
 
 
 def stable_secret_checksum(values: dict[str, str]) -> str:
@@ -1749,7 +1777,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "media",
             SECRETS_DIR / "protonvpn-sealed-secret.yaml",
             {
-                "OPENVPN_USER": f"{env['PROTONVPN_OPENVPN_USERNAME']}+pmp+nr",
+                "OPENVPN_USER": protonvpn_port_forward_username(env["PROTONVPN_OPENVPN_USERNAME"]),
                 "OPENVPN_PASSWORD": env["PROTONVPN_OPENVPN_PASSWORD"],
                 "SERVER_COUNTRIES": env["PROTONVPN_SERVER_COUNTRIES"],
             },
@@ -4716,6 +4744,7 @@ def downloaders_bootstrap_succeeded_from_logs(logs: str) -> bool:
     normalized = "\n".join(line.strip().lower() for line in logs.splitlines() if line.strip())
     return (
         "qui instance connectivity test passed." in normalized
+        and "qbittorrent category routing reconciled." in normalized
         and "bootstrap complete. starting port-forward sync loop..." in normalized
     )
 
@@ -4749,6 +4778,177 @@ def qbittorrent_shared_paths_supported(config_text: str) -> bool:
         if actual != normalize_qbittorrent_path(expected):
             return False
     return True
+
+
+def qbittorrent_categories_state(
+    port: int,
+    *,
+    opener: urllib.request.OpenerDirector,
+) -> dict[str, str]:
+    payload = http_request_json(f"http://127.0.0.1:{port}/api/v2/torrents/categories", opener=opener)
+    if not isinstance(payload, dict):
+        return {}
+    categories: dict[str, str] = {}
+    for name, raw_item in payload.items():
+        if not isinstance(raw_item, dict):
+            continue
+        category_name = str(raw_item.get("name") or name).strip() or str(name).strip()
+        if not category_name:
+            continue
+        categories[category_name] = normalize_qbittorrent_path(raw_item.get("savePath"))
+    return categories
+
+
+def qbittorrent_login(
+    port: int,
+    *,
+    username: str,
+    password: str,
+) -> urllib.request.OpenerDirector:
+    opener = build_cookie_opener()
+    status, body = http_request_form_text(
+        f"http://127.0.0.1:{port}/api/v2/auth/login",
+        fields=(
+            ("username", username),
+            ("password", password),
+        ),
+        opener=opener,
+    )
+    if status != 200 or "ok." not in body.lower():
+        raise HaaCError(f"qBittorrent login failed for the managed downloader user.\nHTTP {status}\n{body}")
+    return opener
+
+
+def ensure_qbittorrent_category_paths(
+    port: int,
+    *,
+    username: str,
+    password: str,
+) -> dict[str, str]:
+    opener = qbittorrent_login(port, username=username, password=password)
+    current = qbittorrent_categories_state(port, opener=opener)
+    for category, save_path in ARR_QBITTORRENT_CATEGORY_SAVE_PATHS.items():
+        current_path = current.get(category, "")
+        expected_path = normalize_qbittorrent_path(save_path)
+        if current_path == expected_path:
+            continue
+        endpoint = "editCategory" if category in current else "createCategory"
+        status, body = http_request_form_text(
+            f"http://127.0.0.1:{port}/api/v2/torrents/{endpoint}",
+            fields=(
+                ("category", category),
+                ("savePath", save_path),
+            ),
+            opener=opener,
+        )
+        if status != 200:
+            raise HaaCError(f"qBittorrent category bootstrap failed for {category}.\nHTTP {status}\n{body}")
+    current = qbittorrent_categories_state(port, opener=opener)
+    for category, save_path in ARR_QBITTORRENT_CATEGORY_SAVE_PATHS.items():
+        if current.get(category, "") != normalize_qbittorrent_path(save_path):
+            raise HaaCError(
+                f"qBittorrent category {category} did not persist the supported save path {save_path}."
+            )
+    return current
+
+
+def qbittorrent_port_sync_authenticated_script(command: str) -> str:
+    return (
+        "set -eu; "
+        "attempt=0; "
+        "while true; do "
+        "code=$(curl --connect-timeout 5 --max-time 30 -sS -o /tmp/qbit-version.txt -w '%{http_code}' "
+        "http://127.0.0.1:8080/api/v2/app/version || true); "
+        "if [ \"$code\" = \"200\" ] || [ \"$code\" = \"403\" ]; then break; fi; "
+        "attempt=$((attempt + 1)); "
+        "if [ \"$attempt\" -ge 24 ]; then "
+        "echo 'qBittorrent WebUI did not become reachable inside the downloader bootstrap container.' >&2; "
+        "exit 1; "
+        "fi; "
+        "sleep 5; "
+        "done; "
+        "login_body=/tmp/qbit-login.txt; "
+        "login_code=$(curl --connect-timeout 5 --max-time 30 -sS -o \"$login_body\" -w '%{http_code}' "
+        "-c /tmp/qbit-cookies.txt "
+        "--data-urlencode 'username=${QBIT_USER}' "
+        "--data-urlencode 'password=${QBIT_PASS}' "
+        "http://127.0.0.1:8080/api/v2/auth/login || true); "
+        "if [ \"$login_code\" != \"200\" ] || ! grep -qi 'Ok\\.' \"$login_body\"; then "
+        "echo 'qBittorrent login failed inside the downloader bootstrap container.' >&2; "
+        "cat \"$login_body\" >&2; "
+        "exit 1; "
+        "fi; "
+        + command
+    )
+
+
+def qbittorrent_categories_state_in_session(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    pod_name: str,
+) -> dict[str, str]:
+    body = kubectl_exec_stdout(
+        kubectl,
+        kubeconfig,
+        namespace="media",
+        pod=pod_name,
+        container="port-sync",
+        script=qbittorrent_port_sync_authenticated_script(
+            "curl --connect-timeout 5 --max-time 30 -fsS -b /tmp/qbit-cookies.txt "
+            "http://127.0.0.1:8080/api/v2/torrents/categories"
+        ),
+    )
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HaaCError("qBittorrent categories API returned invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        return {}
+    categories: dict[str, str] = {}
+    for name, raw_item in payload.items():
+        if not isinstance(raw_item, dict):
+            continue
+        category_name = str(raw_item.get("name") or name).strip() or str(name).strip()
+        if not category_name:
+            continue
+        categories[category_name] = normalize_qbittorrent_path(raw_item.get("savePath"))
+    return categories
+
+
+def ensure_qbittorrent_category_paths_in_session(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    pod_name: str,
+) -> dict[str, str]:
+    current = qbittorrent_categories_state_in_session(kubectl, kubeconfig, pod_name=pod_name)
+    for category, save_path in ARR_QBITTORRENT_CATEGORY_SAVE_PATHS.items():
+        current_path = current.get(category, "")
+        expected_path = normalize_qbittorrent_path(save_path)
+        if current_path == expected_path:
+            continue
+        endpoint = "editCategory" if category in current else "createCategory"
+        kubectl_exec_stdout(
+            kubectl,
+            kubeconfig,
+            namespace="media",
+            pod=pod_name,
+            container="port-sync",
+            script=qbittorrent_port_sync_authenticated_script(
+                "curl --connect-timeout 5 --max-time 30 -fsS -b /tmp/qbit-cookies.txt "
+                f"--data-urlencode {shlex.quote(f'category={category}')} "
+                f"--data-urlencode {shlex.quote(f'savePath={save_path}')} "
+                f"http://127.0.0.1:8080/api/v2/torrents/{endpoint} >/dev/null"
+            ),
+        )
+    current = qbittorrent_categories_state_in_session(kubectl, kubeconfig, pod_name=pod_name)
+    for category, save_path in ARR_QBITTORRENT_CATEGORY_SAVE_PATHS.items():
+        if current.get(category, "") != normalize_qbittorrent_path(save_path):
+            raise HaaCError(
+                f"qBittorrent category {category} did not persist the supported save path {save_path}."
+            )
+    return current
 
 
 def read_downloaders_qbittorrent_config(kubectl: str, kubeconfig: Path, pod_name: str) -> str:
@@ -5873,8 +6073,6 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
     env = merged_env()
     require_env(["DOMAIN_NAME", "QUI_PASSWORD"], env)
     username, password, email = seerr_admin_identity(env)
-    downloader_username = env.get("QBITTORRENT_USERNAME", "admin").strip() or "admin"
-    downloader_password = env["QUI_PASSWORD"]
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
         bazarr_api_key = ""
