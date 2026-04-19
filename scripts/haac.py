@@ -492,36 +492,214 @@ def strip_ip_cidr(value: str) -> str:
     return value.strip().split("/", 1)[0].strip()
 
 
+def worker_nodes_config(env: dict[str, str]) -> list[tuple[str, dict[str, object]]]:
+    worker_nodes_raw = env.get("WORKER_NODES_JSON", "").strip()
+    if not worker_nodes_raw:
+        return []
+
+    try:
+        worker_nodes = json.loads(worker_nodes_raw)
+    except json.JSONDecodeError as exc:
+        raise HaaCError("WORKER_NODES_JSON must be valid JSON before bootstrap can inspect worker identities") from exc
+
+    if isinstance(worker_nodes, dict):
+        entries = [(str(key), value) for key, value in worker_nodes.items()]
+    elif isinstance(worker_nodes, list):
+        entries = [(str(index), value) for index, value in enumerate(worker_nodes, start=1)]
+    else:
+        raise HaaCError("WORKER_NODES_JSON must decode to a JSON object or array")
+
+    normalized: list[tuple[str, dict[str, object]]] = []
+    for key, value in entries:
+        if isinstance(value, dict):
+            normalized.append((key, value))
+    return normalized
+
+
 def cluster_node_hosts(env: dict[str, str]) -> list[str]:
     hosts: list[str] = []
     master_host = strip_ip_cidr(env.get("K3S_MASTER_IP", ""))
     if master_host:
         hosts.append(master_host)
 
-    worker_nodes_raw = env.get("WORKER_NODES_JSON", "").strip()
-    if not worker_nodes_raw:
-        return hosts
-
-    try:
-        worker_nodes = json.loads(worker_nodes_raw)
-    except json.JSONDecodeError as exc:
-        raise HaaCError("WORKER_NODES_JSON must be valid JSON before bootstrap can refresh SSH trust") from exc
-
-    if isinstance(worker_nodes, dict):
-        entries = list(worker_nodes.values())
-    elif isinstance(worker_nodes, list):
-        entries = worker_nodes
-    else:
-        raise HaaCError("WORKER_NODES_JSON must decode to a JSON object or array")
-
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
+    for _, entry in worker_nodes_config(env):
         worker_host = strip_ip_cidr(str(entry.get("ip", "")))
         if worker_host:
             hosts.append(worker_host)
 
     return hosts
+
+
+def proxmox_json(host: str, remote_command: str, *, connect_timeout: int = 5) -> dict | list:
+    output = run_proxmox_ssh_stdout(host, remote_command, connect_timeout=connect_timeout)
+    try:
+        payload = json.loads(output) if output else []
+    except json.JSONDecodeError as exc:
+        raise HaaCError(f"Invalid JSON returned by Proxmox command: {remote_command}") from exc
+    if isinstance(payload, (dict, list)):
+        return payload
+    raise HaaCError(f"Unexpected Proxmox JSON payload returned by: {remote_command}")
+
+
+def proxmox_lxc_ipv4(config: dict[str, object]) -> str:
+    for key, value in config.items():
+        if not key.startswith("net") or not isinstance(value, str):
+            continue
+        match = re.search(r"(?:^|,)ip=([^,]+)", value)
+        if not match:
+            continue
+        ip_value = strip_ip_cidr(match.group(1))
+        if ip_value and ip_value.lower() != "dhcp":
+            return ip_value
+    return ""
+
+
+def declared_k3s_lxc_identities(env: dict[str, str], tofu_dir: Path) -> list[dict[str, str]]:
+    outputs = tofu_output_json(tofu_dir)
+    identities: list[dict[str, str]] = []
+
+    master_vmid = outputs.get("master_vmid", {}).get("value")
+    master_hostname = env.get("LXC_MASTER_HOSTNAME", "").strip() or "haacarr-master"
+    master_ip = strip_ip_cidr(env.get("K3S_MASTER_IP", "") or tofu_output_value(tofu_dir, "master_ip"))
+    if master_vmid is not None and master_hostname and master_ip:
+        identities.append(
+            {
+                "name": "master",
+                "vmid": str(master_vmid),
+                "hostname": master_hostname,
+                "ip": master_ip,
+            }
+        )
+
+    worker_configs = {name: item for name, item in worker_nodes_config(env)}
+    worker_items = outputs.get("workers", {}).get("value", {})
+    if isinstance(worker_items, dict):
+        for worker_name, worker_output in worker_items.items():
+            if not isinstance(worker_output, dict):
+                continue
+            worker_config = worker_configs.get(str(worker_name), {})
+            hostname = str(worker_config.get("hostname", "")).strip() or str(worker_name).strip()
+            worker_ip = strip_ip_cidr(str(worker_output.get("ip", "") or worker_config.get("ip", "")))
+            vmid = worker_output.get("vmid")
+            if vmid is None or not hostname or not worker_ip:
+                continue
+            identities.append(
+                {
+                    "name": str(worker_name),
+                    "vmid": str(vmid),
+                    "hostname": hostname,
+                    "ip": worker_ip,
+                }
+            )
+
+    return identities
+
+
+def proxmox_lxc_resources(host: str) -> list[dict[str, str]]:
+    payload = proxmox_json(host, "pvesh get /cluster/resources --type vm --output-format json")
+    if not isinstance(payload, list):
+        raise HaaCError("Proxmox cluster resources did not return a JSON list")
+
+    resources: list[dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict) or str(item.get("type", "")).strip() != "lxc":
+            continue
+        vmid = item.get("vmid")
+        if vmid is None:
+            continue
+        resources.append(
+            {
+                "vmid": str(vmid),
+                "node": str(item.get("node", "")).strip(),
+                "name": str(item.get("name", "")).strip(),
+                "status": str(item.get("status", "")).strip(),
+            }
+        )
+    return resources
+
+
+def proxmox_lxc_config(host: str, node: str, vmid: str) -> dict[str, object]:
+    payload = proxmox_json(
+        host,
+        f"pvesh get /nodes/{shlex.quote(node)}/lxc/{shlex.quote(vmid)}/config --output-format json",
+    )
+    if not isinstance(payload, dict):
+        raise HaaCError(f"Proxmox config for LXC {vmid} did not return a JSON object")
+    return payload
+
+
+def find_duplicate_k3s_lxc_identities(
+    proxmox_host: str,
+    tofu_dir: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
+    working_env = env or merged_env()
+    declared = declared_k3s_lxc_identities(working_env, tofu_dir)
+    if not declared:
+        return []
+
+    declared_vmids = {item["vmid"] for item in declared}
+    declared_hostnames = {item["hostname"]: item for item in declared if item.get("hostname")}
+    declared_ips = {item["ip"]: item for item in declared if item.get("ip")}
+
+    duplicates: list[dict[str, object]] = []
+    for resource in proxmox_lxc_resources(proxmox_host):
+        vmid = resource["vmid"]
+        if vmid in declared_vmids:
+            continue
+        node = resource.get("node", "").strip()
+        if not node:
+            continue
+        config = proxmox_lxc_config(proxmox_host, node, vmid)
+        hostname = str(config.get("hostname", "")).strip() or resource.get("name", "")
+        ipv4 = proxmox_lxc_ipv4(config)
+        reasons: list[str] = []
+        if hostname and hostname in declared_hostnames:
+            reasons.append(f"hostname {hostname}")
+        if ipv4 and ipv4 in declared_ips:
+            reasons.append(f"IPv4 {ipv4}")
+        if not reasons:
+            continue
+        duplicates.append(
+            {
+                **resource,
+                "hostname": hostname,
+                "ip": ipv4,
+                "reasons": reasons,
+            }
+        )
+
+    return duplicates
+
+
+def quarantine_duplicate_k3s_lxc_identities(
+    proxmox_host: str,
+    tofu_dir: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
+    duplicates = find_duplicate_k3s_lxc_identities(proxmox_host, tofu_dir, env=env)
+    if not duplicates:
+        print("[ok] No duplicate unmanaged K3s LXC identities detected")
+        return []
+
+    for duplicate in duplicates:
+        vmid = str(duplicate["vmid"])
+        hostname = str(duplicate.get("hostname", "")).strip() or "<unknown>"
+        reason = ", ".join(str(item) for item in duplicate.get("reasons", []))
+        run_proxmox_ssh(proxmox_host, f"pct set {shlex.quote(vmid)} -onboot 0")
+        if str(duplicate.get("status", "")).strip().lower() == "running":
+            run_proxmox_ssh(proxmox_host, f"pct shutdown {shlex.quote(vmid)} --timeout 60", check=False)
+        status_output = run_proxmox_ssh_stdout(proxmox_host, f"pct status {shlex.quote(vmid)}", check=False)
+        if "status: stopped" not in status_output:
+            run_proxmox_ssh(proxmox_host, f"pct stop {shlex.quote(vmid)}", check=False)
+            status_output = run_proxmox_ssh_stdout(proxmox_host, f"pct status {shlex.quote(vmid)}", check=False)
+        if "status: stopped" not in status_output:
+            raise HaaCError(f"Unable to quarantine duplicate unmanaged LXC {vmid}: {status_output.strip() or 'unknown status'}")
+        print(f"[heal] Quarantined unmanaged duplicate LXC {vmid} ({hostname}): {reason}")
+
+    return duplicates
 
 
 def replace_known_host_entries(path: Path, host: str, entries: str) -> None:
@@ -7403,10 +7581,18 @@ def cmd_pre_commit_hook(_: argparse.Namespace) -> None:
     pre_commit_hook()
 
 
+def cmd_repair_node_identity_drift(args: argparse.Namespace) -> None:
+    env = merged_env()
+    ensure_repo_ssh_keypair()
+    proxmox_host = args.proxmox_host or proxmox_access_host(env)
+    quarantine_duplicate_k3s_lxc_identities(proxmox_host, ROOT / args.tofu_dir, env=env)
+
+
 def cmd_run_ansible(args: argparse.Namespace) -> None:
     env = merged_env()
     ensure_repo_ssh_keypair()
     ensure_semaphore_ssh_keypair()
+    quarantine_duplicate_k3s_lxc_identities(proxmox_access_host(env), ROOT / "tofu", env=env)
     refresh_cluster_known_hosts(env)
     inventory = ROOT / args.inventory
     playbook = ROOT / args.playbook
@@ -7589,6 +7775,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     command = subparsers.add_parser("pre-commit-hook")
     command.set_defaults(func=cmd_pre_commit_hook)
+
+    command = subparsers.add_parser("repair-node-identity-drift")
+    command.add_argument("--proxmox-host")
+    command.add_argument("--tofu-dir", default="tofu")
+    command.set_defaults(func=cmd_repair_node_identity_drift)
 
     command = subparsers.add_parser("run-ansible")
     command.add_argument("--inventory", required=True)

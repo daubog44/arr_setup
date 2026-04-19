@@ -302,6 +302,24 @@ class UpFailureSummaryTests(unittest.TestCase):
 
 
 class KnownHostsRefreshTests(unittest.TestCase):
+    def test_worker_nodes_config_preserves_declared_keys(self) -> None:
+        env = {
+            "WORKER_NODES_JSON": json.dumps(
+                {
+                    "worker1": {"hostname": "haacarr-worker1", "ip": "192.168.0.212/24"},
+                    "worker2": {"hostname": "haacarr-worker2", "ip": "192.168.0.213"},
+                }
+            )
+        }
+
+        self.assertEqual(
+            haac.worker_nodes_config(env),
+            [
+                ("worker1", {"hostname": "haacarr-worker1", "ip": "192.168.0.212/24"}),
+                ("worker2", {"hostname": "haacarr-worker2", "ip": "192.168.0.213"}),
+            ],
+        )
+
     def test_cluster_node_hosts_strips_cidr_and_preserves_worker_order(self) -> None:
         env = {
             "K3S_MASTER_IP": "192.168.0.211/24",
@@ -338,6 +356,118 @@ class KnownHostsRefreshTests(unittest.TestCase):
                 "192.168.0.212 ssh-ed25519 WORKER\n"
                 "192.168.0.211 ssh-ed25519 NEWMASTER\n",
             )
+
+
+class NodeIdentityDriftTests(unittest.TestCase):
+    def test_proxmox_lxc_ipv4_extracts_static_ip(self) -> None:
+        config = {
+            "net0": "name=eth0,bridge=vmbr0,gw=192.168.0.1,ip=192.168.0.212/24,type=veth",
+            "hostname": "haacarr-worker1",
+        }
+
+        self.assertEqual(haac.proxmox_lxc_ipv4(config), "192.168.0.212")
+
+    def test_find_duplicate_k3s_lxc_identities_selects_only_unmanaged_collisions(self) -> None:
+        env = {
+            "LXC_MASTER_HOSTNAME": "haacarr-master",
+            "K3S_MASTER_IP": "192.168.0.211/24",
+            "WORKER_NODES_JSON": json.dumps(
+                {
+                    "worker1": {"hostname": "haacarr-worker1", "ip": "192.168.0.212/24"},
+                    "worker2": {"hostname": "haacarr-worker2", "ip": "192.168.0.213/24"},
+                }
+            ),
+        }
+        tofu_outputs = {
+            "master_vmid": {"value": 100},
+            "workers": {
+                "value": {
+                    "worker1": {"vmid": 102, "ip": "192.168.0.212"},
+                    "worker2": {"vmid": 101, "ip": "192.168.0.213"},
+                }
+            },
+        }
+        resources = [
+            {"vmid": "100", "node": "pve", "name": "haacarr-master", "status": "running"},
+            {"vmid": "101", "node": "pve", "name": "haacarr-worker2", "status": "running"},
+            {"vmid": "102", "node": "pve", "name": "haacarr-worker1", "status": "running"},
+            {"vmid": "104", "node": "pve", "name": "haacarr-worker2", "status": "running"},
+            {"vmid": "105", "node": "pve", "name": "haacarr-worker1", "status": "running"},
+            {"vmid": "103", "node": "pve", "name": "satisfactory", "status": "stopped"},
+        ]
+        configs = {
+            ("pve", "104"): {"hostname": "haacarr-worker2", "net0": "name=eth0,ip=192.168.0.250/24"},
+            ("pve", "105"): {"hostname": "other-host", "net0": "name=eth0,ip=192.168.0.212/24"},
+            ("pve", "103"): {"hostname": "satisfactory", "net0": "name=eth0,ip=192.168.0.240/24"},
+        }
+
+        with mock.patch.object(haac, "tofu_output_json", return_value=tofu_outputs):
+            with mock.patch.object(haac, "proxmox_lxc_resources", return_value=resources):
+                with mock.patch.object(
+                    haac,
+                    "proxmox_lxc_config",
+                    side_effect=lambda host, node, vmid: configs[(node, vmid)],
+                ):
+                    duplicates = haac.find_duplicate_k3s_lxc_identities("192.168.0.200", Path("tofu"), env=env)
+
+        self.assertEqual([item["vmid"] for item in duplicates], ["104", "105"])
+        self.assertEqual(duplicates[0]["reasons"], ["hostname haacarr-worker2"])
+        self.assertEqual(duplicates[1]["reasons"], ["IPv4 192.168.0.212"])
+
+    def test_quarantine_duplicate_k3s_lxc_identities_disables_onboot_and_stops_duplicates(self) -> None:
+        duplicates = [
+            {"vmid": "104", "hostname": "haacarr-worker2", "status": "running", "reasons": ["hostname haacarr-worker2"]},
+            {"vmid": "105", "hostname": "haacarr-worker1", "status": "stopped", "reasons": ["IPv4 192.168.0.212"]},
+        ]
+        status_responses = {
+            "104": ["status: running", "status: stopped"],
+            "105": ["status: stopped"],
+        }
+
+        def fake_status(_host: str, remote_command: str, **_kwargs) -> str:
+            vmid = remote_command.split()[2]
+            return status_responses[vmid].pop(0)
+
+        with mock.patch.object(haac, "find_duplicate_k3s_lxc_identities", return_value=duplicates):
+            with mock.patch.object(haac, "run_proxmox_ssh") as run_proxmox_ssh:
+                with mock.patch.object(haac, "run_proxmox_ssh_stdout", side_effect=fake_status):
+                    with mock.patch("builtins.print") as fake_print:
+                        quarantined = haac.quarantine_duplicate_k3s_lxc_identities("192.168.0.200", Path("tofu"))
+
+        self.assertEqual(quarantined, duplicates)
+        run_proxmox_ssh.assert_any_call("192.168.0.200", "pct set 104 -onboot 0")
+        run_proxmox_ssh.assert_any_call("192.168.0.200", "pct shutdown 104 --timeout 60", check=False)
+        run_proxmox_ssh.assert_any_call("192.168.0.200", "pct stop 104", check=False)
+        run_proxmox_ssh.assert_any_call("192.168.0.200", "pct set 105 -onboot 0")
+        fake_print.assert_any_call("[heal] Quarantined unmanaged duplicate LXC 104 (haacarr-worker2): hostname haacarr-worker2")
+        fake_print.assert_any_call("[heal] Quarantined unmanaged duplicate LXC 105 (haacarr-worker1): IPv4 192.168.0.212")
+
+    def test_cmd_run_ansible_repairs_node_identity_drift_before_refreshing_known_hosts(self) -> None:
+        args = haac.argparse.Namespace(
+            inventory="ansible/inventory.yml",
+            playbook="ansible/playbook.yml",
+            extra_args="",
+        )
+        events: list[str] = []
+
+        def record(name: str):
+            def inner(*_args, **_kwargs):
+                events.append(name)
+                return None
+
+            return inner
+
+        with mock.patch.object(haac, "merged_env", return_value={"HAAC_PROXMOX_ACCESS_HOST": "192.168.0.200"}):
+            with mock.patch.object(haac, "ensure_repo_ssh_keypair", side_effect=record("repo-key")):
+                with mock.patch.object(haac, "ensure_semaphore_ssh_keypair", side_effect=record("semaphore-key")):
+                    with mock.patch.object(haac, "quarantine_duplicate_k3s_lxc_identities", side_effect=record("repair")):
+                        with mock.patch.object(haac, "refresh_cluster_known_hosts", side_effect=record("known-hosts")):
+                            with mock.patch.object(haac, "proxmox_access_host", return_value="192.168.0.200"):
+                                with mock.patch.object(haac, "is_windows", return_value=True):
+                                    with mock.patch.object(haac, "run_ansible_wsl", side_effect=record("ansible")):
+                                        haac.cmd_run_ansible(args)
+
+        self.assertEqual(events, ["repo-key", "semaphore-key", "repair", "known-hosts", "ansible"])
 
 
 class TofuEnvMappingTests(unittest.TestCase):
