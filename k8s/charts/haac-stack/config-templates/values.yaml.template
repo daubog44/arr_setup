@@ -360,7 +360,6 @@ ingresses:
     homepage_name: Grafana
     homepage_icon: grafana.png
     homepage_description: Observability Metrics
-    homepage_site_monitor: https://grafana.${DOMAIN_NAME}
     homepage_widget:
       type: grafana
       version: 2
