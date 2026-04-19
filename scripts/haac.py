@@ -218,6 +218,15 @@ ARR_QBITTORRENT_CATEGORY_SAVE_PATHS = {
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr-imported",
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["lidarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/lidarr-imported",
 }
+QBITTORRENT_APP_PREFERENCE_DEFAULTS = {
+    "queueing_enabled": True,
+    "max_active_downloads": 8,
+    "max_active_torrents": 12,
+    "max_active_uploads": 8,
+    "dont_count_slow_torrents": True,
+    "slow_torrent_dl_rate_threshold": 102400,
+    "slow_torrent_inactive_timer": 60,
+}
 ARR_SABNZBD_CATEGORIES = {
     "radarr": "movies",
     "sonarr": "tv",
@@ -258,6 +267,17 @@ ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS = {
     "enableCompletedDownloadHandling": True,
     "autoRedownloadFailed": True,
 }
+ARR_VERIFIER_CANDIDATES = (
+    {"query": "The General", "title": "The General", "year": 1926, "tmdbId": 961},
+    {"query": "His Girl Friday", "title": "His Girl Friday", "year": 1940, "tmdbId": 3085},
+    {"query": "Nosferatu", "title": "Nosferatu", "year": 1922, "tmdbId": 653},
+    {"query": "Night of the Living Dead", "title": "Night of the Living Dead", "year": 1968, "tmdbId": 10331},
+    {"query": "Sita Sings the Blues", "title": "Sita Sings the Blues", "year": 2008, "tmdbId": 20529},
+)
+ARR_VERIFIER_PREFERRED_MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024
+ARR_VERIFIER_POLL_SECONDS = 15
+ARR_VERIFIER_AVOID_RELEASE_TOKENS = ("yts", "yify")
+QBITTORRENT_WEBUI_HOST_HEADER = "127.0.0.1:8080"
 UP_PHASE_ORDER = (
     "Preflight",
     "Infrastructure provisioning",
@@ -2311,6 +2331,237 @@ def refresh_argocd_application(kubectl: str, kubeconfig: Path, application: str,
     )
 
 
+def argocd_tracking_parent_application(app: dict[str, object]) -> str:
+    metadata = app.get("metadata") or {}
+    annotations = metadata.get("annotations") or {}
+    tracking_id = str(annotations.get("argocd.argoproj.io/tracking-id") or "").strip()
+    if not tracking_id:
+        return ""
+    match = re.match(
+        r"^(?P<parent>[^:]+):(?P<group>[^/]+)/(?P<kind>[^:]+):(?P<namespace>[^/]+)/(?P<resource>[^/]+)$",
+        tracking_id,
+    )
+    if not match:
+        return ""
+    name = str(metadata.get("name") or "").strip()
+    if (
+        match.group("group") != "argoproj.io"
+        or match.group("kind") != "Application"
+        or match.group("namespace") != "argocd"
+        or match.group("resource") != name
+    ):
+        return ""
+    parent = match.group("parent").strip()
+    if not parent or parent == name:
+        return ""
+    return parent
+
+
+def argocd_hook_wait_resource_ref(app: dict[str, object]) -> dict[str, str] | None:
+    status = app.get("status") or {}
+    operation_state = status.get("operationState") or {}
+    if (operation_state.get("phase") or "").strip() != "Running":
+        return None
+    message = str(operation_state.get("message") or "").strip()
+    match = re.search(r"waiting for completion of hook\s+([^\s]+)", message, flags=re.IGNORECASE)
+    if not match:
+        return None
+    hook_ref = match.group(1).strip().rstrip(".,;:")
+    parts = [part.strip() for part in hook_ref.split("/") if part.strip()]
+    if len(parts) == 3:
+        group, kind, name = parts
+    elif len(parts) == 2:
+        group = ""
+        kind, name = parts
+    else:
+        return None
+    return {"ref": hook_ref, "group": group, "kind": kind, "name": name}
+
+
+def kubectl_resource_token(kind: str, group: str = "") -> str:
+    token = re.sub(r"(?<!^)(?=[A-Z])", "-", kind).lower()
+    return f"{token}.{group}" if group else token
+
+
+def argocd_hook_resource_exists(
+    kubectl: str,
+    kubeconfig: Path,
+    app: dict[str, object],
+    hook_resource: dict[str, str],
+) -> bool:
+    destination = ((app.get("spec") or {}).get("destination") or {})
+    namespace = str(destination.get("namespace") or "").strip()
+    resource = kubectl_resource_token(hook_resource["kind"], hook_resource["group"])
+    attempts: list[list[str]] = []
+    if namespace:
+        attempts.append(["get", resource, hook_resource["name"], "-n", namespace, "--ignore-not-found=true", "-o", "name"])
+    attempts.append(["get", resource, hook_resource["name"], "--ignore-not-found=true", "-o", "name"])
+    for command in attempts:
+        completed = run([kubectl, "--kubeconfig", str(kubeconfig), *command], check=False, capture_output=True)
+        if completed.returncode == 0 and (completed.stdout or "").strip():
+            return True
+    return False
+
+
+def argocd_parent_manages_child_application(parent_app: dict[str, object], child_application: str) -> bool:
+    resources = ((parent_app.get("status") or {}).get("resources") or [])
+    for resource in resources:
+        if str(resource.get("kind") or "").strip() != "Application":
+            continue
+        if str(resource.get("group") or "argoproj.io").strip() != "argoproj.io":
+            continue
+        if str(resource.get("namespace") or "argocd").strip() != "argocd":
+            continue
+        if str(resource.get("name") or "").strip() == child_application:
+            return True
+    return False
+
+
+def argocd_application_has_resource_finalizer(app: dict[str, object]) -> bool:
+    finalizers = {
+        str(value).strip() for value in ((app.get("metadata") or {}).get("finalizers") or []) if str(value).strip()
+    }
+    return any(
+        value == "resources-finalizer.argocd.argoproj.io"
+        or value.startswith("resources-finalizer.argocd.argoproj.io/")
+        for value in finalizers
+    )
+
+
+def wait_for_argocd_application_recreation(
+    kubectl: str,
+    kubeconfig: Path,
+    application: str,
+    *,
+    original_uid: str,
+    timeout_seconds: int,
+    interval_seconds: int = 5,
+) -> None:
+    deadline = time.time() + timeout_seconds
+    disruption_observed = False
+    while time.time() < deadline:
+        completed = run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(kubeconfig),
+                "get",
+                "application",
+                application,
+                "-n",
+                "argocd",
+                "-o",
+                "json",
+            ],
+            check=False,
+            capture_output=True,
+        )
+        if completed.returncode != 0:
+            disruption_observed = True
+            time.sleep(interval_seconds)
+            continue
+        payload = json.loads((completed.stdout or "").strip() or "{}")
+        metadata = payload.get("metadata") or {}
+        current_uid = str(metadata.get("uid") or "").strip()
+        if current_uid and current_uid != original_uid:
+            return
+        if str(metadata.get("deletionTimestamp") or "").strip():
+            disruption_observed = True
+        if not current_uid and disruption_observed:
+            time.sleep(interval_seconds)
+            continue
+        time.sleep(interval_seconds)
+    raise HaaCError(f"Timeout waiting for ArgoCD application {application} recreation")
+
+
+def recover_missing_hook_argocd_operation(
+    kubectl: str,
+    kubeconfig: Path,
+    application: str,
+    app: dict[str, object],
+    *,
+    deadline: float,
+    gitops_repo_url: str | None,
+) -> bool:
+    hook_resource = argocd_hook_wait_resource_ref(app)
+    if not hook_resource:
+        return False
+
+    status = app.get("status") or {}
+    desired_revision = ((status.get("sync") or {}).get("revision") or "").strip()
+    active_revision = (((app.get("operation") or {}).get("sync") or {}).get("revision") or "").strip()
+    if desired_revision and active_revision and active_revision != desired_revision:
+        return False
+    if argocd_hook_resource_exists(kubectl, kubeconfig, app, hook_resource):
+        return False
+
+    parent_application = argocd_tracking_parent_application(app)
+    if not parent_application or not gitops_repo_url:
+        raise HaaCError(
+            f"ArgoCD application {application} is stuck waiting on missing hook {hook_resource['ref']} at the current revision, "
+            "but it is not a repo-managed child Application with a known parent. Manual intervention is required."
+        )
+
+    original_uid = str(((app.get("metadata") or {}).get("uid")) or "").strip()
+    if not original_uid:
+        raise HaaCError(
+            f"ArgoCD application {application} is stuck waiting on missing hook {hook_resource['ref']}, "
+            "but the current Application UID is unavailable for safe recycle verification. Manual intervention is required."
+        )
+
+    parent_app = kubectl_json(
+        kubectl,
+        kubeconfig,
+        ["get", "application", parent_application, "-n", "argocd", "-o", "json"],
+        context=f"Read parent ArgoCD application {parent_application}",
+    )
+    if argocd_application_repo_url(parent_app) != gitops_repo_url:
+        raise HaaCError(
+            f"ArgoCD application {application} is stuck waiting on missing hook {hook_resource['ref']}, "
+            f"but parent Application {parent_application} is not managed from the current GitOps repository. Manual intervention is required."
+        )
+    if not argocd_parent_manages_child_application(parent_app, application):
+        raise HaaCError(
+            f"ArgoCD application {application} is stuck waiting on missing hook {hook_resource['ref']}, "
+            f"but parent Application {parent_application} does not currently prove ownership of the child Application. Manual intervention is required."
+        )
+
+    if argocd_application_has_resource_finalizer(app):
+        raise HaaCError(
+            f"ArgoCD application {application} is stuck waiting on missing hook {hook_resource['ref']}, "
+            "but the child Application still owns a resources finalizer and will not be recycled automatically. Manual intervention is required."
+        )
+
+    refresh_argocd_application(kubectl, kubeconfig, parent_application, hard=True)
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "delete",
+            "application",
+            application,
+            "-n",
+            "argocd",
+            "--ignore-not-found=true",
+            "--wait=false",
+        ],
+        check=False,
+    )
+    wait_for_argocd_application_recreation(
+        kubectl,
+        kubeconfig,
+        application,
+        original_uid=original_uid,
+        timeout_seconds=min(180, seconds_remaining(deadline)),
+    )
+    print(
+        f"[heal] Recycled repo-managed ArgoCD child Application {application} after missing hook "
+        f"{hook_resource['ref']} under parent {parent_application}"
+    )
+    return True
+
+
 def wait_for_argocd_application_ready(
     kubectl: str,
     kubeconfig: Path,
@@ -2338,6 +2589,16 @@ def wait_for_argocd_application_ready(
             context=f"Read ArgoCD application {application}",
         )
         if recover_stale_argocd_operation(kubectl, kubeconfig, application, app):
+            time.sleep(5)
+            continue
+        if recover_missing_hook_argocd_operation(
+            kubectl,
+            kubeconfig,
+            application,
+            app,
+            deadline=deadline,
+            gitops_repo_url=gitops_repo_url,
+        ):
             time.sleep(5)
             continue
         if application == "haac-stack" and recover_stalled_downloaders_rollout(kubectl, kubeconfig):
@@ -5010,7 +5271,11 @@ def qbittorrent_categories_state(
     *,
     opener: urllib.request.OpenerDirector,
 ) -> dict[str, str]:
-    payload = http_request_json(f"http://127.0.0.1:{port}/api/v2/torrents/categories", opener=opener)
+    payload = http_request_json(
+        f"http://127.0.0.1:{port}/api/v2/torrents/categories",
+        opener=opener,
+        headers=qbittorrent_webui_headers(),
+    )
     if not isinstance(payload, dict):
         return {}
     categories: dict[str, str] = {}
@@ -5044,13 +5309,55 @@ def qbittorrent_login(
     return opener
 
 
+def qbittorrent_webui_headers() -> dict[str, str]:
+    return {
+        "Host": QBITTORRENT_WEBUI_HOST_HEADER,
+        "Referer": f"http://{QBITTORRENT_WEBUI_HOST_HEADER}/",
+    }
+
+
+def qbittorrent_login_via_port_forward(
+    port: int,
+    *,
+    username: str,
+    password: str,
+) -> urllib.request.OpenerDirector:
+    opener = build_cookie_opener()
+    status, body = http_request_form_text(
+        f"http://127.0.0.1:{port}/api/v2/auth/login",
+        fields=(
+            ("username", username),
+            ("password", password),
+        ),
+        opener=opener,
+        headers=qbittorrent_webui_headers(),
+    )
+    if status != 200 or "ok." not in body.lower():
+        raise HaaCError(f"qBittorrent login failed through the verifier port-forward.\nHTTP {status}\n{body}")
+    return opener
+
+
+def qbittorrent_torrents_info(
+    port: int,
+    *,
+    opener: urllib.request.OpenerDirector,
+) -> list[dict[str, object]]:
+    return json_array(
+        http_request_json(
+            f"http://127.0.0.1:{port}/api/v2/torrents/info?filter=all",
+            opener=opener,
+            headers=qbittorrent_webui_headers(),
+        )
+    )
+
+
 def ensure_qbittorrent_category_paths(
     port: int,
     *,
     username: str,
     password: str,
 ) -> dict[str, str]:
-    opener = qbittorrent_login(port, username=username, password=password)
+    opener = qbittorrent_login_via_port_forward(port, username=username, password=password)
     current = qbittorrent_categories_state(port, opener=opener)
     for category, save_path in ARR_QBITTORRENT_CATEGORY_SAVE_PATHS.items():
         current_path = current.get(category, "")
@@ -5065,6 +5372,7 @@ def ensure_qbittorrent_category_paths(
                 ("savePath", save_path),
             ),
             opener=opener,
+            headers=qbittorrent_webui_headers(),
         )
         if status != 200:
             raise HaaCError(f"qBittorrent category bootstrap failed for {category}.\nHTTP {status}\n{body}")
@@ -5080,6 +5388,8 @@ def ensure_qbittorrent_category_paths(
 def qbittorrent_port_sync_authenticated_script(command: str) -> str:
     return (
         "set -eu; "
+        "printenv QBIT_USER >/tmp/qbit-user.txt; "
+        "printenv QBIT_PASS >/tmp/qbit-pass.txt; "
         "attempt=0; "
         "while true; do "
         "code=$(curl --connect-timeout 5 --max-time 30 -sS -o /tmp/qbit-version.txt -w '%{http_code}' "
@@ -5095,8 +5405,8 @@ def qbittorrent_port_sync_authenticated_script(command: str) -> str:
         "login_body=/tmp/qbit-login.txt; "
         "login_code=$(curl --connect-timeout 5 --max-time 30 -sS -o \"$login_body\" -w '%{http_code}' "
         "-c /tmp/qbit-cookies.txt "
-        "--data-urlencode 'username=${QBIT_USER}' "
-        "--data-urlencode 'password=${QBIT_PASS}' "
+        "--data-urlencode username@/tmp/qbit-user.txt "
+        "--data-urlencode password@/tmp/qbit-pass.txt "
         "http://127.0.0.1:8080/api/v2/auth/login || true); "
         "if [ \"$login_code\" != \"200\" ] || ! grep -qi 'Ok\\.' \"$login_body\"; then "
         "echo 'qBittorrent login failed inside the downloader bootstrap container.' >&2; "
@@ -5397,6 +5707,49 @@ def ensure_arr_root_folder(
     current = json_array(http_request_json(base_url, headers=headers))
     if not any(str(item.get("path") or "").strip() == path for item in current):
         raise HaaCError(f"{app_name} root-folder bootstrap did not persist {path}.")
+    return current
+
+
+def qbittorrent_preferences_state(
+    port: int,
+    *,
+    opener: urllib.request.OpenerDirector,
+) -> dict[str, object]:
+    return json_object(
+        http_request_json(
+            f"http://127.0.0.1:{port}/api/v2/app/preferences",
+            opener=opener,
+            headers=qbittorrent_webui_headers(),
+        )
+    )
+
+
+def ensure_qbittorrent_app_preferences(
+    port: int,
+    *,
+    username: str,
+    password: str,
+) -> dict[str, object]:
+    opener = qbittorrent_login_via_port_forward(port, username=username, password=password)
+    current = qbittorrent_preferences_state(port, opener=opener)
+    desired = {
+        key: value
+        for key, value in QBITTORRENT_APP_PREFERENCE_DEFAULTS.items()
+        if current.get(key) != value
+    }
+    if desired:
+        status, body = http_request_form_text(
+            f"http://127.0.0.1:{port}/api/v2/app/setPreferences",
+            fields=(("json", json.dumps(desired, separators=(",", ":"))),),
+            opener=opener,
+            headers=qbittorrent_webui_headers(),
+        )
+        if status != 200:
+            raise HaaCError(f"qBittorrent preference bootstrap failed.\nHTTP {status}\n{body}")
+    current = qbittorrent_preferences_state(port, opener=opener)
+    for key, value in QBITTORRENT_APP_PREFERENCE_DEFAULTS.items():
+        if current.get(key) != value:
+            raise HaaCError(f"qBittorrent preference {key} did not persist the supported value {value!r}.")
     return current
 
 
@@ -6768,6 +7121,536 @@ def ensure_media_storage_path(
     )
 
 
+def normalize_media_title(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def release_mentions_candidate(title: str, *, candidate_title: str, year: int) -> bool:
+    normalized_release = normalize_media_title(title)
+    normalized_candidate = normalize_media_title(candidate_title)
+    return bool(normalized_candidate and normalized_candidate in normalized_release and str(year) in str(title or ""))
+
+
+def arr_verifier_release_penalty(title: str) -> int:
+    normalized = normalize_media_title(title)
+    return 1 if any(token in normalized for token in ARR_VERIFIER_AVOID_RELEASE_TOKENS) else 0
+
+
+def seerr_search_results(
+    port: int,
+    *,
+    opener: urllib.request.OpenerDirector,
+    query: str,
+) -> list[dict[str, object]]:
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/search?query={urllib.parse.quote(query)}",
+        opener=opener,
+    )
+    if isinstance(response, dict):
+        return json_array(response.get("results") if "results" in response else [])
+    return []
+
+
+def exact_seerr_movie_match(
+    results: list[dict[str, object]],
+    *,
+    title: str,
+    year: int,
+    tmdb_id: int | None = None,
+) -> dict[str, object]:
+    exact_matches: list[dict[str, object]] = []
+    for item in results:
+        if str(item.get("mediaType") or "").strip() != "movie":
+            continue
+        if normalize_media_title(item.get("title") or item.get("originalTitle") or "") != normalize_media_title(title):
+            continue
+        release_year = str(item.get("releaseDate") or "").strip()[:4]
+        if release_year != str(year):
+            continue
+        exact_matches.append(item)
+    if tmdb_id:
+        for item in exact_matches:
+            if int(item.get("id") or 0) == int(tmdb_id):
+                return item
+    return exact_matches[0] if exact_matches else {}
+
+
+def prowlarr_search_results(
+    port: int,
+    *,
+    api_key: str,
+    query: str,
+) -> list[dict[str, object]]:
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/search?query={urllib.parse.quote(query)}&type=search&categories=2000",
+        headers={"X-Api-Key": api_key},
+    )
+    return json_array(response)
+
+
+def exact_seeded_prowlarr_releases(
+    results: list[dict[str, object]],
+    *,
+    candidate_title: str,
+    year: int,
+    preferred_max_size_bytes: int = ARR_VERIFIER_PREFERRED_MAX_SIZE_BYTES,
+) -> list[dict[str, object]]:
+    matches: list[dict[str, object]] = []
+    for item in results:
+        title = str(item.get("title") or "").strip()
+        if not release_mentions_candidate(title, candidate_title=candidate_title, year=year):
+            continue
+        if int(item.get("seeders") or 0) <= 0:
+            continue
+        matches.append(item)
+    matches.sort(
+        key=lambda item: (
+            arr_verifier_release_penalty(str(item.get("title") or "")),
+            0 if 0 < int(item.get("size") or 0) <= preferred_max_size_bytes else 1,
+            -int(item.get("seeders") or 0),
+            int(item.get("size") or 0) or sys.maxsize,
+            str(item.get("title") or ""),
+        )
+    )
+    return matches
+
+
+def arr_verifier_candidate_rank(
+    movie: dict[str, object],
+    prowlarr_matches: list[dict[str, object]],
+    *,
+    preferred_max_size_bytes: int = ARR_VERIFIER_PREFERRED_MAX_SIZE_BYTES,
+) -> tuple[int, int, int, int, str]:
+    best_release = prowlarr_matches[0] if prowlarr_matches else {}
+    if movie and bool(movie.get("hasFile")):
+        lifecycle_rank = 0
+    elif not movie:
+        lifecycle_rank = 1
+    else:
+        lifecycle_rank = 2
+    return (
+        lifecycle_rank,
+        arr_verifier_release_penalty(str(best_release.get("title") or "")),
+        0 if 0 < int(best_release.get("size") or 0) <= preferred_max_size_bytes else 1,
+        -int(best_release.get("seeders") or 0),
+        int(best_release.get("size") or 0) or sys.maxsize,
+        str(best_release.get("title") or ""),
+    )
+
+
+def choose_arr_verifier_candidate(
+    seerr_port: int,
+    *,
+    seerr_opener: urllib.request.OpenerDirector,
+    prowlarr_port: int,
+    prowlarr_api_key: str,
+    radarr_port: int,
+    radarr_api_key: str,
+) -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
+    ranked_matches: list[tuple[tuple[int, int, int, int, str], dict[str, object], dict[str, object], list[dict[str, object]]]] = []
+    for candidate in ARR_VERIFIER_CANDIDATES:
+        seerr_match = exact_seerr_movie_match(
+            seerr_search_results(seerr_port, opener=seerr_opener, query=str(candidate["query"])),
+            title=str(candidate["title"]),
+            year=int(candidate["year"]),
+            tmdb_id=int(candidate["tmdbId"]),
+        )
+        if not seerr_match:
+            continue
+        prowlarr_matches = exact_seeded_prowlarr_releases(
+            prowlarr_search_results(
+                prowlarr_port,
+                api_key=prowlarr_api_key,
+                query=f"{candidate['title']} {candidate['year']}",
+            ),
+            candidate_title=str(candidate["title"]),
+            year=int(candidate["year"]),
+        )
+        if prowlarr_matches:
+            movie = radarr_movie_by_tmdb_id(radarr_port, api_key=radarr_api_key, tmdb_id=int(candidate["tmdbId"]))
+            ranked_matches.append(
+                (
+                    arr_verifier_candidate_rank(movie, prowlarr_matches),
+                    candidate,
+                    seerr_match,
+                    prowlarr_matches,
+                )
+            )
+    if ranked_matches:
+        ranked_matches.sort(key=lambda item: item[0])
+        _, candidate, seerr_match, prowlarr_matches = ranked_matches[0]
+        return candidate, seerr_match, prowlarr_matches
+    raise HaaCError(
+        "ARR end-to-end verification failed.\n"
+        "Furthest verified stage: Seerr and Prowlarr reachability\n"
+        "Blocker: title availability\n"
+        "No curated safe title currently resolves in Seerr and returns seeded exact-match movie releases from Prowlarr."
+    )
+
+
+def radarr_movies(port: int, *, api_key: str) -> list[dict[str, object]]:
+    return json_array(http_request_json(f"http://127.0.0.1:{port}/api/v3/movie", headers={"X-Api-Key": api_key}))
+
+
+def radarr_movie_by_tmdb_id(port: int, *, api_key: str, tmdb_id: int) -> dict[str, object]:
+    for item in radarr_movies(port, api_key=api_key):
+        if int(item.get("tmdbId") or 0) == int(tmdb_id):
+            return item
+    return {}
+
+
+def wait_for_radarr_movie(
+    port: int,
+    *,
+    api_key: str,
+    tmdb_id: int,
+    timeout_seconds: int = 180,
+) -> dict[str, object]:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        movie = radarr_movie_by_tmdb_id(port, api_key=api_key, tmdb_id=tmdb_id)
+        if movie:
+            return movie
+        time.sleep(ARR_VERIFIER_POLL_SECONDS)
+    return {}
+
+
+def radarr_release_records(
+    port: int,
+    *,
+    api_key: str,
+    movie_id: int,
+) -> list[dict[str, object]]:
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v3/release?movieId={movie_id}&includeRejected=true",
+        headers={"X-Api-Key": api_key},
+    )
+    return json_array(response)
+
+
+def exact_radarr_release_matches(
+    releases: list[dict[str, object]],
+    *,
+    candidate_title: str,
+    year: int,
+) -> list[dict[str, object]]:
+    return [
+        item
+        for item in releases
+        if release_mentions_candidate(str(item.get("title") or ""), candidate_title=candidate_title, year=year)
+    ]
+
+
+def preferred_arr_verifier_release(
+    releases: list[dict[str, object]],
+    *,
+    preferred_max_size_bytes: int = ARR_VERIFIER_PREFERRED_MAX_SIZE_BYTES,
+) -> dict[str, object]:
+    if not releases:
+        return {}
+    sorted_releases = sorted(
+        releases,
+        key=lambda item: (
+            arr_verifier_release_penalty(str(item.get("title") or "")),
+            0 if bool(item.get("downloadAllowed")) else 1,
+            0 if 0 < int(item.get("size") or 0) <= preferred_max_size_bytes else 1,
+            -int(item.get("seeders") or 0),
+            int(item.get("size") or 0) or sys.maxsize,
+            str(item.get("title") or ""),
+        ),
+    )
+    return sorted_releases[0]
+
+
+def trigger_radarr_release_download(port: int, *, api_key: str, release: dict[str, object]) -> dict[str, object]:
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v3/release",
+        method="POST",
+        payload=release,
+        headers={"X-Api-Key": api_key},
+    )
+    return json_object(response)
+
+
+def radarr_queue_records(port: int, *, api_key: str) -> list[dict[str, object]]:
+    response = http_request_json(f"http://127.0.0.1:{port}/api/v3/queue", headers={"X-Api-Key": api_key})
+    return json_array(response.get("records") if isinstance(response, dict) else [])
+
+
+def radarr_history_records(port: int, *, api_key: str) -> list[dict[str, object]]:
+    response = http_request_json(f"http://127.0.0.1:{port}/api/v3/history", headers={"X-Api-Key": api_key})
+    return json_array(response.get("records") if isinstance(response, dict) else [])
+
+
+def radarr_movie_files(port: int, *, api_key: str, movie_id: int) -> list[dict[str, object]]:
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v3/moviefile?movieId={movie_id}",
+        headers={"X-Api-Key": api_key},
+    )
+    return json_array(response)
+
+
+def match_release_title(record_title: str, selected_title: str) -> bool:
+    return normalize_media_title(record_title) == normalize_media_title(selected_title)
+
+
+def container_media_path_to_host_nas_path(container_path: str, *, host_nas_path: str) -> PurePosixPath:
+    root = PurePosixPath(host_nas_path)
+    relative = PurePosixPath(container_path).relative_to(PurePosixPath("/data"))
+    return root / relative
+
+
+def proxmox_host_path_exists(proxmox_host: str, path: PurePosixPath) -> bool:
+    completed = run(
+        proxmox_ssh_command(proxmox_host, f"test -f {shlex.quote(str(path))} && printf present"),
+        check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0 and "present" in (completed.stdout or "")
+
+
+def jellyfin_refresh_library(port: int, *, access_token: str) -> None:
+    status, body = http_request_text(
+        f"http://127.0.0.1:{port}/Library/Refresh",
+        method="POST",
+        headers=jellyfin_auth_headers(access_token),
+    )
+    if status not in (200, 202, 204):
+        raise HaaCError(f"Jellyfin library refresh failed.\nHTTP {status}\n{body}")
+
+
+def jellyfin_search_movie_items(
+    port: int,
+    *,
+    access_token: str,
+    title: str,
+    user_id: str = "",
+) -> list[dict[str, object]]:
+    query = {
+        "SearchTerm": title,
+        "Recursive": "true",
+        "IncludeItemTypes": "Movie",
+        "Fields": "Path",
+    }
+    if user_id:
+        query["userId"] = user_id
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/Items?{urllib.parse.urlencode(query)}",
+        headers=jellyfin_auth_headers(access_token),
+    )
+    return json_array(response.get("Items") if isinstance(response, dict) else [])
+
+
+def exact_jellyfin_movie_match(
+    items: list[dict[str, object]],
+    *,
+    title: str,
+    year: int,
+) -> dict[str, object]:
+    for item in items:
+        item_title = str(item.get("Name") or item.get("name") or "").strip()
+        item_year = int(item.get("ProductionYear") or item.get("productionYear") or 0)
+        if normalize_media_title(item_title) == normalize_media_title(title) and item_year == int(year):
+            return item
+    return {}
+
+
+def arr_verifier_failure(*, furthest_verified: str, blocker: str, detail: str) -> None:
+    raise HaaCError(
+        "ARR end-to-end verification failed.\n"
+        f"Furthest verified stage: {furthest_verified}\n"
+        f"Blocker: {blocker}\n"
+        f"{detail}"
+    )
+
+
+def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str, *, timeout_seconds: int = 1800) -> None:
+    env = merged_env()
+    require_env(["DOMAIN_NAME", "QUI_PASSWORD", "HOST_NAS_PATH"], env)
+    downloader_username = env.get("QBITTORRENT_USERNAME", "admin").strip() or "admin"
+    downloader_password = env["QUI_PASSWORD"].strip()
+    username, password, email = seerr_admin_identity(env)
+    host_nas_path = env["HOST_NAS_PATH"].strip()
+
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        print("[stage] ARR candidate selection")
+        prowlarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "prowlarr")
+        radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/seerr", 80) as seerr_port, kubectl_port_forward(
+            kubectl, session_kubeconfig, "media", "svc/prowlarr", 80
+        ) as prowlarr_port, kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as radarr_port:
+            seerr_opener = seerr_login_with_jellyfin(
+                seerr_port,
+                username=username,
+                password=password,
+                email=email,
+                public_settings=seerr_public_settings(seerr_port),
+            )
+            candidate, seerr_match, seeded_prowlarr_results = choose_arr_verifier_candidate(
+                seerr_port,
+                seerr_opener=seerr_opener,
+                prowlarr_port=prowlarr_port,
+                prowlarr_api_key=prowlarr_api_key,
+                radarr_port=radarr_port,
+                radarr_api_key=radarr_api_key,
+            )
+            candidate_title = str(candidate["title"])
+            candidate_year = int(candidate["year"])
+            candidate_tmdb_id = int(candidate["tmdbId"])
+            media_info = json_object(seerr_match.get("mediaInfo") if isinstance(seerr_match, dict) else {})
+            if not media_info:
+                status, body = http_request_text(
+                    f"http://127.0.0.1:{seerr_port}/api/v1/request",
+                    method="POST",
+                    payload={"mediaType": "movie", "mediaId": candidate_tmdb_id},
+                    opener=seerr_opener,
+                )
+                if status not in (200, 201, 202):
+                    arr_verifier_failure(
+                        furthest_verified="Safe candidate selection",
+                        blocker="title availability",
+                        detail=f"Seerr could not create the movie request for {candidate_title} ({candidate_year}).\nHTTP {status}\n{body}",
+                    )
+            print(f"[ok] ARR candidate selection: {candidate_title} ({candidate_year})")
+
+        print("[stage] ARR request and release handoff")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as radarr_port:
+            movie = wait_for_radarr_movie(radarr_port, api_key=radarr_api_key, tmdb_id=candidate_tmdb_id)
+            if not movie:
+                arr_verifier_failure(
+                    furthest_verified="Seerr request creation",
+                    blocker="search/indexer drift",
+                    detail=f"Radarr did not materialize the requested movie for TMDb {candidate_tmdb_id} before timeout.",
+                )
+            movie_id = int(movie.get("id") or 0)
+            history_records = [
+                item for item in radarr_history_records(radarr_port, api_key=radarr_api_key) if int(item.get("movieId") or 0) == movie_id
+            ]
+            if bool(movie.get("hasFile")):
+                selected_title = str(next((item.get("sourceTitle") for item in history_records if str(item.get("eventType") or "").lower() == "grabbed"), "") or candidate_title).strip()
+                print(f"[ok] ARR request and release handoff: existing imported candidate {selected_title}")
+            else:
+                releases = exact_radarr_release_matches(
+                    radarr_release_records(radarr_port, api_key=radarr_api_key, movie_id=movie_id),
+                    candidate_title=candidate_title,
+                    year=candidate_year,
+                )
+                preferred_title = str(seeded_prowlarr_results[0].get("title") or "").strip() if seeded_prowlarr_results else ""
+                preferred_matches = [
+                    item for item in releases if preferred_title and match_release_title(str(item.get("title") or ""), preferred_title)
+                ]
+                selected_release = preferred_arr_verifier_release(preferred_matches or releases)
+                if not selected_release:
+                    arr_verifier_failure(
+                        furthest_verified="Seerr request creation",
+                        blocker="search/indexer drift",
+                        detail=f"Radarr found no exact-match release candidates for {candidate_title} ({candidate_year}).",
+                    )
+                selected_title = str(selected_release.get("title") or "").strip()
+                queue_records = [item for item in radarr_queue_records(radarr_port, api_key=radarr_api_key) if int(item.get("movieId") or 0) == movie_id]
+                already_selected = any(match_release_title(str(item.get("title") or ""), selected_title) for item in queue_records) or any(
+                    match_release_title(str(item.get("sourceTitle") or ""), selected_title) for item in history_records
+                )
+                if not already_selected:
+                    trigger_radarr_release_download(radarr_port, api_key=radarr_api_key, release=selected_release)
+                print(f"[ok] ARR request and release handoff: {selected_title}")
+
+        print("[stage] Downloader and NAS import")
+        torrent_match: dict[str, object] = {}
+        imported_file_path = ""
+        imported_host_path: PurePosixPath | None = None
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/qbittorrent", 8080) as qbit_port:
+                qbit_opener = qbittorrent_login_via_port_forward(
+                    qbit_port,
+                    username=downloader_username,
+                    password=downloader_password,
+                )
+                torrents = qbittorrent_torrents_info(qbit_port, opener=qbit_opener)
+                torrent_match = next(
+                    (
+                        item
+                        for item in torrents
+                        if match_release_title(str(item.get("name") or ""), selected_title)
+                    ),
+                    {},
+                )
+            with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as radarr_port:
+                movie = radarr_movie_by_tmdb_id(radarr_port, api_key=radarr_api_key, tmdb_id=candidate_tmdb_id)
+                if movie and bool(movie.get("hasFile")):
+                    files = radarr_movie_files(radarr_port, api_key=radarr_api_key, movie_id=int(movie.get("id") or 0))
+                    if files:
+                        imported_file_path = str(files[0].get("path") or "").strip()
+                    if imported_file_path:
+                        imported_host_path = container_media_path_to_host_nas_path(
+                            imported_file_path,
+                            host_nas_path=host_nas_path,
+                        )
+                        if proxmox_host_path_exists(proxmox_host, imported_host_path):
+                            print(f"[ok] Downloader and NAS import: {imported_host_path}")
+                            break
+            time.sleep(ARR_VERIFIER_POLL_SECONDS)
+        else:
+            if not torrent_match:
+                arr_verifier_failure(
+                    furthest_verified="Radarr release handoff",
+                    blocker="downloader/VPN drift",
+                    detail=f"qBittorrent never exposed the selected release {selected_title!r} through the managed VPN-backed downloader path.",
+                )
+            if float(torrent_match.get("progress") or 0.0) < 1.0:
+                arr_verifier_failure(
+                    furthest_verified="qBittorrent handoff",
+                    blocker="downloader/VPN drift",
+                    detail=(
+                        f"qBittorrent is still stuck before completion for {selected_title!r}. "
+                        f"State={torrent_match.get('state')!r} progress={float(torrent_match.get('progress') or 0.0):.3f} "
+                        f"speed={int(torrent_match.get('dlspeed') or 0)}B/s."
+                    ),
+                )
+            arr_verifier_failure(
+                furthest_verified="qBittorrent download completion",
+                blocker="NAS/import drift",
+                detail=f"Radarr did not import {selected_title!r} into the NAS-backed media tree before timeout.",
+            )
+
+        print("[stage] Jellyfin visibility")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/jellyfin", 80) as jellyfin_port:
+            jellyfin_auth = authenticate_jellyfin_admin(jellyfin_port, username=username, password=password)
+            access_token = str(jellyfin_auth["AccessToken"])
+            user_id = str(json_object(jellyfin_auth.get("User")).get("Id") or "").strip()
+            jellyfin_refresh_library(jellyfin_port, access_token=access_token)
+            jellyfin_deadline = time.time() + min(timeout_seconds, 600)
+            while time.time() < jellyfin_deadline:
+                items = jellyfin_search_movie_items(
+                    jellyfin_port,
+                    access_token=access_token,
+                    title=candidate_title,
+                    user_id=user_id,
+                )
+                exact_item = exact_jellyfin_movie_match(items, title=candidate_title, year=candidate_year)
+                if exact_item:
+                    print(
+                        "[ok] Jellyfin visibility: "
+                        + json.dumps(
+                            {
+                                "title": candidate_title,
+                                "year": candidate_year,
+                                "release": selected_title,
+                                "nasPath": str(imported_host_path) if imported_host_path else "",
+                                "jellyfinItemId": exact_item.get("Id") or exact_item.get("id") or "",
+                            }
+                        )
+                    )
+                    return
+                time.sleep(ARR_VERIFIER_POLL_SECONDS)
+        arr_verifier_failure(
+            furthest_verified="NAS-backed import",
+            blocker="Jellyfin drift",
+            detail=f"Jellyfin could not query {candidate_title} ({candidate_year}) after the library refresh completed.",
+        )
+
+
 def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     require_env(["DOMAIN_NAME", "QUI_PASSWORD"], env)
@@ -6821,6 +7704,20 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 ) from exc
             raise
         print("[ok] Downloader bootstrap gate")
+
+        print("[stage] Downloader preference gate")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/qbittorrent", 8080) as port:
+            ensure_qbittorrent_app_preferences(
+                port,
+                username=downloader_username,
+                password=downloader_password,
+            )
+            ensure_qbittorrent_category_paths(
+                port,
+                username=downloader_username,
+                password=downloader_password,
+            )
+        print("[ok] Downloader preference gate")
 
         print("[stage] Media service probes")
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sabnzbd", 80) as port:
@@ -7805,6 +8702,16 @@ def cmd_reconcile_media_stack(args: argparse.Namespace) -> None:
     reconcile_media_stack(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
+def cmd_verify_arr_flow(args: argparse.Namespace) -> None:
+    verify_arr_flow(
+        args.master_ip,
+        args.proxmox_host,
+        Path(args.kubeconfig),
+        args.kubectl,
+        timeout_seconds=args.timeout,
+    )
+
+
 def cmd_configure_argocd_local_auth(args: argparse.Namespace) -> None:
     configure_argocd_local_auth(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
@@ -8014,6 +8921,14 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--kubeconfig", required=True)
     command.add_argument("--kubectl", default="kubectl")
     command.set_defaults(func=cmd_reconcile_media_stack)
+
+    command = subparsers.add_parser("verify-arr-flow")
+    command.add_argument("--master-ip", required=True)
+    command.add_argument("--proxmox-host", required=True)
+    command.add_argument("--kubeconfig", required=True)
+    command.add_argument("--kubectl", default="kubectl")
+    command.add_argument("--timeout", type=int, default=1800)
+    command.set_defaults(func=cmd_verify_arr_flow)
 
     command = subparsers.add_parser("configure-argocd-local-auth")
     command.add_argument("--master-ip", required=True)

@@ -228,7 +228,7 @@ spec:
 
               qbit_reconcile_preferences() {
                 qbit_login_cookie
-                preference_payload=$(printf '{"save_path":"%s","temp_path":"%s","temp_path_enabled":true}' "$QBIT_SAVE_PATH" "$QBIT_TEMP_PATH")
+                preference_payload=$(printf '{"save_path":"%s","temp_path":"%s","temp_path_enabled":true,"queueing_enabled":true,"max_active_downloads":8,"max_active_torrents":12,"max_active_uploads":8,"dont_count_slow_torrents":true,"slow_torrent_dl_rate_threshold":102400,"slow_torrent_inactive_timer":60}' "$QBIT_SAVE_PATH" "$QBIT_TEMP_PATH")
                 curl_common -fsS -b /tmp/qbit-cookies.txt \
                   --data-urlencode "json=${preference_payload}" \
                   http://127.0.0.1:8080/api/v2/app/setPreferences >/dev/null
@@ -238,7 +238,10 @@ spec:
                 preferences=$(curl_common -fsS -b /tmp/qbit-cookies.txt http://127.0.0.1:8080/api/v2/app/preferences || true)
                 printf '%s' "$preferences" | grep -q "\"save_path\":\"${QBIT_SAVE_PATH}" &&
                   printf '%s' "$preferences" | grep -q "\"temp_path\":\"${QBIT_TEMP_PATH}" &&
-                  printf '%s' "$preferences" | grep -q '"temp_path_enabled":true'
+                  printf '%s' "$preferences" | grep -q '"temp_path_enabled":true' &&
+                  printf '%s' "$preferences" | grep -q '"queueing_enabled":true' &&
+                  printf '%s' "$preferences" | grep -q '"max_active_downloads":8' &&
+                  printf '%s' "$preferences" | grep -q '"dont_count_slow_torrents":true'
               }
 
               qbit_upsert_category() {
@@ -286,9 +289,11 @@ spec:
               qbit_reconcile_categories() {
                 qbit_upsert_category "radarr" "/data/torrents/radarr"
                 qbit_upsert_category "tv-sonarr" "/data/torrents/tv-sonarr"
+                qbit_upsert_category "lidarr" "/data/torrents/lidarr"
                 qbit_upsert_category "prowlarr" "/data/torrents/prowlarr"
                 qbit_upsert_category "radarr-imported" "/data/torrents/radarr-imported"
                 qbit_upsert_category "tv-sonarr-imported" "/data/torrents/tv-sonarr-imported"
+                qbit_upsert_category "lidarr-imported" "/data/torrents/lidarr-imported"
               }
 
               qbit_categories_supported() {
@@ -296,9 +301,11 @@ spec:
                 categories=$(curl_common -fsS -b /tmp/qbit-cookies.txt http://127.0.0.1:8080/api/v2/torrents/categories || true)
                 qbit_category_supported "radarr" "/data/torrents/radarr" "$categories" &&
                   qbit_category_supported "tv-sonarr" "/data/torrents/tv-sonarr" "$categories" &&
+                  qbit_category_supported "lidarr" "/data/torrents/lidarr" "$categories" &&
                   qbit_category_supported "prowlarr" "/data/torrents/prowlarr" "$categories" &&
                   qbit_category_supported "radarr-imported" "/data/torrents/radarr-imported" "$categories" &&
-                  qbit_category_supported "tv-sonarr-imported" "/data/torrents/tv-sonarr-imported" "$categories"
+                  qbit_category_supported "tv-sonarr-imported" "/data/torrents/tv-sonarr-imported" "$categories" &&
+                  qbit_category_supported "lidarr-imported" "/data/torrents/lidarr-imported" "$categories"
               }
 
               extract_instance_id() {

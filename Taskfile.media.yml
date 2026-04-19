@@ -19,3 +19,10 @@ tasks:
       - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
       - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
       - '{{.PYTHON_CMD}} "scripts/haac.py" reconcile-media-stack --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  verify-flow:
+    desc: "Run the explicit ARR end-to-end verification path: Seerr request, Prowlarr search, qBittorrent/VPN, NAS import, and Jellyfin visibility."
+    cmds:
+      - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
+      - '{{.PYTHON_CMD}} "scripts/haac.py" verify-arr-flow --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'

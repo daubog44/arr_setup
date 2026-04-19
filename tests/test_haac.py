@@ -1304,9 +1304,14 @@ class DownloadersTemplateContractTests(unittest.TestCase):
         self.assertIn("parser = configparser.RawConfigParser(interpolation=None)", template)
         self.assertIn('parser["BitTorrent"]["Session\\\\DefaultSavePath"] = os.environ["QBITTORRENT_SAVE_PATH"]', template)
         self.assertIn('parser["Preferences"]["Downloads\\\\TempPathEnabled"] = "true"', template)
+        self.assertIn('"queueing_enabled":true', template)
+        self.assertIn('"max_active_downloads":8', template)
+        self.assertIn('"dont_count_slow_torrents":true', template)
         self.assertIn('qBittorrent did not persist the supported shared download paths.', template)
         self.assertIn("/api/v2/torrents/createCategory", template)
         self.assertIn("/api/v2/torrents/editCategory", template)
+        self.assertIn('qbit_upsert_category "lidarr" "/data/torrents/lidarr"', template)
+        self.assertIn('qbit_upsert_category "lidarr-imported" "/data/torrents/lidarr-imported"', template)
         self.assertIn('case "$create_code" in', template)
         self.assertIn('200|409', template)
         self.assertIn('case "$edit_code" in', template)
@@ -1341,9 +1346,11 @@ class DownloadersTemplateContractTests(unittest.TestCase):
             {
                 "radarr": "/data/torrents/radarr",
                 "tv-sonarr": "/data/torrents/tv-sonarr",
+                "lidarr": "/data/torrents/lidarr",
                 "prowlarr": "/data/torrents/prowlarr",
                 "radarr-imported": "/data/torrents/radarr-imported",
                 "tv-sonarr-imported": "/data/torrents/tv-sonarr-imported",
+                "lidarr-imported": "/data/torrents/lidarr-imported",
             },
         )
 
@@ -1366,8 +1373,29 @@ class DownloadersTemplateContractTests(unittest.TestCase):
             },
         )
 
+    def test_ensure_qbittorrent_app_preferences_reconciles_supported_queue_defaults(self) -> None:
+        with mock.patch.object(haac, "qbittorrent_login_via_port_forward", return_value=object()):
+            with mock.patch.object(
+                haac,
+                "qbittorrent_preferences_state",
+                side_effect=[
+                    {"queueing_enabled": True, "max_active_downloads": 3, "dont_count_slow_torrents": False},
+                    dict(haac.QBITTORRENT_APP_PREFERENCE_DEFAULTS),
+                ],
+            ):
+                with mock.patch.object(haac, "http_request_form_text", return_value=(200, "")) as request:
+                    result = haac.ensure_qbittorrent_app_preferences(
+                        8080,
+                        username="admin",
+                        password="secret",
+                    )
+
+        self.assertEqual(result, haac.QBITTORRENT_APP_PREFERENCE_DEFAULTS)
+        self.assertEqual(request.call_args.args[0], "http://127.0.0.1:8080/api/v2/app/setPreferences")
+        self.assertIn('"max_active_downloads":8', request.call_args.kwargs["fields"][0][1])
+
     def test_ensure_qbittorrent_category_paths_creates_and_updates_drifted_categories(self) -> None:
-        with mock.patch.object(haac, "qbittorrent_login", return_value=object()):
+        with mock.patch.object(haac, "qbittorrent_login_via_port_forward", return_value=object()):
             with mock.patch.object(
                 haac,
                 "qbittorrent_categories_state",
@@ -1394,8 +1422,10 @@ class DownloadersTemplateContractTests(unittest.TestCase):
     def test_qbittorrent_port_sync_authenticated_script_uses_in_pod_credentials(self) -> None:
         script = haac.qbittorrent_port_sync_authenticated_script("echo ok")
 
-        self.assertIn("username=${QBIT_USER}", script)
-        self.assertIn("password=${QBIT_PASS}", script)
+        self.assertIn("printenv QBIT_USER >/tmp/qbit-user.txt", script)
+        self.assertIn("printenv QBIT_PASS >/tmp/qbit-pass.txt", script)
+        self.assertIn("--data-urlencode username@/tmp/qbit-user.txt", script)
+        self.assertIn("--data-urlencode password@/tmp/qbit-pass.txt", script)
         self.assertIn("echo ok", script)
 
     def test_ensure_qbittorrent_category_paths_in_session_uses_port_sync_container_api(self) -> None:
@@ -1560,6 +1590,181 @@ class ArgocdRevisionGateTests(unittest.TestCase):
 
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
 
+    def test_recover_missing_hook_stall_recycles_repo_managed_child_application(self) -> None:
+        child = {
+            "metadata": {
+                "name": "kube-prometheus-stack",
+                "uid": "uid-before-recycle",
+                "annotations": {
+                    "argocd.argoproj.io/tracking-id": "haac-platform:argoproj.io/Application:argocd/kube-prometheus-stack"
+                },
+            },
+            "spec": {
+                "project": "platform",
+                "destination": {"namespace": "monitoring"},
+                "source": {"repoURL": "https://prometheus-community.github.io/helm-charts"},
+            },
+            "status": {
+                "sync": {"revision": "same-sha"},
+                "operationState": {
+                    "phase": "Running",
+                    "message": "waiting for completion of hook batch/Job/kube-prometheus-stack-admission-create",
+                },
+            },
+            "operation": {"sync": {"revision": "same-sha"}},
+        }
+        parent = {
+            "metadata": {"name": "haac-platform"},
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {"resources": [{"group": "argoproj.io", "kind": "Application", "namespace": "argocd", "name": "kube-prometheus-stack"}]},
+        }
+
+        with mock.patch.object(haac, "argocd_hook_resource_exists", return_value=False):
+            with mock.patch.object(haac, "kubectl_json", return_value=parent):
+                with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                    with mock.patch.object(haac, "wait_for_argocd_application_recreation") as wait:
+                        with mock.patch.object(haac, "run") as run:
+                            with mock.patch.object(haac, "seconds_remaining", return_value=180):
+                                healed = haac.recover_missing_hook_argocd_operation(
+                                    "kubectl",
+                                    Path("demo-kubeconfig"),
+                                    "kube-prometheus-stack",
+                                    child,
+                                    deadline=180,
+                                    gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                )
+
+        self.assertTrue(healed)
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
+        wait.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "kube-prometheus-stack",
+            original_uid="uid-before-recycle",
+            timeout_seconds=180,
+        )
+        delete_call = run.call_args.args[0]
+        self.assertEqual(delete_call[:7], ["kubectl", "--kubeconfig", "demo-kubeconfig", "delete", "application", "kube-prometheus-stack", "-n"])
+
+    def test_recover_missing_hook_stall_requires_repo_managed_parent(self) -> None:
+        child = {
+            "metadata": {
+                "name": "foreign-app",
+                "annotations": {"argocd.argoproj.io/tracking-id": "some-parent:argoproj.io/Application:argocd/foreign-app"},
+            },
+            "spec": {"destination": {"namespace": "foreign"}},
+            "status": {
+                "sync": {"revision": "same-sha"},
+                "operationState": {
+                    "phase": "Running",
+                    "message": "waiting for completion of hook batch/Job/foreign-hook",
+                },
+            },
+            "operation": {"sync": {"revision": "same-sha"}},
+        }
+        parent = {"spec": {"source": {"repoURL": "https://charts.example.invalid"}}}
+
+        with mock.patch.object(haac, "argocd_hook_resource_exists", return_value=False):
+            with mock.patch.object(haac, "kubectl_json", return_value=parent):
+                with mock.patch.object(haac, "seconds_remaining", return_value=180):
+                    with self.assertRaisesRegex(haac.HaaCError, "Manual intervention is required"):
+                        haac.recover_missing_hook_argocd_operation(
+                            "kubectl",
+                            Path("demo-kubeconfig"),
+                            "foreign-app",
+                            child,
+                            deadline=180,
+                            gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                        )
+
+    def test_recover_missing_hook_stall_requires_parent_ownership_proof(self) -> None:
+        child = {
+            "metadata": {
+                "name": "kube-prometheus-stack",
+                "uid": "uid-before-recycle",
+                "annotations": {
+                    "argocd.argoproj.io/tracking-id": "haac-platform:argoproj.io/Application:argocd/kube-prometheus-stack"
+                },
+            },
+            "spec": {"destination": {"namespace": "monitoring"}},
+            "status": {
+                "sync": {"revision": "same-sha"},
+                "operationState": {
+                    "phase": "Running",
+                    "message": "waiting for completion of hook batch/Job/kube-prometheus-stack-admission-create",
+                },
+            },
+            "operation": {"sync": {"revision": "same-sha"}},
+        }
+        parent = {"spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}}, "status": {"resources": []}}
+
+        with mock.patch.object(haac, "argocd_hook_resource_exists", return_value=False):
+            with mock.patch.object(haac, "kubectl_json", return_value=parent):
+                with mock.patch.object(haac, "seconds_remaining", return_value=180):
+                    with self.assertRaisesRegex(haac.HaaCError, "prove ownership"):
+                        haac.recover_missing_hook_argocd_operation(
+                            "kubectl",
+                            Path("demo-kubeconfig"),
+                            "kube-prometheus-stack",
+                            child,
+                            deadline=180,
+                            gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                        )
+
+    def test_recover_missing_hook_stall_refuses_child_with_resource_finalizer_variant(self) -> None:
+        child = {
+            "metadata": {
+                "name": "haac-stack",
+                "uid": "uid-before-recycle",
+                "annotations": {"argocd.argoproj.io/tracking-id": "haac-workloads:argoproj.io/Application:argocd/haac-stack"},
+                "finalizers": ["resources-finalizer.argocd.argoproj.io/background"],
+            },
+            "spec": {"destination": {"namespace": "media"}},
+            "status": {
+                "sync": {"revision": "same-sha"},
+                "operationState": {
+                    "phase": "Running",
+                    "message": "waiting for completion of hook batch/Job/haac-stack-bootstrap",
+                },
+            },
+            "operation": {"sync": {"revision": "same-sha"}},
+        }
+        parent = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {"resources": [{"group": "argoproj.io", "kind": "Application", "namespace": "argocd", "name": "haac-stack"}]},
+        }
+
+        with mock.patch.object(haac, "argocd_hook_resource_exists", return_value=False):
+            with mock.patch.object(haac, "kubectl_json", return_value=parent):
+                with mock.patch.object(haac, "seconds_remaining", return_value=180):
+                    with self.assertRaisesRegex(haac.HaaCError, "resources finalizer"):
+                        haac.recover_missing_hook_argocd_operation(
+                            "kubectl",
+                            Path("demo-kubeconfig"),
+                            "haac-stack",
+                            child,
+                            deadline=180,
+                            gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                        )
+
+    def test_wait_for_argocd_application_recreation_requires_uid_change(self) -> None:
+        responses = [
+            mock.Mock(returncode=0, stdout='{"metadata":{"uid":"uid-before-recycle"}}'),
+            mock.Mock(returncode=0, stdout='{"metadata":{"uid":"uid-before-recycle","deletionTimestamp":"2026-04-19T16:00:00Z"}}'),
+            mock.Mock(returncode=0, stdout='{"metadata":{"uid":"uid-after-recycle"}}'),
+        ]
+        with mock.patch.object(haac, "run", side_effect=responses):
+            with mock.patch.object(haac.time, "sleep"):
+                with mock.patch.object(haac.time, "time", side_effect=[0, 0, 1, 2]):
+                    haac.wait_for_argocd_application_recreation(
+                        "kubectl",
+                        Path("demo-kubeconfig"),
+                        "kube-prometheus-stack",
+                        original_uid="uid-before-recycle",
+                        timeout_seconds=10,
+                        interval_seconds=1,
+                    )
+
 
 class ArrStackSurfaceTests(unittest.TestCase):
     def test_up_task_phases_include_media_post_install(self) -> None:
@@ -1641,6 +1846,80 @@ class ArrStackSurfaceTests(unittest.TestCase):
 
         self.assertIn("Authorization", headers)
         self.assertIn("Token=demo-token", headers["Authorization"])
+
+    def test_qbittorrent_webui_headers_force_managed_host_header(self) -> None:
+        headers = haac.qbittorrent_webui_headers()
+
+        self.assertEqual(headers["Host"], haac.QBITTORRENT_WEBUI_HOST_HEADER)
+        self.assertEqual(headers["Referer"], f"http://{haac.QBITTORRENT_WEBUI_HOST_HEADER}/")
+
+    def test_exact_seeded_prowlarr_releases_prefers_small_seeded_exact_title_year(self) -> None:
+        results = [
+            {"title": "The General (1926) [1080p] [BluRay] [YTS] [YIFY]", "size": 1713691904, "seeders": 96},
+            {"title": "The General (1926) [720p] [BluRay] [YTS] [YIFY]", "size": 768198720, "seeders": 114},
+            {"title": "Berlin: Symphony of a Metropolis (1927) [720p] [BluRay] [YTS] [YIFY]", "size": 564800768, "seeders": 36},
+            {"title": "The.General.1926.REMASTERED.720p.BluRay.999MB.HQ.x265.10bit GalaxyRG ⭐", "size": 1032963776, "seeders": 11},
+            {"title": "The General (1926) [720p] [BluRay] [YTS] [YIFY]", "size": 768198720, "seeders": 0},
+        ]
+
+        matches = haac.exact_seeded_prowlarr_releases(results, candidate_title="The General", year=1926)
+
+        self.assertEqual([item["title"] for item in matches], [
+            "The.General.1926.REMASTERED.720p.BluRay.999MB.HQ.x265.10bit GalaxyRG ⭐",
+            "The General (1926) [720p] [BluRay] [YTS] [YIFY]",
+            "The General (1926) [1080p] [BluRay] [YTS] [YIFY]",
+        ])
+
+    def test_arr_verifier_candidate_rank_prefers_fresh_title_over_stale_existing_movie(self) -> None:
+        fresh_rank = haac.arr_verifier_candidate_rank(
+            {},
+            [{"title": "Night of the Living Dead (1968) [BluRay] [720p] [YTS] [YIFY]", "size": 828855296, "seeders": 58}],
+        )
+        stale_rank = haac.arr_verifier_candidate_rank(
+            {"id": 2, "hasFile": False},
+            [{"title": "The General (1926) [720p] [BluRay] [YTS] [YIFY]", "size": 768198720, "seeders": 114}],
+        )
+
+        self.assertLess(fresh_rank, stale_rank)
+
+    def test_arr_verifier_candidate_rank_prefers_imported_title_over_fresh_candidate(self) -> None:
+        imported_rank = haac.arr_verifier_candidate_rank(
+            {"id": 6, "hasFile": True},
+            [{"title": "Nosferatu A Symphony of Horror 1922 Tinted 1080p BluRay HEVC x265 5.1 BONE", "size": 1673963520, "seeders": 59}],
+        )
+        fresh_rank = haac.arr_verifier_candidate_rank(
+            {},
+            [{"title": "Night.of.the.Living.Dead.1968.REMASTERED.REPACK.720p.BluRay.999MB.HQ.x265.10bit GalaxyRG ⭐", "size": 1048172288, "seeders": 15}],
+        )
+
+        self.assertLess(imported_rank, fresh_rank)
+
+    def test_preferred_arr_verifier_release_prefers_download_allowed_small_release(self) -> None:
+        releases = [
+            {"title": "Large OK", "size": 6_850_472_960, "seeders": 8, "downloadAllowed": True},
+            {"title": "Small OK", "size": 768_198_720, "seeders": 114, "downloadAllowed": True},
+            {"title": "Blocked Small", "size": 735_072_768, "seeders": 2, "downloadAllowed": False},
+        ]
+
+        preferred = haac.preferred_arr_verifier_release(releases)
+
+        self.assertEqual(preferred["title"], "Small OK")
+
+    def test_container_media_path_to_host_nas_path_maps_data_root(self) -> None:
+        host_path = haac.container_media_path_to_host_nas_path(
+            "/data/media/movies/The General (1926)/The General (1926).mkv",
+            host_nas_path="/mnt/pve/zima",
+        )
+
+        self.assertEqual(str(host_path), "/mnt/pve/zima/media/movies/The General (1926)/The General (1926).mkv")
+
+    def test_arr_verifier_failure_formats_blocker_and_stage(self) -> None:
+        with self.assertRaisesRegex(haac.HaaCError, "Furthest verified stage: qBittorrent handoff"):
+            haac.arr_verifier_failure(
+                furthest_verified="qBittorrent handoff",
+                blocker="downloader/VPN drift",
+                detail="demo detail",
+            )
 
     def test_ensure_arr_root_folder_creates_missing_path(self) -> None:
         with mock.patch.object(
@@ -2312,23 +2591,25 @@ class ArrStackSurfaceTests(unittest.TestCase):
                         with mock.patch.object(haac, "read_sabnzbd_service_api_key", return_value="sab-key"):
                             with mock.patch.object(haac, "wait_for_rollout"):
                                 with mock.patch.object(haac, "bootstrap_downloaders_session"):
-                                    with mock.patch.object(haac, "kubectl_port_forward", fake_port_forward):
-                                        with mock.patch.object(haac, "require_http_status"):
-                                            with mock.patch.object(haac, "ensure_media_storage_path"):
-                                                with mock.patch.object(haac, "ensure_sabnzbd_bootstrap"):
-                                                    with mock.patch.object(haac, "ensure_arr_root_folder", return_value=[]):
-                                                        with mock.patch.object(
-                                                            haac,
-                                                            "ensure_arr_qbittorrent_download_client",
-                                                            side_effect=RuntimeError("stop-after-radarr"),
-                                                        ) as ensure_client:
-                                                            with self.assertRaisesRegex(RuntimeError, "stop-after-radarr"):
-                                                                haac.reconcile_media_stack(
-                                                                    "192.168.0.211",
-                                                                "192.168.0.200",
-                                                                Path("demo-kubeconfig"),
-                                                                "kubectl",
-                                                            )
+                                    with mock.patch.object(haac, "ensure_qbittorrent_app_preferences", return_value={}):
+                                        with mock.patch.object(haac, "ensure_qbittorrent_category_paths", return_value={}):
+                                            with mock.patch.object(haac, "kubectl_port_forward", fake_port_forward):
+                                                with mock.patch.object(haac, "require_http_status"):
+                                                    with mock.patch.object(haac, "ensure_media_storage_path"):
+                                                        with mock.patch.object(haac, "ensure_sabnzbd_bootstrap"):
+                                                            with mock.patch.object(haac, "ensure_arr_root_folder", return_value=[]):
+                                                                with mock.patch.object(
+                                                                    haac,
+                                                                    "ensure_arr_qbittorrent_download_client",
+                                                                    side_effect=RuntimeError("stop-after-radarr"),
+                                                                ) as ensure_client:
+                                                                    with self.assertRaisesRegex(RuntimeError, "stop-after-radarr"):
+                                                                        haac.reconcile_media_stack(
+                                                                            "192.168.0.211",
+                                                                            "192.168.0.200",
+                                                                            Path("demo-kubeconfig"),
+                                                                            "kubectl",
+                                                                        )
 
         self.assertEqual(ensure_client.call_args.kwargs["username"], "qbit-user")
         self.assertEqual(ensure_client.call_args.kwargs["password"], "qui-secret")
@@ -2358,6 +2639,9 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("media:\n    taskfile: ./Taskfile.media.yml", taskfile)
         self.assertIn("- task: media:post-install", taskfile)
         self.assertIn("reconcile-media-stack", media_taskfile)
+        self.assertIn("verify:arr-flow", taskfile)
+        self.assertIn("media:verify-flow", taskfile)
+        self.assertIn("verify-arr-flow", media_taskfile)
 
     def test_env_example_documents_jellyfin_admin_overrides(self) -> None:
         env_example = (ROOT / ".env.example").read_text(encoding="utf-8")

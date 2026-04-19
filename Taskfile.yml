@@ -158,6 +158,11 @@ tasks:
     cmds:
       - task: media:post-install
 
+  verify:arr-flow:
+    desc: "Run the supported ARR end-to-end verification path without folding media downloads into `task up`."
+    cmds:
+      - task: media:verify-flow
+
   reconcile:infra:
     desc: "Reconcile remote infra and node configuration without re-running the full final verification path."
     env:
