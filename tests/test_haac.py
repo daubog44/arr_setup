@@ -1618,6 +1618,17 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertIn("radarr_main_api_key: radarr-key", manifest)
         self.assertIn("sonarr_main_api_key: sonarr-key", manifest)
 
+    def test_read_bazarr_service_api_key_checks_supported_config_locations(self) -> None:
+        with mock.patch.object(haac, "latest_pod_name", return_value="bazarr-pod"):
+            with mock.patch.object(haac, "kubectl_exec_stdout", return_value="bazarr-key\n") as exec_stdout:
+                result = haac.read_bazarr_service_api_key("kubectl", Path("demo-kubeconfig"))
+
+        self.assertEqual(result, "bazarr-key")
+        script = exec_stdout.call_args.kwargs["script"]
+        self.assertIn("/config/config/config.yaml", script)
+        self.assertIn("/app/config/config.yaml", script)
+        self.assertIn("Bazarr config.yaml not found under /config or /app/config", script)
+
     def test_verify_recyclarr_sync_surface_requires_profile_and_custom_formats(self) -> None:
         with mock.patch.object(
             haac,

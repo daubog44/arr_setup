@@ -5707,18 +5707,36 @@ def read_bazarr_service_api_key(kubectl: str, kubeconfig: Path) -> str:
     pod_name = latest_pod_name(kubectl, kubeconfig, "media", "app=bazarr")
     script = r"""
 set -eu
-config_path="$(find /config -maxdepth 4 -type f \( -name 'config.yaml' -o -name 'config.yml' \) | head -n 1)"
-[ -n "$config_path" ] || { echo 'Bazarr config.yaml not found under /config' >&2; exit 1; }
-awk '
-/^auth:$/ { in_auth=1; next }
-/^[^[:space:]].*:$/ { if (in_auth) in_auth=0 }
-in_auth && /^[[:space:]]+apikey:/ {
-  sub(/^[[:space:]]*apikey:[[:space:]]*/, "")
-  gsub(/^[\"\047]|[\"\047]$/, "")
-  print
-  exit
-}
-' "$config_path"
+python3 <<'PY'
+from pathlib import Path
+import re
+
+candidates = [
+    Path("/config/config/config.yaml"),
+    Path("/config/config/config.yml"),
+    Path("/app/config/config.yaml"),
+    Path("/app/config/config.yml"),
+]
+config_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+if config_path is None:
+    for root in (Path("/config"), Path("/app/config")):
+        if not root.exists():
+            continue
+        for name in ("config.yaml", "config.yml"):
+            matches = sorted(root.rglob(name))
+            if matches:
+                config_path = matches[0]
+                break
+        if config_path is not None:
+            break
+if config_path is None:
+    raise SystemExit("Bazarr config.yaml not found under /config or /app/config")
+text = config_path.read_text(encoding="utf-8")
+match = re.search(r"(?ms)^auth:\s*$.*?^[ \t]+apikey:\s*[\"']?([^\"'\n]+)", text)
+if not match:
+    raise SystemExit("Bazarr config does not expose an API key yet.")
+print(match.group(1).strip())
+PY
 """
     api_key = kubectl_exec_stdout(
         kubectl,
