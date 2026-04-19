@@ -1945,9 +1945,9 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("configMap:\n                name: recyclarr-config", helpers)
         self.assertIn("secret:\n                secretName: recyclarr-secrets", helpers)
         self.assertNotIn("persistentVolumeClaim:\n                claimName: recyclarr-config", helpers)
-        self.assertIn("RADARR_API_KEY: bootstrap-placeholder", runtime_secret)
-        self.assertIn("SONARR_API_KEY: bootstrap-placeholder", runtime_secret)
-        self.assertIn("BAZARR_API_KEY: bootstrap-placeholder", runtime_secret)
+        self.assertIn("RADARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
+        self.assertIn("SONARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
+        self.assertIn("BAZARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
         self.assertIn("name: recyclarr-secrets", haac_stack_template)
         self.assertIn("jsonPointers:\n        - /data", haac_stack_template)
 
