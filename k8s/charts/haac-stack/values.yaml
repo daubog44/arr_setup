@@ -44,7 +44,7 @@ global:
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "cd828ee38fdd45851a3d3f6cc0fdce7dc21667392dc600b791f195e1336a5e32"
+    homepageConfigChecksum: "a273983c87080fe9ba04f426fd0da76ea937b767fea5a4a9e03b6fc0aa49eed1"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -360,7 +360,6 @@ ingresses:
     homepage_name: Grafana
     homepage_icon: grafana.png
     homepage_description: Observability Metrics
-    homepage_site_monitor: https://grafana.nucleoautogenerativo.it
     homepage_widget:
       type: grafana
       version: 2
