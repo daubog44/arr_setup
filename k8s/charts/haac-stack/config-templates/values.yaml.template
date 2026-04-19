@@ -77,6 +77,9 @@ global:
     lidarr:
       repository: lscr.io/linuxserver/lidarr
       tag: 3.1.0
+    whisparr:
+      repository: ghcr.io/hotio/whisparr
+      tag: v3
     sabnzbd:
       repository: lscr.io/linuxserver/sabnzbd
       tag: 4.5.5
@@ -304,6 +307,17 @@ ingresses:
     homepage_name: Lidarr
     homepage_icon: lidarr.png
     homepage_description: Music
+  whisparr:
+    enabled: true
+    subdomain: whisparr
+    service: whisparr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Whisparr
+    homepage_icon: mdi-filmstrip-box-multiple
+    homepage_description: Adult Movies
   sabnzbd:
     enabled: true
     subdomain: sabnzbd

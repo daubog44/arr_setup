@@ -244,6 +244,7 @@ const routeChecks = {
   sonarr: { appNativeSelector: 'text=/Sonarr|Login|Username|Password/' },
   prowlarr: { appNativeSelector: 'text=/Prowlarr|Login|Username|Password|Authentication Required|Indexers/' },
   lidarr: { appNativeSelector: 'text=/Lidarr|Login|Username|Password|Artists|Albums/i' },
+  whisparr: { appNativeSelector: 'text=/Whisparr|Login|Username|Password|Movies|Scenes/i' },
   sabnzbd: {
     expectedText: "/SABnzbd|Downloads|Queue/i",
   },

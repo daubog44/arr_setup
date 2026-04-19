@@ -155,26 +155,29 @@ The main operator identity is the default login layer for local Authelia auth, A
 
 Opaque machine secrets stay separate. OIDC client secrets, cookie keys, encryption keys, DB passwords, and similar bootstrap internals do not derive from `HAAC_MAIN_PASSWORD`. Grafana no longer falls back to downloader credentials either; it uses the effective admin identity layer only.
 
-The supported media rerun path is `task media:post-install`. It waits for the media workloads, reuses the downloader bootstrap, wires Bazarr, Lidarr, SABnzbd, and Seerr against the repo-managed Jellyfin/Radarr/Sonarr/Prowlarr surfaces when the effective admin identities are valid, warms the supported media metrics, and fails closed with an explicit ProtonVPN blocker when the downloader path cannot come up.
+The supported media rerun path is `task media:post-install`. It waits for the media workloads, reuses the downloader bootstrap, wires Bazarr, Lidarr, Whisparr, SABnzbd, and Seerr against the repo-managed Jellyfin/Radarr/Sonarr/Prowlarr surfaces when the effective admin identities are valid, warms the supported media metrics, and fails closed with an explicit ProtonVPN blocker when the downloader path cannot come up.
 
 The repo-managed ARR best-practice automation surface currently includes:
 
 - ProtonVPN-backed downloader bootstrap through `PROTONVPN_OPENVPN_USERNAME`, `PROTONVPN_OPENVPN_PASSWORD`, and `PROTONVPN_SERVER_COUNTRIES`
 - the generated ProtonVPN secret normalizes the OpenVPN username so the manual port-forwarding suffix ends in `+pmp`; the operator input should stay the raw OpenVPN username from Proton
 - qBittorrent default save and temp paths under `/data/torrents`
-- explicit qBittorrent category routing for `radarr`, `tv-sonarr`, `lidarr`, `prowlarr`, `radarr-imported`, `tv-sonarr-imported`, and `lidarr-imported`
-- SABnzbd default incomplete/complete paths under `/data/usenet/incomplete` and `/data/usenet/complete`, plus managed categories for `movies`, `tv`, `music`, and `prowlarr`
-- Radarr, Sonarr, Lidarr, and Prowlarr internal-service download client and application wiring
-- Radarr, Sonarr, and Lidarr common settings reconciliation through their public APIs, including `renameMovies=true`, `renameEpisodes=true`, `renameTracks=true`, `deleteEmptyFolders=true`, `setPermissionsLinux=true`, `chmodFolder=775`, and hardlinks kept enabled
-- Jellyfin first-run admin bootstrap plus the default Movies, TV Shows, and Music library set
-- Seerr first-run login through Jellyfin plus persistence of the repo-managed public application URL and the repo-managed Jellyfin, Radarr, and Sonarr settings; music stays outside the Seerr contract because Seerr is still movies/TV-only
+- explicit qBittorrent category routing for `radarr`, `tv-sonarr`, `lidarr`, `whisparr`, `prowlarr`, `radarr-imported`, `tv-sonarr-imported`, `lidarr-imported`, and `whisparr-imported`
+- SABnzbd default incomplete/complete paths under `/data/usenet/incomplete` and `/data/usenet/complete`, plus managed categories for `movies`, `tv`, `music`, `adult`, and `prowlarr`
+- Radarr, Sonarr, Lidarr, Whisparr, and Prowlarr internal-service download client and application wiring
+- Radarr, Sonarr, Lidarr, and Whisparr common settings reconciliation through their public APIs, including explicit naming templates, `renameMovies=true`, `renameEpisodes=true`, `renameTracks=true`, `deleteEmptyFolders=true`, `setPermissionsLinux=true`, `chmodFolder=775`, and hardlinks kept enabled
+- Italian-first media preference on the supported movie and TV paths: the repo-managed default is `ARR_PREFERRED_AUDIO_LANGUAGES=it,en`, Bazarr stays aligned on subtitle fallback with `it,en`, and the preference is enforced in Radarr and Sonarr through repo-managed custom formats plus quality-profile scores
+- Jellyfin first-run admin bootstrap plus the default Movies, TV Shows, Music library, and Adult Movies library set
+- Jellyfin first-run bootstrap defaults its metadata posture to Italy and Italian (`UICulture=it-IT`, `MetadataCountryCode=IT`, `PreferredMetadataLanguage=it`) unless the upstream instance already persisted different values
+- Seerr first-run login through Jellyfin plus persistence of the repo-managed public application URL and the repo-managed Jellyfin, Radarr, and Sonarr settings; music and adult-media stay outside the Seerr contract because Seerr is still movies/TV-only
+- Seerr is a request broker, not an indexer manager. Indexer selection and challenge handling happen in Prowlarr and the downstream ARR services, with FlareSolverr assisting supported indexers that require it
 - Bazarr language defaults plus Radarr and Sonarr integration wiring
 - Recyclarr runtime secret generation and an immediate sync against the vendored TRaSH-oriented profiles
 - Grafana visibility for Radarr, Sonarr, Lidarr, Prowlarr, FlareSolverr, SABnzbd, Bazarr, Unpackerr, and Autobrr through native metrics or supported exporters
 
 There is no separate `.env` knob for qBittorrent categories. The managed category contract is intentionally fixed so reruns stay deterministic and hardlink-friendly.
 
-The curated supported media suite today is `Radarr`, `Sonarr`, `Prowlarr`, `qBittorrent/QUI`, `Bazarr`, `Lidarr`, `SABnzbd`, `Seerr`, `Jellyfin`, `Autobrr`, `FlareSolverr`, `Unpackerr`, and `Recyclarr`. Adjacent candidates are evaluated conservatively instead of being added just because another stack includes them. `Huntarr` stays deferred because the current external reference stack marks it as deprecated, `Readarr` stays deferred because the current LinuxServer packaging is archived/deprecated and the latest published package is still a nightly tag, and `Mylar`, `Tdarr`, `Whisparr`, and other domain-specific apps stay out of the default repo-managed stack until they have a dedicated spec with their own storage, lifecycle, and trust-boundary contract.
+The curated supported media suite today is `Radarr`, `Sonarr`, `Prowlarr`, `qBittorrent/QUI`, `Bazarr`, `Lidarr`, `Whisparr`, `SABnzbd`, `Seerr`, `Jellyfin`, `Autobrr`, `FlareSolverr`, `Unpackerr`, and `Recyclarr`. Adjacent candidates are evaluated conservatively instead of being added just because another stack includes them. `Huntarr` stays deferred because the current external reference stack marks it as deprecated, `Readarr` stays deferred because the current LinuxServer packaging is archived/deprecated and the latest published package is still a nightly tag, and `Mylar`, `Tdarr`, and other domain-specific apps stay out of the default repo-managed stack until they have a dedicated spec with their own storage, lifecycle, and trust-boundary contract.
 
 The supported login model is:
 
@@ -182,10 +185,19 @@ The supported login model is:
 - `JELLYFIN_ADMIN_*`: optional override only for the Seerr bootstrap path when Jellyfin admin differs from `HAAC_MAIN_*`
 - `BAZARR_AUTH_*`: optional override for Bazarr native form auth; by default it inherits the effective main operator identity
 - `BAZARR_LANGUAGES`: optional comma-separated subtitle language codes for the default Bazarr profile; the built-in fallback is `it,en`
+- `ARR_PREFERRED_AUDIO_LANGUAGES`: optional comma-separated audio language preference list for Radarr and Sonarr custom-format scoring; the built-in fallback is `it,en`
 - `HAAC_ENABLE_SHARED_DOWNLOADER_CREDENTIALS=true`: optional opt-in to let qBittorrent and QUI inherit `HAAC_MAIN_*`
 - `QBITTORRENT_USERNAME` and `QUI_PASSWORD`: dedicated downloader auth when you want a lower-trust boundary
 - `LITMUS_MONGODB_ROOT_PASSWORD` and `LITMUS_MONGODB_REPLICA_SET_KEY`: stable technical secrets for the Litmus MongoDB subchart; pin them so Argo/Helm do not rotate the replica-set secret on every render
 - `*_OIDC_SECRET`, `*_COOKIE_*`, DB passwords, encryption keys: opaque bootstrap secrets that must stay separate from the human login defaults
+
+The operator-facing Seerr discovery contract is intentionally narrow:
+
+- Seerr discovers and requests Movies/TV by talking to Jellyfin, Radarr, and Sonarr
+- Seerr does not define or own indexers
+- Prowlarr owns indexers and syncs them to Radarr, Sonarr, and other supported downstream ARR services
+- FlareSolverr only assists the indexers that need challenge solving; it does not replace Prowlarr
+- Lidarr and Whisparr stay outside the Seerr UI contract unless upstream Seerr adds first-class support
 
 `LXC_PASSWORD` remains the documented password source of truth. Supporting `scripts/haac.py` bootstrap commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
 

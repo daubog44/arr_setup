@@ -32,6 +32,7 @@ spec:
 
               radarr_api_key = (os.environ.get("RADARR_API_KEY") or "").strip()
               sonarr_api_key = (os.environ.get("SONARR_API_KEY") or "").strip()
+              whisparr_api_key = (os.environ.get("WHISPARR_API_KEY") or "").strip()
               config = """
               [webserver]
                 metrics = true
@@ -58,6 +59,16 @@ spec:
                 protocols = "torrent,TorrentDownloadProtocol"
               """.rstrip()
 
+              if whisparr_api_key:
+                  config += f"""
+
+              [[whisparr]]
+                url = "http://whisparr.media.svc.cluster.local"
+                api_key = "{whisparr_api_key}"
+                paths = ['/data/torrents']
+                protocols = "torrent,TorrentDownloadProtocol"
+              """.rstrip()
+
               config += "\n"
               pathlib.Path("/config/unpackerr.conf").write_text(config, encoding="utf-8")
               PY
@@ -74,6 +85,12 @@ spec:
                 secretKeyRef:
                   name: recyclarr-secrets
                   key: SONARR_API_KEY
+                  optional: true
+            - name: WHISPARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: recyclarr-secrets
+                  key: WHISPARR_API_KEY
                   optional: true
           volumeMounts:
             - name: config

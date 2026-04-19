@@ -189,6 +189,7 @@ PROWLARR_INTERNAL_URL = "http://prowlarr.media.svc.cluster.local"
 RADARR_INTERNAL_URL = "http://radarr.media.svc.cluster.local"
 SONARR_INTERNAL_URL = "http://sonarr.media.svc.cluster.local"
 LIDARR_INTERNAL_URL = "http://lidarr.media.svc.cluster.local"
+WHISPARR_INTERNAL_URL = "http://whisparr.media.svc.cluster.local"
 SABNZBD_INTERNAL_URL = "http://sabnzbd.media.svc.cluster.local"
 SABNZBD_INTERNAL_HOST = "sabnzbd.media.svc.cluster.local"
 SABNZBD_INTERNAL_PORT = 80
@@ -202,21 +203,25 @@ ARR_QBITTORRENT_CATEGORIES = {
     "radarr": "radarr",
     "sonarr": "tv-sonarr",
     "lidarr": "lidarr",
+    "whisparr": "whisparr",
     "prowlarr": "prowlarr",
 }
 ARR_QBITTORRENT_IMPORTED_CATEGORIES = {
     "radarr": "radarr-imported",
     "sonarr": "tv-sonarr-imported",
     "lidarr": "lidarr-imported",
+    "whisparr": "whisparr-imported",
 }
 ARR_QBITTORRENT_CATEGORY_SAVE_PATHS = {
     ARR_QBITTORRENT_CATEGORIES["radarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/radarr",
     ARR_QBITTORRENT_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr",
     ARR_QBITTORRENT_CATEGORIES["lidarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/lidarr",
+    ARR_QBITTORRENT_CATEGORIES["whisparr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/whisparr",
     ARR_QBITTORRENT_CATEGORIES["prowlarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/prowlarr",
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/radarr-imported",
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["sonarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/tv-sonarr-imported",
     ARR_QBITTORRENT_IMPORTED_CATEGORIES["lidarr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/lidarr-imported",
+    ARR_QBITTORRENT_IMPORTED_CATEGORIES["whisparr"]: f"{QBITTORRENT_SHARED_DOWNLOAD_PATH}/whisparr-imported",
 }
 QBITTORRENT_APP_PREFERENCE_DEFAULTS = {
     "queueing_enabled": True,
@@ -231,12 +236,14 @@ ARR_SABNZBD_CATEGORIES = {
     "radarr": "movies",
     "sonarr": "tv",
     "lidarr": "music",
+    "whisparr": "adult",
     "prowlarr": "prowlarr",
 }
 ARR_SABNZBD_CATEGORY_SAVE_PATHS = {
     ARR_SABNZBD_CATEGORIES["radarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/movies",
     ARR_SABNZBD_CATEGORIES["sonarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/tv",
     ARR_SABNZBD_CATEGORIES["lidarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/music",
+    ARR_SABNZBD_CATEGORIES["whisparr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/adult",
     ARR_SABNZBD_CATEGORIES["prowlarr"]: f"{SABNZBD_COMPLETE_DOWNLOAD_PATH}/prowlarr",
 }
 JELLYFIN_BOOTSTRAP_AUTH_HEADER = (
@@ -246,16 +253,49 @@ JELLYFIN_DEFAULT_LIBRARIES = (
     {"name": "Movies", "collectionType": "movies", "path": "/data/movies"},
     {"name": "TV Shows", "collectionType": "tvshows", "path": "/data/tv"},
     {"name": "Music", "collectionType": "music", "path": "/data/music"},
+    {"name": "Adult Movies", "collectionType": "movies", "path": "/data/adult"},
 )
+JELLYFIN_CONFIGURATION_DEFAULTS = {
+    "UICulture": "it-IT",
+    "MetadataCountryCode": "IT",
+    "PreferredMetadataLanguage": "it",
+}
 ARR_DEFAULT_ROOT_FOLDERS = {
     "radarr": "/data/media/movies",
     "sonarr": "/data/media/tv",
     "lidarr": "/data/media/music",
+    "whisparr": "/data/media/adult",
 }
 ARR_COMMON_NAMING_DEFAULTS = {
-    "radarr": {"renameMovies": True},
-    "sonarr": {"renameEpisodes": True},
-    "lidarr": {"renameTracks": True},
+    "radarr": {
+        "renameMovies": True,
+        "standardMovieFormat": "{Movie CleanTitle} {(Release Year)} {imdb-{ImdbId}} {edition-{Edition Tags}} {[Custom Formats]}{[Quality Full]}{[MediaInfo 3D]}{[MediaInfo VideoDynamicRangeType]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{[Mediainfo VideoCodec]}{-Release Group}",
+        "movieFolderFormat": "{Movie CleanTitle} ({Release Year})",
+    },
+    "sonarr": {
+        "renameEpisodes": True,
+        "standardEpisodeFormat": "{Series TitleYear} - S{season:00}E{episode:00} - {Episode CleanTitle:90} {[Custom Formats]}{[Quality Full]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{MediaInfo AudioLanguages}{[MediaInfo VideoDynamicRangeType]}{[Mediainfo VideoCodec]}{-Release Group}",
+        "dailyEpisodeFormat": "{Series TitleYear} - {Air-Date} - {Episode CleanTitle:90} {[Custom Formats]}{[Quality Full]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{MediaInfo AudioLanguages}{[MediaInfo VideoDynamicRangeType]}{[Mediainfo VideoCodec]}{-Release Group}",
+        "animeEpisodeFormat": "{Series TitleYear} - S{season:00}E{episode:00} - {absolute:000} - {Episode CleanTitle:90} {[Custom Formats]}{[Quality Full]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{MediaInfo AudioLanguages}{[MediaInfo VideoDynamicRangeType]}[{Mediainfo VideoCodec }{MediaInfo VideoBitDepth}bit]{-Release Group}",
+        "seriesFolderFormat": "{Series TitleYear} [tvdbid-{TvdbId}]",
+        "seasonFolderFormat": "Season {season:00}",
+        "specialsFolderFormat": "Specials",
+    },
+    "lidarr": {
+        "renameTracks": True,
+        "standardTrackFormat": "{Album Title}/{track:00} - {Track Title}",
+        "multiDiscTrackFormat": "{Album Title}/{Medium Format} {medium:00}/{track:00} - {Track Title}",
+        "artistFolderFormat": "{Artist Name}",
+        "includeArtistName": False,
+        "includeAlbumTitle": False,
+        "includeQuality": False,
+        "replaceSpaces": False,
+    },
+    "whisparr": {
+        "renameMovies": True,
+        "standardMovieFormat": "{Movie CleanTitle} {(Release Year)} {imdb-{ImdbId}} {edition-{Edition Tags}} {[Custom Formats]}{[Quality Full]}{[MediaInfo 3D]}{[MediaInfo VideoDynamicRangeType]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{[Mediainfo VideoCodec]}{-Release Group}",
+        "movieFolderFormat": "{Movie CleanTitle} ({Release Year})",
+    },
 }
 ARR_COMMON_MEDIA_MANAGEMENT_DEFAULTS = {
     "deleteEmptyFolders": True,
@@ -267,6 +307,20 @@ ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS = {
     "enableCompletedDownloadHandling": True,
     "autoRedownloadFailed": True,
 }
+ARR_LANGUAGE_CODE_ALIASES = {
+    "it": "Italian",
+    "ita": "Italian",
+    "italian": "Italian",
+    "en": "English",
+    "eng": "English",
+    "english": "English",
+}
+ARR_LANGUAGE_PREFERENCE_DEFAULT = ("Italian", "English")
+ARR_LANGUAGE_SCORE_OVERRIDES = {
+    "Italian": 200,
+    "English": 50,
+}
+ARR_LANGUAGE_CUSTOM_FORMAT_PREFIX = "HAAC Language: Prefer "
 ARR_VERIFIER_CANDIDATES = (
     {"query": "The General", "title": "The General", "year": 1926, "tmdbId": 961},
     {"query": "His Girl Friday", "title": "His Girl Friday", "year": 1940, "tmdbId": 3085},
@@ -5891,6 +5945,210 @@ def set_first_field_value(fields: list[dict[str, object]], names: tuple[str, ...
     return None
 
 
+def find_named_item(items: list[dict[str, object]], *, name: str) -> dict[str, object] | None:
+    target = name.strip().lower()
+    for item in items:
+        if str(item.get("name") or "").strip().lower() == target:
+            return copy.deepcopy(item)
+    return None
+
+
+def canonical_arr_language_preferences(raw: str | None) -> tuple[str, ...]:
+    value = str(raw or "").strip()
+    if not value:
+        return ARR_LANGUAGE_PREFERENCE_DEFAULT
+    canonical: list[str] = []
+    for token in value.split(","):
+        normalized = token.strip().lower()
+        if not normalized:
+            continue
+        language = ARR_LANGUAGE_CODE_ALIASES.get(normalized)
+        if not language:
+            raise HaaCError(
+                "ARR_PREFERRED_AUDIO_LANGUAGES contains an unsupported value. "
+                "Use comma-separated ISO codes or names such as `it,en`."
+            )
+        if language not in canonical:
+            canonical.append(language)
+    if not canonical:
+        return ARR_LANGUAGE_PREFERENCE_DEFAULT
+    return tuple(canonical)
+
+
+def desired_arr_language_preferences(env: dict[str, str]) -> tuple[str, ...]:
+    return canonical_arr_language_preferences(env.get("ARR_PREFERRED_AUDIO_LANGUAGES"))
+
+
+def arr_language_preference_scores(preferences: tuple[str, ...]) -> dict[str, int]:
+    scores: dict[str, int] = {}
+    fallback_score = 25
+    for index, language in enumerate(preferences):
+        scores[language] = ARR_LANGUAGE_SCORE_OVERRIDES.get(language, max(10, fallback_score - (index * 5)))
+    return scores
+
+
+def arr_language_custom_format_name(language_name: str) -> str:
+    return f"{ARR_LANGUAGE_CUSTOM_FORMAT_PREFIX}{language_name}"
+
+
+def arr_language_schema_item(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    api_version: str = "v3",
+) -> dict[str, object]:
+    schema = json_array(http_request_json(f"http://127.0.0.1:{port}/api/{api_version}/customformat/schema", headers={"X-Api-Key": api_key}))
+    return schema_item_by_implementation(schema, implementation="LanguageSpecification", label=f"{app_name} language custom format")
+
+
+def arr_language_option_value(language_schema: dict[str, object], language_name: str) -> int:
+    fields = json_array(language_schema.get("fields"))
+    for field in fields:
+        if str(field.get("name") or "").strip() != "value":
+            continue
+        for option in json_array(field.get("selectOptions")):
+            if str(option.get("name") or "").strip().lower() == language_name.strip().lower():
+                return int(option.get("value") or 0)
+    raise HaaCError(f"Language {language_name!r} is not supported by the current ARR custom-format schema.")
+
+
+def build_arr_language_custom_format(
+    language_schema: dict[str, object],
+    *,
+    format_name: str,
+    language_value: int,
+) -> dict[str, object]:
+    specification = copy.deepcopy(language_schema)
+    specification["name"] = f"{format_name} matcher"
+    fields = json_array(specification.get("fields"))
+    set_field_value(fields, "value", language_value)
+    set_field_value(fields, "exceptLanguage", False, required=False)
+    specification["fields"] = fields
+    return {
+        "name": format_name,
+        "includeCustomFormatWhenRenaming": False,
+        "specifications": [specification],
+    }
+
+
+def ensure_arr_language_custom_format(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    format_name: str,
+    language_name: str,
+    api_version: str = "v3",
+) -> dict[str, object]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/{api_version}/customformat"
+    language_schema = arr_language_schema_item(port, app_name=app_name, api_key=api_key, api_version=api_version)
+    language_value = arr_language_option_value(language_schema, language_name)
+    desired = build_arr_language_custom_format(language_schema, format_name=format_name, language_value=language_value)
+    current = json_array(http_request_json(base_url, headers=headers))
+    existing = find_named_item(current, name=format_name)
+    if existing:
+        payload = copy.deepcopy(existing)
+        payload["includeCustomFormatWhenRenaming"] = False
+        payload["specifications"] = desired["specifications"]
+        http_request_json(f"{base_url}/{payload['id']}", method="PUT", payload=payload, headers=headers)
+    else:
+        http_request_json(base_url, method="POST", payload=desired, headers=headers)
+    refreshed = json_array(http_request_json(base_url, headers=headers))
+    persisted = find_named_item(refreshed, name=format_name)
+    if not persisted:
+        raise HaaCError(f"{app_name} custom format {format_name!r} did not persist.")
+    specifications = json_array(persisted.get("specifications"))
+    if not specifications:
+        raise HaaCError(f"{app_name} custom format {format_name!r} persisted without specifications.")
+    fields = json_array(specifications[0].get("fields"))
+    if int(field_value(fields, "value") or 0) != language_value:
+        raise HaaCError(f"{app_name} custom format {format_name!r} persisted with an unexpected language value.")
+    return persisted
+
+
+def ensure_arr_language_preferences(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    preferred_languages: tuple[str, ...],
+    api_version: str = "v3",
+) -> None:
+    headers = {"X-Api-Key": api_key}
+    desired_formats: list[dict[str, object]] = []
+    for language_name, score in arr_language_preference_scores(preferred_languages).items():
+        format_name = arr_language_custom_format_name(language_name)
+        persisted = ensure_arr_language_custom_format(
+            port,
+            app_name=app_name,
+            api_key=api_key,
+            format_name=format_name,
+            language_name=language_name,
+            api_version=api_version,
+        )
+        desired_formats.append({"id": int(persisted.get("id") or 0), "name": format_name, "score": score})
+
+    base_url = f"http://127.0.0.1:{port}/api/{api_version}/qualityprofile"
+    quality_profiles = json_array(http_request_json(base_url, headers=headers))
+    for profile in quality_profiles:
+        profile_name = str(profile.get("name") or "").strip()
+        if not profile_name:
+            continue
+        format_items = json_array(profile.get("formatItems"))
+        changed = False
+        for desired in desired_formats:
+            existing_item = next(
+                (
+                    item
+                    for item in format_items
+                    if int(item.get("format") or 0) == desired["id"]
+                    or str(item.get("name") or "").strip() == desired["name"]
+                ),
+                None,
+            )
+            if existing_item is None:
+                format_items.append({"format": desired["id"], "name": desired["name"], "score": desired["score"]})
+                changed = True
+                continue
+            if int(existing_item.get("format") or 0) != desired["id"]:
+                existing_item["format"] = desired["id"]
+                changed = True
+            if str(existing_item.get("name") or "").strip() != desired["name"]:
+                existing_item["name"] = desired["name"]
+                changed = True
+            if int(existing_item.get("score") or 0) != desired["score"]:
+                existing_item["score"] = desired["score"]
+                changed = True
+        if not changed:
+            continue
+        profile["formatItems"] = format_items
+        http_request_json(f"{base_url}/{profile['id']}", method="PUT", payload=profile, headers=headers)
+
+    refreshed_profiles = json_array(http_request_json(base_url, headers=headers))
+    for profile in refreshed_profiles:
+        profile_name = str(profile.get("name") or "").strip()
+        if not profile_name:
+            continue
+        format_items = json_array(profile.get("formatItems"))
+        for desired in desired_formats:
+            persisted = next(
+                (
+                    item
+                    for item in format_items
+                    if int(item.get("format") or 0) == desired["id"]
+                    and str(item.get("name") or "").strip() == desired["name"]
+                ),
+                None,
+            )
+            if persisted is None or int(persisted.get("score") or 0) != desired["score"]:
+                raise HaaCError(
+                    f"{app_name} quality profile {profile_name!r} did not persist the language preference "
+                    f"{desired['name']!r} with score {desired['score']}."
+                )
+
+
 def ensure_arr_qbittorrent_download_client(
     port: int,
     *,
@@ -5901,7 +6159,7 @@ def ensure_arr_qbittorrent_download_client(
     api_version: str = "v3",
 ) -> list[dict[str, object]]:
     app_key = app_name.strip().lower()
-    if app_key not in ("radarr", "sonarr", "lidarr"):
+    if app_key not in ("radarr", "sonarr", "lidarr", "whisparr"):
         raise HaaCError(f"Unsupported ARR qBittorrent target: {app_name}")
     headers = {"X-Api-Key": api_key}
     base_url = f"http://127.0.0.1:{port}/api/{api_version}/downloadclient"
@@ -5925,12 +6183,12 @@ def ensure_arr_qbittorrent_download_client(
     set_field_value(fields, "urlBase", "", required=False)
     set_field_value(fields, "username", username)
     set_field_value(fields, "password", password)
-    if app_key == "radarr":
-        set_field_value(fields, "movieCategory", ARR_QBITTORRENT_CATEGORIES["radarr"])
+    if app_key in ("radarr", "whisparr"):
+        set_field_value(fields, "movieCategory", ARR_QBITTORRENT_CATEGORIES[app_key])
         set_field_value(
             fields,
             "movieImportedCategory",
-            ARR_QBITTORRENT_IMPORTED_CATEGORIES["radarr"],
+            ARR_QBITTORRENT_IMPORTED_CATEGORIES[app_key],
             required=False,
         )
     elif app_key == "sonarr":
@@ -5990,7 +6248,7 @@ def ensure_arr_sabnzbd_download_client(
     api_version: str = "v3",
 ) -> list[dict[str, object]]:
     app_key = app_name.strip().lower()
-    if app_key not in ("radarr", "sonarr", "lidarr"):
+    if app_key not in ("radarr", "sonarr", "lidarr", "whisparr"):
         raise HaaCError(f"Unsupported ARR SABnzbd target: {app_name}")
     headers = {"X-Api-Key": api_key}
     base_url = f"http://127.0.0.1:{port}/api/{api_version}/downloadclient"
@@ -6016,9 +6274,9 @@ def ensure_arr_sabnzbd_download_client(
     set_field_value(fields, "username", "", required=False)
     set_field_value(fields, "password", "", required=False)
     category_name = ARR_SABNZBD_CATEGORIES[app_key]
-    if app_key == "radarr":
+    if app_key in ("radarr", "whisparr"):
         if not set_first_field_value(fields, ("movieCategory", "category"), category_name):
-            raise HaaCError("Radarr SABnzbd schema does not expose a supported category field.")
+            raise HaaCError(f"{app_name} SABnzbd schema does not expose a supported category field.")
     elif app_key == "sonarr":
         if not set_first_field_value(fields, ("tvCategory", "category"), category_name):
             raise HaaCError("Sonarr SABnzbd schema does not expose a supported category field.")
@@ -6368,10 +6626,12 @@ def ensure_recyclarr_runtime_secret(
     radarr_api_key: str,
     sonarr_api_key: str,
     lidarr_api_key: str = "",
+    whisparr_api_key: str = "",
     bazarr_api_key: str = "",
     sabnzbd_api_key: str = "",
 ) -> None:
     lidarr_line = f"  LIDARR_API_KEY: {lidarr_api_key}\n" if lidarr_api_key else ""
+    whisparr_line = f"  WHISPARR_API_KEY: {whisparr_api_key}\n" if whisparr_api_key else ""
     bazarr_line = f"  BAZARR_API_KEY: {bazarr_api_key}\n" if bazarr_api_key else ""
     sabnzbd_line = f"  SABNZBD_API_KEY: {sabnzbd_api_key}\n" if sabnzbd_api_key else ""
     manifest = (
@@ -6385,6 +6645,7 @@ def ensure_recyclarr_runtime_secret(
         f"  RADARR_API_KEY: {radarr_api_key}\n"
         f"  SONARR_API_KEY: {sonarr_api_key}\n"
         f"{lidarr_line}"
+        f"{whisparr_line}"
         f"{bazarr_line}"
         f"{sabnzbd_line}"
         "  secrets.yml: |\n"
@@ -6535,6 +6796,31 @@ def jellyfin_virtual_folder_matches(folder: dict[str, object], *, name: str, pat
     return folder_name.lower() == name.lower() or path in [str(item).strip() for item in locations]
 
 
+def ensure_jellyfin_system_configuration(port: int, *, access_token: str) -> dict[str, object]:
+    headers = jellyfin_auth_headers(access_token)
+    current = json_object(http_request_json(f"http://127.0.0.1:{port}/System/Configuration", headers=headers))
+    payload = copy.deepcopy(current)
+    changed = False
+    for key, value in JELLYFIN_CONFIGURATION_DEFAULTS.items():
+        if str(payload.get(key) or "").strip() != value:
+            payload[key] = value
+            changed = True
+    if changed:
+        status, body = http_request_text(
+            f"http://127.0.0.1:{port}/System/Configuration",
+            method="POST",
+            payload=payload,
+            headers=headers,
+        )
+        if status not in (200, 204):
+            raise HaaCError(f"Jellyfin system configuration bootstrap failed.\nHTTP {status}\n{body}")
+        current = json_object(http_request_json(f"http://127.0.0.1:{port}/System/Configuration", headers=headers))
+    for key, value in JELLYFIN_CONFIGURATION_DEFAULTS.items():
+        if str(current.get(key) or "").strip() != value:
+            raise HaaCError(f"Jellyfin system configuration did not persist {key}={value!r}.")
+    return current
+
+
 def ensure_jellyfin_admin_ready(
     port: int,
     *,
@@ -6552,9 +6838,7 @@ def ensure_jellyfin_admin_ready(
             raise HaaCError("Jellyfin startup configuration returned an unexpected response")
         config_payload = {
             "ServerName": str(current.get("ServerName") or f"jellyfin.{domain_name}"),
-            "UICulture": str(current.get("UICulture") or "en-US"),
-            "MetadataCountryCode": str(current.get("MetadataCountryCode") or "IT"),
-            "PreferredMetadataLanguage": str(current.get("PreferredMetadataLanguage") or "en"),
+            **JELLYFIN_CONFIGURATION_DEFAULTS,
         }
         for url, payload in (
             (f"http://127.0.0.1:{port}/Startup/Configuration", config_payload),
@@ -7821,6 +8105,39 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 api_version="v1",
             )
             ensure_arr_common_settings(port, app_name="Lidarr", api_key=lidarr_api_key, api_version="v1")
+        whisparr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "whisparr")
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/whisparr", 80) as port:
+            require_http_status(
+                f"http://127.0.0.1:{port}/ping",
+                label="Whisparr /ping",
+                expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
+            )
+            ensure_media_storage_path(
+                kubectl,
+                session_kubeconfig,
+                container_name="whisparr",
+                path=ARR_DEFAULT_ROOT_FOLDERS["whisparr"],
+            )
+            ensure_arr_root_folder(
+                port,
+                app_name="Whisparr",
+                api_key=whisparr_api_key,
+                path=ARR_DEFAULT_ROOT_FOLDERS["whisparr"],
+            )
+            ensure_arr_qbittorrent_download_client(
+                port,
+                app_name="Whisparr",
+                api_key=whisparr_api_key,
+                username=downloader_username,
+                password=downloader_password,
+            )
+            ensure_arr_sabnzbd_download_client(
+                port,
+                app_name="Whisparr",
+                api_key=whisparr_api_key,
+                sabnzbd_api_key=sabnzbd_api_key,
+            )
+            ensure_arr_common_settings(port, app_name="Whisparr", api_key=whisparr_api_key)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/prowlarr", 80) as port:
             require_http_status(
                 f"http://127.0.0.1:{port}/ping",
@@ -7859,6 +8176,13 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 downstream_api_key=lidarr_api_key,
                 downstream_url=LIDARR_INTERNAL_URL,
             )
+            ensure_prowlarr_application(
+                port,
+                api_key=prowlarr_api_key,
+                implementation="Whisparr",
+                downstream_api_key=whisparr_api_key,
+                downstream_url=WHISPARR_INTERNAL_URL,
+            )
         bazarr_api_key = read_bazarr_service_api_key(kubectl, session_kubeconfig)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/bazarr", 80) as port:
             require_http_status(
@@ -7879,10 +8203,11 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             radarr_api_key=radarr_api_key,
             sonarr_api_key=sonarr_api_key,
             lidarr_api_key=lidarr_api_key,
+            whisparr_api_key=whisparr_api_key,
             bazarr_api_key=bazarr_api_key,
             sabnzbd_api_key=sabnzbd_api_key,
         )
-        for resource in ("deployment/lidarr", "deployment/sabnzbd", "deployment/bazarr-exportarr", "deployment/unpackerr"):
+        for resource in ("deployment/lidarr", "deployment/whisparr", "deployment/sabnzbd", "deployment/bazarr-exportarr", "deployment/unpackerr"):
             run(
                 [
                     kubectl,
@@ -7903,6 +8228,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             if jellyfin_startup_incomplete(jellyfin_public_info(port)):
                 ensure_jellyfin_admin_ready(port, username=username, password=password, domain_name=env["DOMAIN_NAME"])
             jellyfin_auth = authenticate_jellyfin_admin(port, username=username, password=password)
+            ensure_jellyfin_system_configuration(port, access_token=str(jellyfin_auth["AccessToken"]))
             ensure_jellyfin_libraries(port, access_token=str(jellyfin_auth["AccessToken"]))
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/seerr", 80) as port:
             public_settings = seerr_public_settings(port)
@@ -7963,12 +8289,24 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 api_key=radarr_api_key,
                 expected_profile="HD Bluray + WEB",
             )
+            ensure_arr_language_preferences(
+                port,
+                app_name="Radarr",
+                api_key=radarr_api_key,
+                preferred_languages=desired_arr_language_preferences(env),
+            )
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sonarr", 80) as port:
             verify_recyclarr_sync_surface(
                 port,
                 app_name="Sonarr",
                 api_key=sonarr_api_key,
                 expected_profile="WEB-1080p",
+            )
+            ensure_arr_language_preferences(
+                port,
+                app_name="Sonarr",
+                api_key=sonarr_api_key,
+                preferred_languages=desired_arr_language_preferences(env),
             )
         print("[ok] Media quality policy")
 

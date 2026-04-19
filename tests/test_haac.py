@@ -1311,7 +1311,9 @@ class DownloadersTemplateContractTests(unittest.TestCase):
         self.assertIn("/api/v2/torrents/createCategory", template)
         self.assertIn("/api/v2/torrents/editCategory", template)
         self.assertIn('qbit_upsert_category "lidarr" "/data/torrents/lidarr"', template)
+        self.assertIn('qbit_upsert_category "whisparr" "/data/torrents/whisparr"', template)
         self.assertIn('qbit_upsert_category "lidarr-imported" "/data/torrents/lidarr-imported"', template)
+        self.assertIn('qbit_upsert_category "whisparr-imported" "/data/torrents/whisparr-imported"', template)
         self.assertIn('case "$create_code" in', template)
         self.assertIn('200|409', template)
         self.assertIn('case "$edit_code" in', template)
@@ -1347,10 +1349,12 @@ class DownloadersTemplateContractTests(unittest.TestCase):
                 "radarr": "/data/torrents/radarr",
                 "tv-sonarr": "/data/torrents/tv-sonarr",
                 "lidarr": "/data/torrents/lidarr",
+                "whisparr": "/data/torrents/whisparr",
                 "prowlarr": "/data/torrents/prowlarr",
                 "radarr-imported": "/data/torrents/radarr-imported",
                 "tv-sonarr-imported": "/data/torrents/tv-sonarr-imported",
                 "lidarr-imported": "/data/torrents/lidarr-imported",
+                "whisparr-imported": "/data/torrents/whisparr-imported",
             },
         )
 
@@ -2135,6 +2139,53 @@ class ArrStackSurfaceTests(unittest.TestCase):
         )
         self.assertTrue(request_text.call_args_list[0].args[0].endswith("/api/v1/downloadclient/test"))
 
+    def test_ensure_arr_qbittorrent_download_client_supports_whisparr_movie_categories(self) -> None:
+        schema_item = {
+            "implementation": "QBittorrent",
+            "implementationName": "qBittorrent",
+            "name": "",
+            "fields": [
+                {"name": "host", "value": "localhost"},
+                {"name": "port", "value": 8080},
+                {"name": "username", "value": None},
+                {"name": "password", "value": None},
+                {"name": "movieCategory", "value": "legacy"},
+                {"name": "movieImportedCategory", "value": None},
+            ],
+        }
+        final = [
+            {
+                "id": 16,
+                "implementation": "QBittorrent",
+                "name": haac.ARR_QBITTORRENT_CLIENT_NAME,
+                "fields": [
+                    {"name": "host", "value": haac.QBITTORRENT_INTERNAL_HOST},
+                    {"name": "port", "value": haac.QBITTORRENT_INTERNAL_PORT},
+                    {"name": "username", "value": "admin"},
+                    {"name": "password", "value": "********"},
+                    {"name": "movieCategory", "value": haac.ARR_QBITTORRENT_CATEGORIES["whisparr"]},
+                    {"name": "movieImportedCategory", "value": haac.ARR_QBITTORRENT_IMPORTED_CATEGORIES["whisparr"]},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[[], [schema_item], final]):
+            with mock.patch.object(haac, "http_request_text", side_effect=[(200, "{}"), (201, '{"id":16}')]) as request_text:
+                result = haac.ensure_arr_qbittorrent_download_client(
+                    6969,
+                    app_name="Whisparr",
+                    api_key="whisparr-key",
+                    username="admin",
+                    password="secret",
+                )
+
+        self.assertEqual(result, final)
+        payload = request_text.call_args_list[1].kwargs["payload"]
+        self.assertEqual(haac.field_value(payload["fields"], "movieCategory"), haac.ARR_QBITTORRENT_CATEGORIES["whisparr"])
+        self.assertEqual(
+            haac.field_value(payload["fields"], "movieImportedCategory"),
+            haac.ARR_QBITTORRENT_IMPORTED_CATEGORIES["whisparr"],
+        )
+
     def test_ensure_arr_sabnzbd_download_client_creates_missing_lidarr_client(self) -> None:
         schema_item = {
             "implementation": "Sabnzbd",
@@ -2175,6 +2226,44 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertEqual(payload["name"], haac.ARR_SABNZBD_CLIENT_NAME)
         self.assertEqual(haac.field_value(payload["fields"], "host"), haac.SABNZBD_INTERNAL_HOST)
         self.assertEqual(haac.field_value(payload["fields"], "category"), haac.ARR_SABNZBD_CATEGORIES["lidarr"])
+
+    def test_ensure_arr_sabnzbd_download_client_supports_whisparr_movie_category(self) -> None:
+        schema_item = {
+            "implementation": "Sabnzbd",
+            "implementationName": "SABnzbd",
+            "name": "",
+            "fields": [
+                {"name": "host", "value": "localhost"},
+                {"name": "port", "value": 8080},
+                {"name": "apiKey", "value": None},
+                {"name": "movieCategory", "value": "legacy"},
+            ],
+        }
+        final = [
+            {
+                "id": 19,
+                "implementation": "Sabnzbd",
+                "name": haac.ARR_SABNZBD_CLIENT_NAME,
+                "fields": [
+                    {"name": "host", "value": haac.SABNZBD_INTERNAL_HOST},
+                    {"name": "port", "value": haac.SABNZBD_INTERNAL_PORT},
+                    {"name": "apiKey", "value": "sab-key"},
+                    {"name": "movieCategory", "value": haac.ARR_SABNZBD_CATEGORIES["whisparr"]},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[[], [schema_item], final]):
+            with mock.patch.object(haac, "http_request_text", side_effect=[(200, "{}"), (201, '{"id":19}')]) as request_text:
+                result = haac.ensure_arr_sabnzbd_download_client(
+                    6969,
+                    app_name="Whisparr",
+                    api_key="whisparr-key",
+                    sabnzbd_api_key="sab-key",
+                )
+
+        self.assertEqual(result, final)
+        payload = request_text.call_args_list[1].kwargs["payload"]
+        self.assertEqual(haac.field_value(payload["fields"], "movieCategory"), haac.ARR_SABNZBD_CATEGORIES["whisparr"])
 
     def test_ensure_prowlarr_qbittorrent_download_client_creates_missing_client(self) -> None:
         schema_item = {
@@ -2297,6 +2386,45 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertEqual(payload["name"], "Sonarr")
         self.assertEqual(haac.field_value(payload["fields"], "prowlarrUrl"), haac.PROWLARR_INTERNAL_URL)
         self.assertEqual(haac.field_value(payload["fields"], "baseUrl"), haac.SONARR_INTERNAL_URL)
+
+    def test_ensure_prowlarr_application_supports_whisparr_link(self) -> None:
+        schema_item = {
+            "implementation": "Whisparr",
+            "name": "",
+            "syncLevel": "fullSync",
+            "fields": [
+                {"name": "prowlarrUrl", "value": ""},
+                {"name": "baseUrl", "value": ""},
+                {"name": "apiKey", "value": ""},
+            ],
+        }
+        final = [
+            {
+                "id": 22,
+                "implementation": "Whisparr",
+                "name": "Whisparr",
+                "syncLevel": "fullSync",
+                "fields": [
+                    {"name": "prowlarrUrl", "value": haac.PROWLARR_INTERNAL_URL},
+                    {"name": "baseUrl", "value": haac.WHISPARR_INTERNAL_URL},
+                    {"name": "apiKey", "value": "whis-key"},
+                ],
+            }
+        ]
+        with mock.patch.object(haac, "http_request_json", side_effect=[[], [schema_item], final]):
+            with mock.patch.object(haac, "http_request_text", return_value=(201, '{"id":22}')) as request_text:
+                result = haac.ensure_prowlarr_application(
+                    9696,
+                    api_key="prowlarr-key",
+                    implementation="Whisparr",
+                    downstream_api_key="whis-key",
+                    downstream_url=haac.WHISPARR_INTERNAL_URL,
+                )
+
+        self.assertEqual(result, final)
+        payload = request_text.call_args.kwargs["payload"]
+        self.assertEqual(payload["name"], "Whisparr")
+        self.assertEqual(haac.field_value(payload["fields"], "baseUrl"), haac.WHISPARR_INTERNAL_URL)
 
     def test_recyclarr_runtime_secrets_text_uses_internal_urls(self) -> None:
         content = haac.recyclarr_runtime_secrets_text(radarr_api_key="radarr-key", sonarr_api_key="sonarr-key")
@@ -2475,6 +2603,134 @@ class ArrStackSurfaceTests(unittest.TestCase):
             haac.ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS,
         )
 
+    def test_canonical_arr_language_preferences_defaults_to_italian_then_english(self) -> None:
+        self.assertEqual(haac.canonical_arr_language_preferences(""), ("Italian", "English"))
+
+    def test_canonical_arr_language_preferences_normalizes_codes_and_deduplicates(self) -> None:
+        self.assertEqual(
+            haac.canonical_arr_language_preferences("it, english, ita"),
+            ("Italian", "English"),
+        )
+
+    def test_canonical_arr_language_preferences_rejects_unknown_values(self) -> None:
+        with self.assertRaises(haac.HaaCError):
+            haac.canonical_arr_language_preferences("it,jp")
+
+    def test_build_arr_language_custom_format_uses_schema_template_and_language_value(self) -> None:
+        payload = haac.build_arr_language_custom_format(
+            {
+                "implementation": "LanguageSpecification",
+                "fields": [
+                    {"name": "value", "value": 0, "selectOptions": [{"name": "Italian", "value": 5}]},
+                    {"name": "exceptLanguage", "value": True},
+                ],
+            },
+            format_name="HAAC Language: Prefer Italian",
+            language_value=5,
+        )
+
+        self.assertEqual(payload["name"], "HAAC Language: Prefer Italian")
+        self.assertFalse(payload["includeCustomFormatWhenRenaming"])
+        specification = payload["specifications"][0]
+        self.assertEqual(specification["name"], "HAAC Language: Prefer Italian matcher")
+        fields = haac.json_array(specification["fields"])
+        self.assertEqual(haac.field_value(fields, "value"), 5)
+        self.assertFalse(haac.field_value(fields, "exceptLanguage"))
+
+    def test_ensure_arr_language_custom_format_creates_language_spec(self) -> None:
+        persisted = {
+            "id": 91,
+            "name": "HAAC Language: Prefer Italian",
+            "specifications": [{"fields": [{"name": "value", "value": 5}, {"name": "exceptLanguage", "value": False}]}],
+        }
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [
+                    {
+                        "implementation": "LanguageSpecification",
+                        "fields": [
+                            {"name": "value", "value": 0, "selectOptions": [{"name": "Italian", "value": 5}]},
+                            {"name": "exceptLanguage", "value": True},
+                        ],
+                    }
+                ],
+                [],
+                {"id": 91},
+                [persisted],
+            ],
+        ) as request_json:
+            result = haac.ensure_arr_language_custom_format(
+                8989,
+                app_name="Sonarr",
+                api_key="sonarr-key",
+                format_name="HAAC Language: Prefer Italian",
+                language_name="Italian",
+            )
+
+        payload = request_json.call_args_list[2].kwargs["payload"]
+        self.assertEqual(payload["name"], "HAAC Language: Prefer Italian")
+        self.assertEqual(result["id"], 91)
+
+    def test_ensure_arr_language_preferences_updates_quality_profiles(self) -> None:
+        initial_profiles = [
+            {"id": 1, "name": "Any", "formatItems": []},
+            {"id": 2, "name": "WEB-1080p", "formatItems": [{"format": 91, "name": "HAAC Language: Prefer Italian", "score": 10}]},
+        ]
+        refreshed_profiles = [
+            {
+                "id": 1,
+                "name": "Any",
+                "formatItems": [
+                    {"format": 91, "name": "HAAC Language: Prefer Italian", "score": 200},
+                    {"format": 92, "name": "HAAC Language: Prefer English", "score": 50},
+                ],
+            },
+            {
+                "id": 2,
+                "name": "WEB-1080p",
+                "formatItems": [
+                    {"format": 91, "name": "HAAC Language: Prefer Italian", "score": 200},
+                    {"format": 92, "name": "HAAC Language: Prefer English", "score": 50},
+                ],
+            },
+        ]
+
+        def fake_request_json(
+            url: str,
+            *,
+            method: str = "GET",
+            payload: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+            opener: object | None = None,
+            timeout: int = 60,
+        ) -> object:
+            if url.endswith("/qualityprofile") and method == "GET":
+                fake_request_json.calls += 1
+                return initial_profiles if fake_request_json.calls == 1 else refreshed_profiles
+            if "/qualityprofile/" in url and method == "PUT":
+                return payload or {}
+            raise AssertionError((url, method))
+
+        fake_request_json.calls = 0
+
+        with mock.patch.object(
+            haac,
+            "ensure_arr_language_custom_format",
+            side_effect=[
+                {"id": 91, "name": "HAAC Language: Prefer Italian"},
+                {"id": 92, "name": "HAAC Language: Prefer English"},
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_json", side_effect=fake_request_json):
+                haac.ensure_arr_language_preferences(
+                    7878,
+                    app_name="Radarr",
+                    api_key="radarr-key",
+                    preferred_languages=("Italian", "English"),
+                )
+
     def test_jellyfin_default_libraries_match_movies_tv_and_music_paths(self) -> None:
         self.assertEqual(
             haac.JELLYFIN_DEFAULT_LIBRARIES,
@@ -2482,6 +2738,7 @@ class ArrStackSurfaceTests(unittest.TestCase):
                 {"name": "Movies", "collectionType": "movies", "path": "/data/movies"},
                 {"name": "TV Shows", "collectionType": "tvshows", "path": "/data/tv"},
                 {"name": "Music", "collectionType": "music", "path": "/data/music"},
+                {"name": "Adult Movies", "collectionType": "movies", "path": "/data/adult"},
             ),
         )
 
@@ -2514,8 +2771,37 @@ class ArrStackSurfaceTests(unittest.TestCase):
         config_payload = request.call_args_list[0].kwargs["payload"]
         user_payload = request.call_args_list[1].kwargs["payload"]
         self.assertEqual(config_payload["ServerName"], "jellyfin.example.com")
+        self.assertEqual(config_payload["UICulture"], "it-IT")
+        self.assertEqual(config_payload["MetadataCountryCode"], "IT")
+        self.assertEqual(config_payload["PreferredMetadataLanguage"], "it")
         self.assertEqual(user_payload["Name"], "jf-admin")
         self.assertEqual(user_payload["Password"], "secret-pass")
+
+    def test_ensure_jellyfin_system_configuration_reconciles_italian_defaults(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                {
+                    "UICulture": "en-US",
+                    "MetadataCountryCode": "US",
+                    "PreferredMetadataLanguage": "en",
+                },
+                {
+                    "UICulture": "it-IT",
+                    "MetadataCountryCode": "IT",
+                    "PreferredMetadataLanguage": "it",
+                },
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_text", return_value=(204, "")) as request:
+                result = haac.ensure_jellyfin_system_configuration(8096, access_token="token")
+
+        payload = request.call_args.kwargs["payload"]
+        self.assertEqual(payload["UICulture"], "it-IT")
+        self.assertEqual(payload["MetadataCountryCode"], "IT")
+        self.assertEqual(payload["PreferredMetadataLanguage"], "it")
+        self.assertEqual(result["UICulture"], "it-IT")
 
     def test_ensure_jellyfin_libraries_creates_missing_virtual_folders(self) -> None:
         with mock.patch.object(
@@ -2533,21 +2819,30 @@ class ArrStackSurfaceTests(unittest.TestCase):
                     {"Name": "TV Shows", "Locations": ["/data/tv"]},
                     {"Name": "Music", "Locations": ["/data/music"]},
                 ],
+                [
+                    {"Name": "Movies", "Locations": ["/data/movies"]},
+                    {"Name": "TV Shows", "Locations": ["/data/tv"]},
+                    {"Name": "Music", "Locations": ["/data/music"]},
+                    {"Name": "Adult Movies", "Locations": ["/data/adult"]},
+                ],
             ],
         ):
-            with mock.patch.object(haac, "http_request_text", side_effect=[(204, ""), (204, ""), (204, "")]) as request:
+            with mock.patch.object(haac, "http_request_text", side_effect=[(204, ""), (204, ""), (204, ""), (204, "")]) as request:
                 folders = haac.ensure_jellyfin_libraries(8096, access_token="demo-token")
 
-        self.assertEqual(len(folders), 3)
+        self.assertEqual(len(folders), 4)
         first_url = request.call_args_list[0].args[0]
         second_url = request.call_args_list[1].args[0]
         third_url = request.call_args_list[2].args[0]
+        fourth_url = request.call_args_list[3].args[0]
         self.assertIn("collectionType=movies", first_url)
         self.assertIn("paths=%2Fdata%2Fmovies", first_url)
         self.assertIn("collectionType=tvshows", second_url)
         self.assertIn("paths=%2Fdata%2Ftv", second_url)
         self.assertIn("collectionType=music", third_url)
         self.assertIn("paths=%2Fdata%2Fmusic", third_url)
+        self.assertIn("collectionType=movies", fourth_url)
+        self.assertIn("paths=%2Fdata%2Fadult", fourth_url)
 
     def test_parser_registers_reconcile_media_stack(self) -> None:
         parser = haac.build_parser()
@@ -2652,6 +2947,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("BAZARR_AUTH_USERNAME", env_example)
         self.assertIn("BAZARR_AUTH_PASSWORD", env_example)
         self.assertIn("BAZARR_LANGUAGES", env_example)
+        self.assertIn("ARR_PREFERRED_AUDIO_LANGUAGES", env_example)
         self.assertIn("appends the required `+pmp` suffix automatically", env_example)
 
     def test_readme_documents_media_post_install_surface(self) -> None:
@@ -2661,16 +2957,21 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("JELLYFIN_ADMIN_*", readme)
         self.assertIn("BAZARR_AUTH_*", readme)
         self.assertIn("BAZARR_LANGUAGES", readme)
+        self.assertIn("ARR_PREFERRED_AUDIO_LANGUAGES", readme)
         self.assertIn("PROTONVPN_OPENVPN_USERNAME", readme)
         self.assertIn("ends in `+pmp`", readme)
         self.assertIn("radarr-imported", readme)
         self.assertIn("tv-sonarr-imported", readme)
         self.assertIn("lidarr-imported", readme)
+        self.assertIn("whisparr-imported", readme)
+        self.assertIn("Whisparr", readme)
         self.assertIn("SABnzbd", readme)
         self.assertIn("/data/usenet/complete", readme)
         self.assertIn("renameMovies", readme)
         self.assertIn("renameEpisodes", readme)
         self.assertIn("renameTracks", readme)
+        self.assertIn("Italian-first media preference", readme)
+        self.assertIn("request broker, not an indexer manager", readme)
         self.assertIn("Music library", readme)
         self.assertIn("Readarr` stays deferred", readme)
         self.assertIn("archived/deprecated", readme)
@@ -2715,6 +3016,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("unpackerr_uptime_seconds_total", verifier)
         self.assertIn('bazarr: { appNativeSelector:', verifier)
         self.assertIn('lidarr: { appNativeSelector:', verifier)
+        self.assertIn('whisparr: { appNativeSelector:', verifier)
         self.assertIn('sabnzbd:', verifier)
         self.assertIn("seerr: {", verifier)
         self.assertIn('bodyText.includes("Seerr")', verifier)
@@ -2758,6 +3060,9 @@ class ArrStackRepoFileTests(unittest.TestCase):
         lidarr = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "lidarr.yaml"
         ).read_text(encoding="utf-8")
+        whisparr = (
+            ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "whisparr.yaml"
+        ).read_text(encoding="utf-8")
         sabnzbd = (
             ROOT / "k8s" / "charts" / "haac-stack" / "charts" / "media" / "templates" / "sabnzbd.yaml"
         ).read_text(encoding="utf-8")
@@ -2785,6 +3090,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("labels:\n    app: lidarr", lidarr)
         self.assertIn('args: ["lidarr"]', lidarr)
         self.assertIn("LIDARR_API_KEY", lidarr)
+        self.assertIn("labels:\n    app: whisparr", whisparr)
+        self.assertIn("containerPort: 6969", whisparr)
         self.assertIn("labels:\n    app: sabnzbd", sabnzbd)
         self.assertIn('args: ["sabnzbd"]', sabnzbd)
         self.assertIn("SABNZBD_API_KEY", sabnzbd)
@@ -2792,11 +3099,14 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("/data/torrents/radarr", downloaders)
         self.assertIn("/data/torrents/tv-sonarr", downloaders)
         self.assertIn("/data/media/music", downloaders)
+        self.assertIn("/data/media/adult", downloaders)
         self.assertIn("/data/torrents/lidarr", downloaders)
+        self.assertIn("/data/torrents/whisparr", downloaders)
         self.assertIn("/data/torrents/prowlarr", downloaders)
         self.assertIn("/data/torrents/radarr-imported", downloaders)
         self.assertIn("/data/torrents/tv-sonarr-imported", downloaders)
         self.assertIn("/data/torrents/lidarr-imported", downloaders)
+        self.assertIn("/data/torrents/whisparr-imported", downloaders)
         self.assertIn("name: bazarr-exportarr", bazarr)
         self.assertIn('args: ["bazarr"]', bazarr)
         self.assertIn("API_KEY", bazarr)
@@ -2805,6 +3115,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn('listen_addr = "0.0.0.0:5656"', unpackerr)
         self.assertIn("RADARR_API_KEY", unpackerr)
         self.assertIn("SONARR_API_KEY", unpackerr)
+        self.assertIn("WHISPARR_API_KEY", unpackerr)
+        self.assertIn("[[whisparr]]", unpackerr)
         self.assertIn("labels:\n    app: unpackerr", unpackerr)
         self.assertIn("kind: StatefulSet", seerr)
         self.assertIn("/api/v1/settings/public", seerr)

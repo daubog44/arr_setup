@@ -40,11 +40,11 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "d8e8ac791cf98f2fd1a2da8241bf8aa57c31dcf7c9a162508200aa5173a9ce46"
+    autheliaConfigChecksum: "${AUTHELIA_CONFIG_CHECKSUM}"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "a273983c87080fe9ba04f426fd0da76ea937b767fea5a4a9e03b6fc0aa49eed1"
+    homepageConfigChecksum: "7fc42692acbe29337290ea6c544ccb20d9801615064a7e59afa9c17f1d4152c8"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -77,6 +77,9 @@ global:
     lidarr:
       repository: lscr.io/linuxserver/lidarr
       tag: 3.1.0
+    whisparr:
+      repository: ghcr.io/hotio/whisparr
+      tag: v3
     sabnzbd:
       repository: lscr.io/linuxserver/sabnzbd
       tag: 4.5.5
@@ -304,6 +307,17 @@ ingresses:
     homepage_name: Lidarr
     homepage_icon: lidarr.png
     homepage_description: Music
+  whisparr:
+    enabled: true
+    subdomain: whisparr
+    service: whisparr
+    port: 80
+    namespace: media
+    auth_strategy: app_native
+    homepage_group: Media
+    homepage_name: Whisparr
+    homepage_icon: mdi-filmstrip-box-multiple
+    homepage_description: Adult Movies
   sabnzbd:
     enabled: true
     subdomain: sabnzbd

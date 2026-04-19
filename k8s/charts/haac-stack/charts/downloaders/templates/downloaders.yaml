@@ -54,13 +54,16 @@ spec:
                 "$QBITTORRENT_SAVE_PATH" \
                 "$QBITTORRENT_TEMP_PATH" \
                 /data/media/music \
+                /data/media/adult \
                 /data/torrents/radarr \
                 /data/torrents/tv-sonarr \
                 /data/torrents/lidarr \
+                /data/torrents/whisparr \
                 /data/torrents/prowlarr \
                 /data/torrents/radarr-imported \
                 /data/torrents/tv-sonarr-imported \
-                /data/torrents/lidarr-imported
+                /data/torrents/lidarr-imported \
+                /data/torrents/whisparr-imported
               python3 <<'PY'
               import configparser
               import os
@@ -290,10 +293,12 @@ spec:
                 qbit_upsert_category "radarr" "/data/torrents/radarr"
                 qbit_upsert_category "tv-sonarr" "/data/torrents/tv-sonarr"
                 qbit_upsert_category "lidarr" "/data/torrents/lidarr"
+                qbit_upsert_category "whisparr" "/data/torrents/whisparr"
                 qbit_upsert_category "prowlarr" "/data/torrents/prowlarr"
                 qbit_upsert_category "radarr-imported" "/data/torrents/radarr-imported"
                 qbit_upsert_category "tv-sonarr-imported" "/data/torrents/tv-sonarr-imported"
                 qbit_upsert_category "lidarr-imported" "/data/torrents/lidarr-imported"
+                qbit_upsert_category "whisparr-imported" "/data/torrents/whisparr-imported"
               }
 
               qbit_categories_supported() {
@@ -302,10 +307,12 @@ spec:
                 qbit_category_supported "radarr" "/data/torrents/radarr" "$categories" &&
                   qbit_category_supported "tv-sonarr" "/data/torrents/tv-sonarr" "$categories" &&
                   qbit_category_supported "lidarr" "/data/torrents/lidarr" "$categories" &&
+                  qbit_category_supported "whisparr" "/data/torrents/whisparr" "$categories" &&
                   qbit_category_supported "prowlarr" "/data/torrents/prowlarr" "$categories" &&
                   qbit_category_supported "radarr-imported" "/data/torrents/radarr-imported" "$categories" &&
                   qbit_category_supported "tv-sonarr-imported" "/data/torrents/tv-sonarr-imported" "$categories" &&
-                  qbit_category_supported "lidarr-imported" "/data/torrents/lidarr-imported" "$categories"
+                  qbit_category_supported "lidarr-imported" "/data/torrents/lidarr-imported" "$categories" &&
+                  qbit_category_supported "whisparr-imported" "/data/torrents/whisparr-imported" "$categories"
               }
 
               extract_instance_id() {

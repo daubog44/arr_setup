@@ -1,0 +1,91 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisparr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  selector:
+    matchLabels:
+      app: whisparr
+  template:
+    metadata:
+      labels:
+        app: whisparr
+    spec:
+      containers:
+        - name: whisparr
+          image: >-
+            {{ .Values.global.images.whisparr.repository }}:{{ .Values.global.images.whisparr.tag }}
+          ports:
+            - containerPort: 6969
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 6969
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 6969
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          env:
+            - name: PUID
+              value: "{{ .Values.global.storage.uid }}"
+            - name: PGID
+              value: "{{ .Values.global.storage.gid }}"
+            - name: TZ
+              value: Europe/Rome
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: whisparr-config
+        - name: media
+          hostPath:
+            path: /data
+            type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: whisparr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app: whisparr
+spec:
+  selector:
+    app: whisparr
+  ports:
+    - port: 80
+      targetPort: 6969
+      name: http
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: whisparr-config
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
