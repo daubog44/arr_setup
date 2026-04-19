@@ -2603,6 +2603,12 @@ class ArrStackSurfaceTests(unittest.TestCase):
             haac.ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS,
         )
 
+    def test_whisparr_naming_defaults_use_relative_movie_subpath(self) -> None:
+        naming = haac.ARR_COMMON_NAMING_DEFAULTS["whisparr"]
+
+        self.assertEqual(naming["movieFolderFormat"], "Movies/{Movie CleanTitle} ({Release Year})")
+        self.assertTrue(naming["renameMovies"])
+
     def test_canonical_arr_language_preferences_defaults_to_italian_then_english(self) -> None:
         self.assertEqual(haac.canonical_arr_language_preferences(""), ("Italian", "English"))
 

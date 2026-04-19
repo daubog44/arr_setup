@@ -294,7 +294,8 @@ ARR_COMMON_NAMING_DEFAULTS = {
     "whisparr": {
         "renameMovies": True,
         "standardMovieFormat": "{Movie CleanTitle} {(Release Year)} {imdb-{ImdbId}} {edition-{Edition Tags}} {[Custom Formats]}{[Quality Full]}{[MediaInfo 3D]}{[MediaInfo VideoDynamicRangeType]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{[Mediainfo VideoCodec]}{-Release Group}",
-        "movieFolderFormat": "{Movie CleanTitle} ({Release Year})",
+        # Whisparr validates movie folders as a relative path segment beneath the root folder.
+        "movieFolderFormat": "Movies/{Movie CleanTitle} ({Release Year})",
     },
 }
 ARR_COMMON_MEDIA_MANAGEMENT_DEFAULTS = {
