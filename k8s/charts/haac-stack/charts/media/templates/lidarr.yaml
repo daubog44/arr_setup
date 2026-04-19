@@ -54,6 +54,12 @@ spec:
               value: "9711"
             - name: URL
               value: "http://127.0.0.1:8686"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: recyclarr-secrets
+                  key: LIDARR_API_KEY
+                  optional: true
             - name: CONFIG
               value: /config/config.xml
             - name: LOG_LEVEL

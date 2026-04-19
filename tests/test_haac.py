@@ -1531,7 +1531,12 @@ class ArrStackSurfaceTests(unittest.TestCase):
         with mock.patch.object(
             haac,
             "http_request_json",
-            side_effect=[[], [{"path": haac.ARR_DEFAULT_ROOT_FOLDERS["lidarr"], "id": 1}]],
+            side_effect=[
+                [],
+                [{"id": 7, "name": "Any"}],
+                [{"id": 9, "name": "Standard"}],
+                [{"path": haac.ARR_DEFAULT_ROOT_FOLDERS["lidarr"], "id": 1}],
+            ],
         ) as request_json:
             with mock.patch.object(haac, "http_request_text", return_value=(201, '{"id":1}')) as request_text:
                 result = haac.ensure_arr_root_folder(
@@ -1545,6 +1550,18 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertEqual(result[0]["path"], haac.ARR_DEFAULT_ROOT_FOLDERS["lidarr"])
         self.assertIn("/api/v1/rootfolder", request_text.call_args.args[0])
         self.assertIn("/api/v1/rootfolder", request_json.call_args_list[0].args[0])
+        self.assertIn("/api/v1/qualityprofile", request_json.call_args_list[1].args[0])
+        self.assertIn("/api/v1/metadataprofile", request_json.call_args_list[2].args[0])
+        self.assertEqual(
+            request_text.call_args.kwargs["payload"],
+            {
+                "name": "Music",
+                "path": haac.ARR_DEFAULT_ROOT_FOLDERS["lidarr"],
+                "defaultQualityProfileId": 7,
+                "defaultMetadataProfileId": 9,
+                "defaultTags": [],
+            },
+        )
 
     def test_ensure_arr_qbittorrent_download_client_creates_missing_radarr_client(self) -> None:
         schema_item = {
@@ -1869,6 +1886,7 @@ class ArrStackSurfaceTests(unittest.TestCase):
                 Path("demo-kubeconfig"),
                 radarr_api_key="radarr-key",
                 sonarr_api_key="sonarr-key",
+                lidarr_api_key="lidarr-key",
                 bazarr_api_key="bazarr-key",
                 sabnzbd_api_key="sab-key",
             )
@@ -1879,10 +1897,16 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertIn("name: recyclarr-secrets", manifest)
         self.assertIn("RADARR_API_KEY: radarr-key", manifest)
         self.assertIn("SONARR_API_KEY: sonarr-key", manifest)
+        self.assertIn("LIDARR_API_KEY: lidarr-key", manifest)
         self.assertIn("BAZARR_API_KEY: bazarr-key", manifest)
         self.assertIn("SABNZBD_API_KEY: sab-key", manifest)
         self.assertIn("radarr_main_api_key: radarr-key", manifest)
         self.assertIn("sonarr_main_api_key: sonarr-key", manifest)
+
+    def test_parse_sabnzbd_service_api_key_ignores_preamble(self) -> None:
+        result = haac.parse_sabnzbd_service_api_key("__version__ = 19\n[misc]\napi_key = sab-key\n")
+
+        self.assertEqual(result, "sab-key")
 
     def test_read_bazarr_service_api_key_checks_supported_config_locations(self) -> None:
         with mock.patch.object(haac, "latest_pod_name", return_value="bazarr-pod"):
@@ -1897,7 +1921,11 @@ class ArrStackSurfaceTests(unittest.TestCase):
 
     def test_read_sabnzbd_service_api_key_checks_supported_config_locations(self) -> None:
         with mock.patch.object(haac, "latest_pod_name", return_value="sab-pod"):
-            with mock.patch.object(haac, "kubectl_exec_stdout", return_value="sab-key\n") as exec_stdout:
+            with mock.patch.object(
+                haac,
+                "kubectl_exec_stdout",
+                return_value="__version__ = 19\n[misc]\napi_key = sab-key\n",
+            ) as exec_stdout:
                 result = haac.read_sabnzbd_service_api_key("kubectl", Path("demo-kubeconfig"))
 
         self.assertEqual(result, "sab-key")
@@ -2087,16 +2115,17 @@ class ArrStackSurfaceTests(unittest.TestCase):
                                 with mock.patch.object(haac, "bootstrap_downloaders_session"):
                                     with mock.patch.object(haac, "kubectl_port_forward", fake_port_forward):
                                         with mock.patch.object(haac, "require_http_status"):
-                                            with mock.patch.object(haac, "ensure_sabnzbd_bootstrap"):
-                                                with mock.patch.object(haac, "ensure_arr_root_folder", return_value=[]):
-                                                    with mock.patch.object(
-                                                        haac,
-                                                        "ensure_arr_qbittorrent_download_client",
-                                                        side_effect=RuntimeError("stop-after-radarr"),
-                                                    ) as ensure_client:
-                                                        with self.assertRaisesRegex(RuntimeError, "stop-after-radarr"):
-                                                            haac.reconcile_media_stack(
-                                                                "192.168.0.211",
+                                            with mock.patch.object(haac, "ensure_media_storage_path"):
+                                                with mock.patch.object(haac, "ensure_sabnzbd_bootstrap"):
+                                                    with mock.patch.object(haac, "ensure_arr_root_folder", return_value=[]):
+                                                        with mock.patch.object(
+                                                            haac,
+                                                            "ensure_arr_qbittorrent_download_client",
+                                                            side_effect=RuntimeError("stop-after-radarr"),
+                                                        ) as ensure_client:
+                                                            with self.assertRaisesRegex(RuntimeError, "stop-after-radarr"):
+                                                                haac.reconcile_media_stack(
+                                                                    "192.168.0.211",
                                                                 "192.168.0.200",
                                                                 Path("demo-kubeconfig"),
                                                                 "kubectl",
@@ -2265,12 +2294,14 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("labels:\n    app: prowlarr", prowlarr)
         self.assertIn("labels:\n    app: lidarr", lidarr)
         self.assertIn('args: ["lidarr"]', lidarr)
+        self.assertIn("LIDARR_API_KEY", lidarr)
         self.assertIn("labels:\n    app: sabnzbd", sabnzbd)
         self.assertIn('args: ["sabnzbd"]', sabnzbd)
         self.assertIn("SABNZBD_API_KEY", sabnzbd)
         self.assertIn("labels:\n    app: downloaders", downloaders)
         self.assertIn("/data/torrents/radarr", downloaders)
         self.assertIn("/data/torrents/tv-sonarr", downloaders)
+        self.assertIn("/data/media/music", downloaders)
         self.assertIn("/data/torrents/lidarr", downloaders)
         self.assertIn("/data/torrents/prowlarr", downloaders)
         self.assertIn("/data/torrents/radarr-imported", downloaders)
@@ -2316,6 +2347,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertNotIn("persistentVolumeClaim:\n                claimName: recyclarr-config", helpers)
         self.assertIn("RADARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
         self.assertIn("SONARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
+        self.assertIn("LIDARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
         self.assertIn("BAZARR_API_KEY: bootstrapplaceholder1234", runtime_secret)
         self.assertIn("SABNZBD_API_KEY: bootstrapplaceholder1234", runtime_secret)
         self.assertIn("name: recyclarr-secrets", haac_stack_template)

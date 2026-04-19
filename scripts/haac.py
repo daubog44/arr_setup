@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import configparser
 import copy
 import hashlib
 import http.client
@@ -5071,45 +5072,56 @@ def read_arr_service_api_key(kubectl: str, kubeconfig: Path, app_name: str) -> s
     return api_key
 
 
+def parse_sabnzbd_service_api_key(config_text: str) -> str:
+    normalized = config_text.lstrip("\ufeff")
+    first_section = normalized.find("[")
+    if first_section >= 0:
+        normalized = normalized[first_section:]
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read_string(normalized)
+    except configparser.Error:
+        parser = None
+    else:
+        api_key = parser.get("misc", "api_key", fallback="").strip()
+        if api_key:
+            return api_key
+
+    misc_match = re.search(r"(?ms)^\[misc\]\s*(.*?)(?=^\[|\Z)", normalized)
+    if misc_match:
+        api_key_match = re.search(r"(?m)^\s*api_key\s*=\s*(.+?)\s*$", misc_match.group(1))
+        if api_key_match:
+            api_key = api_key_match.group(1).strip()
+            if api_key:
+                return api_key
+    raise HaaCError("SABnzbd config does not expose an api_key yet.")
+
+
 def read_sabnzbd_service_api_key(kubectl: str, kubeconfig: Path) -> str:
     pod_name = latest_pod_name(kubectl, kubeconfig, "media", "app=sabnzbd")
     script = r"""
 set -eu
-python3 <<'PY'
-from pathlib import Path
-import configparser
-
-candidates = [Path("/config/sabnzbd.ini")]
-config_path = next((candidate for candidate in candidates if candidate.is_file()), None)
-if config_path is None:
-    for root in (Path("/config"),):
-        if not root.exists():
-            continue
-        matches = sorted(root.rglob("sabnzbd.ini"))
-        if matches:
-            config_path = matches[0]
-            break
-if config_path is None:
-    raise SystemExit("SABnzbd sabnzbd.ini not found under /config")
-parser = configparser.ConfigParser(interpolation=None)
-parser.read(config_path, encoding="utf-8")
-api_key = parser.get("misc", "api_key", fallback="").strip()
-if not api_key:
-    raise SystemExit("SABnzbd config does not expose an api_key yet.")
-print(api_key)
-PY
+if [ -f /config/sabnzbd.ini ]; then
+  cat /config/sabnzbd.ini
+  exit 0
+fi
+config_path="$(find /config -name sabnzbd.ini -print -quit 2>/dev/null || true)"
+if [ -n "$config_path" ] && [ -f "$config_path" ]; then
+  cat "$config_path"
+  exit 0
+fi
+echo "SABnzbd sabnzbd.ini not found under /config" >&2
+exit 1
 """
-    api_key = kubectl_exec_stdout(
+    config_text = kubectl_exec_stdout(
         kubectl,
         kubeconfig,
         namespace="media",
         pod=pod_name,
         container="sabnzbd",
         script=script,
-    ).strip()
-    if not api_key:
-        raise HaaCError("SABnzbd config does not expose an api_key yet.")
-    return api_key
+    )
+    return parse_sabnzbd_service_api_key(config_text)
 
 
 def require_http_status(
@@ -5162,10 +5174,28 @@ def ensure_arr_root_folder(
     current = json_array(http_request_json(base_url, headers=headers))
     if any(str(item.get("path") or "").strip() == path for item in current):
         return current
+    payload: dict[str, object] = {"path": path}
+    if app_name.strip().lower() == "lidarr" and api_version == "v1":
+        quality_profiles = json_array(http_request_json(f"http://127.0.0.1:{port}/api/{api_version}/qualityprofile", headers=headers))
+        metadata_profiles = json_array(http_request_json(f"http://127.0.0.1:{port}/api/{api_version}/metadataprofile", headers=headers))
+        default_quality_profile_id = next((int(item.get("id") or 0) for item in quality_profiles if int(item.get("id") or 0) > 0), 0)
+        default_metadata_profile_id = next((int(item.get("id") or 0) for item in metadata_profiles if int(item.get("id") or 0) > 0), 0)
+        if default_quality_profile_id <= 0:
+            raise HaaCError("Lidarr root-folder bootstrap could not resolve a usable quality profile.")
+        if default_metadata_profile_id <= 0:
+            raise HaaCError("Lidarr root-folder bootstrap could not resolve a usable metadata profile.")
+        folder_name = PurePosixPath(path).name.replace("-", " ").strip().title() or "Music"
+        payload = {
+            "name": folder_name,
+            "path": path,
+            "defaultQualityProfileId": default_quality_profile_id,
+            "defaultMetadataProfileId": default_metadata_profile_id,
+            "defaultTags": [],
+        }
     status, body = http_request_text(
         base_url,
         method="POST",
-        payload={"path": path},
+        payload=payload,
         headers=headers,
     )
     if status not in (200, 201):
@@ -5708,9 +5738,11 @@ def ensure_recyclarr_runtime_secret(
     *,
     radarr_api_key: str,
     sonarr_api_key: str,
+    lidarr_api_key: str = "",
     bazarr_api_key: str = "",
     sabnzbd_api_key: str = "",
 ) -> None:
+    lidarr_line = f"  LIDARR_API_KEY: {lidarr_api_key}\n" if lidarr_api_key else ""
     bazarr_line = f"  BAZARR_API_KEY: {bazarr_api_key}\n" if bazarr_api_key else ""
     sabnzbd_line = f"  SABNZBD_API_KEY: {sabnzbd_api_key}\n" if sabnzbd_api_key else ""
     manifest = (
@@ -5723,6 +5755,7 @@ def ensure_recyclarr_runtime_secret(
         "stringData:\n"
         f"  RADARR_API_KEY: {radarr_api_key}\n"
         f"  SONARR_API_KEY: {sonarr_api_key}\n"
+        f"{lidarr_line}"
         f"{bazarr_line}"
         f"{sabnzbd_line}"
         "  secrets.yml: |\n"
@@ -6408,6 +6441,25 @@ def verify_media_metrics_surface(kubectl: str, kubeconfig: Path) -> None:
                 raise HaaCError(f"{resource} metrics endpoint is reachable, but {metric_name} is still absent.")
 
 
+def ensure_media_storage_path(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    container_name: str,
+    path: str,
+) -> None:
+    pod_name = latest_pod_name(kubectl, kubeconfig, "media", f"app={container_name}")
+    quoted_path = shlex.quote(path)
+    kubectl_exec_stdout(
+        kubectl,
+        kubeconfig,
+        namespace="media",
+        pod=pod_name,
+        container=container_name,
+        script=f"mkdir -p {quoted_path} && printf ready",
+    )
+
+
 def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
     env = merged_env()
     require_env(["DOMAIN_NAME", "QUI_PASSWORD"], env)
@@ -6471,6 +6523,12 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 label="Radarr /ping",
                 expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
             )
+            ensure_media_storage_path(
+                kubectl,
+                session_kubeconfig,
+                container_name="radarr",
+                path=ARR_DEFAULT_ROOT_FOLDERS["radarr"],
+            )
             radarr_root_folders = ensure_arr_root_folder(
                 port,
                 app_name="Radarr",
@@ -6496,6 +6554,12 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 label="Sonarr /ping",
                 expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
             )
+            ensure_media_storage_path(
+                kubectl,
+                session_kubeconfig,
+                container_name="sonarr",
+                path=ARR_DEFAULT_ROOT_FOLDERS["sonarr"],
+            )
             sonarr_root_folders = ensure_arr_root_folder(
                 port,
                 app_name="Sonarr",
@@ -6520,6 +6584,12 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 f"http://127.0.0.1:{port}/ping",
                 label="Lidarr /ping",
                 expected_body_pattern=ARR_PING_SUCCESS_PATTERN,
+            )
+            ensure_media_storage_path(
+                kubectl,
+                session_kubeconfig,
+                container_name="lidarr",
+                path=ARR_DEFAULT_ROOT_FOLDERS["lidarr"],
             )
             lidarr_root_folders = ensure_arr_root_folder(
                 port,
@@ -6600,10 +6670,11 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             session_kubeconfig,
             radarr_api_key=radarr_api_key,
             sonarr_api_key=sonarr_api_key,
+            lidarr_api_key=lidarr_api_key,
             bazarr_api_key=bazarr_api_key,
             sabnzbd_api_key=sabnzbd_api_key,
         )
-        for resource in ("deployment/sabnzbd", "deployment/bazarr-exportarr", "deployment/unpackerr"):
+        for resource in ("deployment/lidarr", "deployment/sabnzbd", "deployment/bazarr-exportarr", "deployment/unpackerr"):
             run(
                 [
                     kubectl,
@@ -6671,7 +6742,9 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
             session_kubeconfig,
             radarr_api_key=radarr_api_key,
             sonarr_api_key=sonarr_api_key,
+            lidarr_api_key=lidarr_api_key,
             bazarr_api_key=bazarr_api_key,
+            sabnzbd_api_key=sabnzbd_api_key,
         )
         run_recyclarr_sync_job(kubectl, session_kubeconfig)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as port:

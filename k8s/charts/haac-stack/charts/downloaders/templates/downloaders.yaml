@@ -53,6 +53,7 @@ spec:
               mkdir -p \
                 "$QBITTORRENT_SAVE_PATH" \
                 "$QBITTORRENT_TEMP_PATH" \
+                /data/media/music \
                 /data/torrents/radarr \
                 /data/torrents/tv-sonarr \
                 /data/torrents/lidarr \
