@@ -242,16 +242,32 @@ spec:
                 category="$1"
                 save_path="$2"
                 qbit_login_cookie
-                curl_common -sS -o /tmp/qbit-category-create.txt -w '%{http_code}' \
+                create_code=$(curl_common -sS -o /tmp/qbit-category-create.txt -w '%{http_code}' \
                   -b /tmp/qbit-cookies.txt \
                   --data-urlencode "category=${category}" \
                   --data-urlencode "savePath=${save_path}" \
-                  http://127.0.0.1:8080/api/v2/torrents/createCategory >/dev/null || true
-                curl_common -fsS \
+                  http://127.0.0.1:8080/api/v2/torrents/createCategory || true)
+                case "$create_code" in
+                  200|409) ;;
+                  *)
+                    echo "Unable to create qBittorrent category ${category}." >&2
+                    cat /tmp/qbit-category-create.txt >&2
+                    return 1
+                    ;;
+                esac
+                edit_code=$(curl_common -sS -o /tmp/qbit-category-edit.txt -w '%{http_code}' \
                   -b /tmp/qbit-cookies.txt \
                   --data-urlencode "category=${category}" \
                   --data-urlencode "savePath=${save_path}" \
-                  http://127.0.0.1:8080/api/v2/torrents/editCategory >/dev/null
+                  http://127.0.0.1:8080/api/v2/torrents/editCategory || true)
+                case "$edit_code" in
+                  200|409) ;;
+                  *)
+                    echo "Unable to update qBittorrent category ${category}." >&2
+                    cat /tmp/qbit-category-edit.txt >&2
+                    return 1
+                    ;;
+                esac
               }
 
               qbit_category_supported() {

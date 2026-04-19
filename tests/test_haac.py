@@ -1177,6 +1177,9 @@ class DownloadersTemplateContractTests(unittest.TestCase):
         self.assertIn('qBittorrent did not persist the supported shared download paths.', template)
         self.assertIn("/api/v2/torrents/createCategory", template)
         self.assertIn("/api/v2/torrents/editCategory", template)
+        self.assertIn('case "$create_code" in', template)
+        self.assertIn('200|409', template)
+        self.assertIn('case "$edit_code" in', template)
         self.assertIn("qBittorrent category routing reconciled.", template)
 
     def test_downloaders_readiness_probe_accepts_qui_ready_and_qbit_403(self) -> None:
