@@ -161,6 +161,21 @@ class MergedEnvTests(unittest.TestCase):
         self.assertEqual(merged["GRAFANA_ADMIN_PASSWORD"], "grafana-secret")
         self.assertEqual(merged["SEMAPHORE_ADMIN_USERNAME"], "semaphore-admin")
 
+    def test_traefik_trusted_ips_default_and_crowdsec_checksum_are_derived(self) -> None:
+        with mock.patch.object(
+            haac,
+            "load_env_file",
+            return_value={
+                "CROWDSEC_BOUNCER_KEY": "crowdsec-secret-key",
+            },
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                merged = haac.merged_env()
+
+        self.assertIn("TRAEFIK_TRUSTED_IPS", merged)
+        self.assertIn("103.21.244.0/22", merged["TRAEFIK_TRUSTED_IPS"])
+        self.assertIn("CROWDSEC_TRAEFIK_SECRET_SHA256", merged)
+
     def test_invalid_identity_username_raises(self) -> None:
         with mock.patch.object(
             haac,
@@ -3167,6 +3182,51 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("ignoreDifferences:", haac_stack_app)
         self.assertIn("name: seerr", haac_stack_app)
         self.assertIn(".spec.volumeClaimTemplates[]?.status", haac_stack_app)
+
+    def test_crowdsec_platform_surface_is_repo_managed(self) -> None:
+        app_template = (
+            ROOT / "k8s" / "platform" / "applications" / "crowdsec-app.yaml.template"
+        ).read_text(encoding="utf-8")
+        traefik_template = (
+            ROOT / "k8s" / "platform" / "traefik" / "traefik-config.yaml.template"
+        ).read_text(encoding="utf-8")
+        platform_kustomization = (ROOT / "k8s" / "platform" / "kustomization.yaml").read_text(encoding="utf-8")
+        applications_kustomization = (
+            ROOT / "k8s" / "platform" / "applications" / "kustomization.yaml"
+        ).read_text(encoding="utf-8")
+        namespaces = (ROOT / "k8s" / "bootstrap" / "root" / "namespaces.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("name: crowdsec", app_template)
+        self.assertIn("chart: crowdsec", app_template)
+        self.assertIn("BOUNCER_KEY_traefik", app_template)
+        self.assertIn("crowdsecurity/traefik", app_template)
+        self.assertIn("crowdsecurity/appsec-virtual-patching", app_template)
+        self.assertIn("crowdsecurity/appsec-generic-rules", app_template)
+        self.assertIn("serviceMonitor:", app_template)
+        self.assertIn("podMonitor:", app_template)
+        self.assertIn("crowdsec-bouncer-traefik-plugin", traefik_template)
+        self.assertIn("checksum/crowdsec-bouncer-secret", traefik_template)
+        self.assertIn("--providers.file.directory=/etc/traefik/crowdsec/dynamic", traefik_template)
+        self.assertIn("--entryPoints.web.http.middlewares=crowdsec-bouncer@file", traefik_template)
+        self.assertIn("secretName: traefik-crowdsec-bouncer", traefik_template)
+        self.assertIn("name: crowdsec", namespaces)
+        self.assertIn("- crowdsec-app.yaml", applications_kustomization)
+        self.assertIn("crowdsec/crowdsec-lapi-sealed-secret.yaml", platform_kustomization)
+        self.assertIn("traefik/crowdsec-bouncer-sealed-secret.yaml", platform_kustomization)
+
+    def test_crowdsec_dynamic_config_uses_stream_mode_and_appsec(self) -> None:
+        rendered = haac.crowdsec_traefik_dynamic_config(
+            {"TRAEFIK_TRUSTED_IPS": "10.42.0.0/16,103.21.244.0/22"}
+        )
+
+        self.assertIn("crowdsecMode: stream", rendered)
+        self.assertIn("crowdsecLapiKeyFile: /etc/traefik/crowdsec/auth/crowdsec-lapi-key", rendered)
+        self.assertIn("crowdsecAppsecEnabled: true", rendered)
+        self.assertIn("crowdsecAppsecHost: crowdsec-appsec-service.crowdsec.svc.cluster.local:7422", rendered)
+        self.assertIn("crowdsecAppsecUnreachableBlock: false", rendered)
+        self.assertIn("forwardedHeadersTrustedIPs:", rendered)
+        self.assertIn("- 10.42.0.0/16", rendered)
+        self.assertIn("- 103.21.244.0/22", rendered)
 
 
 if __name__ == "__main__":

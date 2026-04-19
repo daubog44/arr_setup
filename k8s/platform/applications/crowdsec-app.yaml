@@ -1,0 +1,112 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crowdsec
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    renovate/helm-chart: "crowdsec"
+spec:
+  project: platform
+  source:
+    repoURL: https://crowdsecurity.github.io/helm-charts
+    chart: crowdsec
+    # renovate: registryUrl=https://crowdsecurity.github.io/helm-charts chart=crowdsec
+    targetRevision: "0.20.1"
+    helm:
+      values: |
+        container_runtime: containerd
+
+        agent:
+          acquisition:
+            - namespace: kube-system
+              podName: traefik-*
+              program: traefik
+          env:
+            - name: COLLECTIONS
+              value: "crowdsecurity/traefik"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          metrics:
+            enabled: true
+            podMonitor:
+              enabled: true
+              additionalLabels:
+                release: kube-prometheus-stack
+
+        lapi:
+          env:
+            - name: BOUNCER_KEY_traefik
+              valueFrom:
+                secretKeyRef:
+                  name: crowdsec-keys
+                  key: BOUNCER_KEY_traefik
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+              additionalLabels:
+                release: kube-prometheus-stack
+          persistentVolume:
+            enabled: true
+            storageClassName: local-path
+            size: 1Gi
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+
+        appsec:
+          enabled: true
+          acquisitions:
+            - source: appsec
+              listen_addr: "0.0.0.0:7422"
+              path: /
+              appsec_configs:
+                - crowdsecurity/appsec-default
+                - crowdsecurity/crs
+              labels:
+                type: appsec
+          env:
+            - name: COLLECTIONS
+              value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules"
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
+              additionalLabels:
+                release: kube-prometheus-stack
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crowdsec
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

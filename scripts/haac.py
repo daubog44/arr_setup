@@ -61,6 +61,10 @@ VALUES_TEMPLATE = K8S_DIR / "charts" / "haac-stack" / "config-templates" / "valu
 VALUES_OUTPUT = K8S_DIR / "charts" / "haac-stack" / "values.yaml"
 ARGOCD_REPOSERVER_PATCH = K8S_DIR / "platform" / "argocd" / "install-overlay" / "reposerver-patch.yaml"
 ARGOCD_OIDC_SECRET_OUTPUT = K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-oidc-sealed-secret.yaml"
+TRAEFIK_CONFIG_OUTPUT = K8S_DIR / "platform" / "traefik" / "traefik-config.yaml"
+CROWDSEC_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "crowdsec-app.yaml"
+CROWDSEC_LAPI_SECRET_OUTPUT = K8S_DIR / "platform" / "crowdsec" / "crowdsec-lapi-sealed-secret.yaml"
+CROWDSEC_TRAEFIK_SECRET_OUTPUT = K8S_DIR / "platform" / "traefik" / "crowdsec-bouncer-sealed-secret.yaml"
 LITMUS_ADMIN_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-admin-credentials-sealed-secret.yaml"
 LITMUS_MONGODB_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-mongodb-credentials-sealed-secret.yaml"
 LITMUS_MONGODB_SECRET_NAME = "litmus-mongodb-credentials"
@@ -73,6 +77,13 @@ RECYCLARR_CONFIG_TEMPLATE = (
 )
 RECYCLARR_CONFIG_MAP_NAME = "recyclarr-config"
 RECYCLARR_SECRET_NAME = "recyclarr-secrets"
+TRAEFIK_DEFAULT_TRUSTED_IPS = (
+    "10.42.0.0/16,10.43.0.0/16,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,"
+    "104.16.0.0/13,104.24.0.0/14,108.162.192.0/18,131.0.72.0/22,141.101.64.0/18,"
+    "162.158.0.0/15,172.64.0.0/13,173.245.48.0/20,188.114.96.0/20,190.93.240.0/20,"
+    "197.234.240.0/22,198.41.128.0/17,2400:cb00::/32,2606:4700::/32,2803:f800::/32,"
+    "2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32"
+)
 GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "argocd-apps.yaml",
     K8S_DIR / "bootstrap" / "root" / "applications" / "platform-root.yaml",
@@ -82,6 +93,8 @@ GITOPS_RENDERED_OUTPUTS = (
     K8S_DIR / "platform" / "argocd" / "install-overlay" / "argocd-cm.yaml",
     K8S_DIR / "platform" / "applications" / "falco-app.yaml",
     K8S_DIR / "platform" / "falco-ingest-service.yaml",
+    TRAEFIK_CONFIG_OUTPUT,
+    CROWDSEC_APP_OUTPUT,
     K8S_DIR / "platform" / "applications" / "kyverno-app.yaml",
     K8S_DIR / "platform" / "applications" / "kyverno-policies-app.yaml",
     K8S_DIR / "platform" / "applications" / "kube-prometheus-stack-app.yaml",
@@ -91,6 +104,8 @@ GITOPS_RENDERED_OUTPUTS = (
 GITOPS_GENERATED_OUTPUTS = (
     VALUES_OUTPUT,
     ARGOCD_OIDC_SECRET_OUTPUT,
+    CROWDSEC_LAPI_SECRET_OUTPUT,
+    CROWDSEC_TRAEFIK_SECRET_OUTPUT,
     LITMUS_ADMIN_SECRET_OUTPUT,
     LITMUS_MONGODB_SECRET_OUTPUT,
     *GITOPS_RENDERED_OUTPUTS,
@@ -389,6 +404,7 @@ def merged_env() -> dict[str, str]:
     if not merged.get("PROXMOX_HOST_PASSWORD") and merged.get("LXC_PASSWORD"):
         merged["PROXMOX_HOST_PASSWORD"] = merged["LXC_PASSWORD"]
     merged.setdefault("HAAC_FALCO_INGEST_NODEPORT", "32081")
+    merged.setdefault("TRAEFIK_TRUSTED_IPS", TRAEFIK_DEFAULT_TRUSTED_IPS)
     if merged.get("GRAFANA_OIDC_SECRET"):
         merged.setdefault(
             "GRAFANA_OIDC_SECRET_SHA256",
@@ -428,6 +444,17 @@ def merged_env() -> dict[str, str]:
                 }
             ),
         )
+    if merged.get("CROWDSEC_BOUNCER_KEY"):
+        dynamic_config = crowdsec_traefik_dynamic_config(merged)
+        merged.setdefault(
+            "CROWDSEC_TRAEFIK_SECRET_SHA256",
+            stable_secret_checksum(
+                {
+                    "crowdsec-bouncer.yaml": dynamic_config,
+                    "crowdsec-lapi-key": merged["CROWDSEC_BOUNCER_KEY"],
+                }
+            ),
+        )
     merged.setdefault("HOMEPAGE_CONFIG_CHECKSUM", homepage_config_checksum(merged))
     return merged
 
@@ -446,6 +473,40 @@ def protonvpn_port_forward_username(username: str) -> str:
 def stable_secret_checksum(values: dict[str, str]) -> str:
     payload = "\n".join(f"{key}={values[key]}" for key in sorted(values))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def trusted_ip_list(raw: str | None) -> list[str]:
+    values: list[str] = []
+    for item in str(raw or "").split(","):
+        candidate = item.strip()
+        if candidate and candidate not in values:
+            values.append(candidate)
+    return values
+
+
+def crowdsec_traefik_dynamic_config(env: dict[str, str]) -> str:
+    trusted_ips = trusted_ip_list(env.get("TRAEFIK_TRUSTED_IPS")) or trusted_ip_list(TRAEFIK_DEFAULT_TRUSTED_IPS)
+    trusted_ip_lines = "\n".join(f"            - {cidr}" for cidr in trusted_ips)
+    return (
+        "http:\n"
+        "  middlewares:\n"
+        "    crowdsec-bouncer:\n"
+        "      plugin:\n"
+        "        crowdsec-bouncer-traefik-plugin:\n"
+        "          enabled: true\n"
+        "          logLevel: INFO\n"
+        "          metricsUpdateIntervalSeconds: 60\n"
+        "          crowdsecMode: stream\n"
+        "          crowdsecLapiScheme: http\n"
+        "          crowdsecLapiHost: crowdsec-service.crowdsec.svc.cluster.local:8080\n"
+        "          crowdsecLapiKeyFile: /etc/traefik/crowdsec/auth/crowdsec-lapi-key\n"
+        "          crowdsecAppsecEnabled: true\n"
+        "          crowdsecAppsecHost: crowdsec-appsec-service.crowdsec.svc.cluster.local:7422\n"
+        "          crowdsecAppsecFailureBlock: true\n"
+        "          crowdsecAppsecUnreachableBlock: false\n"
+        "          forwardedHeadersTrustedIPs:\n"
+        f"{trusted_ip_lines}\n"
+    )
 
 
 def extract_top_level_yaml_section(content: str, section_name: str) -> str:
@@ -2031,6 +2092,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             "DOMAIN_NAME",
             "GITOPS_REPO_URL",
             "GITOPS_REPO_REVISION",
+            "CROWDSEC_BOUNCER_KEY",
             "CLOUDFLARE_TUNNEL_TOKEN",
             "PROTONVPN_OPENVPN_USERNAME",
             "PROTONVPN_OPENVPN_PASSWORD",
@@ -2057,6 +2119,10 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
     temp_dir = Path(tempfile.mkdtemp(prefix="haac-secrets-", dir=ensure_tmp_dir("secrets-runtime")))
     try:
         authelia_configuration, authelia_users = render_authelia(temp_dir, env)
+        crowdsec_bouncer_config = temp_dir / "crowdsec-bouncer.yaml"
+        crowdsec_bouncer_config.write_text(crowdsec_traefik_dynamic_config(env), encoding="utf-8")
+        crowdsec_bouncer_key = temp_dir / "crowdsec-lapi-key"
+        crowdsec_bouncer_key.write_text(env["CROWDSEC_BOUNCER_KEY"], encoding="utf-8")
         env["AUTHELIA_CONFIG_CHECKSUM"] = hashlib.sha256(
             (
                 authelia_configuration.read_text(encoding="utf-8")
@@ -2083,6 +2149,23 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
             SECRETS_DIR / "cloudflared-sealed-secret.yaml",
             {"token": env["CLOUDFLARE_TUNNEL_TOKEN"]},
             None,
+        ),
+        (
+            "crowdsec-keys",
+            "crowdsec",
+            CROWDSEC_LAPI_SECRET_OUTPUT,
+            {"BOUNCER_KEY_traefik": env["CROWDSEC_BOUNCER_KEY"]},
+            None,
+        ),
+        (
+            "traefik-crowdsec-bouncer",
+            "kube-system",
+            CROWDSEC_TRAEFIK_SECRET_OUTPUT,
+            None,
+            {
+                "crowdsec-bouncer.yaml": crowdsec_bouncer_config,
+                "crowdsec-lapi-key": crowdsec_bouncer_key,
+            },
         ),
         (
             "authelia-config-files",
