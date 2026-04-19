@@ -236,11 +236,27 @@ JELLYFIN_BOOTSTRAP_AUTH_HEADER = (
 JELLYFIN_DEFAULT_LIBRARIES = (
     {"name": "Movies", "collectionType": "movies", "path": "/data/movies"},
     {"name": "TV Shows", "collectionType": "tvshows", "path": "/data/tv"},
+    {"name": "Music", "collectionType": "music", "path": "/data/music"},
 )
 ARR_DEFAULT_ROOT_FOLDERS = {
     "radarr": "/data/media/movies",
     "sonarr": "/data/media/tv",
     "lidarr": "/data/media/music",
+}
+ARR_COMMON_NAMING_DEFAULTS = {
+    "radarr": {"renameMovies": True},
+    "sonarr": {"renameEpisodes": True},
+    "lidarr": {"renameTracks": True},
+}
+ARR_COMMON_MEDIA_MANAGEMENT_DEFAULTS = {
+    "deleteEmptyFolders": True,
+    "setPermissionsLinux": True,
+    "chmodFolder": "775",
+    "copyUsingHardlinks": True,
+}
+ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS = {
+    "enableCompletedDownloadHandling": True,
+    "autoRedownloadFailed": True,
 }
 UP_PHASE_ORDER = (
     "Preflight",
@@ -5384,6 +5400,88 @@ def ensure_arr_root_folder(
     return current
 
 
+def arr_config_url(port: int, *, api_version: str, config_name: str) -> str:
+    return f"http://127.0.0.1:{port}/api/{api_version}/config/{config_name}"
+
+
+def arr_config_json(
+    port: int,
+    *,
+    api_key: str,
+    config_name: str,
+    api_version: str = "v3",
+) -> dict[str, object]:
+    data = http_request_json(arr_config_url(port, api_version=api_version, config_name=config_name), headers={"X-Api-Key": api_key})
+    if not isinstance(data, dict):
+        raise HaaCError(f"ARR config endpoint {config_name!r} returned an unexpected response.")
+    return data
+
+
+def ensure_arr_config_fragment(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    config_name: str,
+    desired: dict[str, object],
+    api_version: str = "v3",
+) -> dict[str, object]:
+    current = arr_config_json(port, api_key=api_key, config_name=config_name, api_version=api_version)
+    if all(current.get(key) == value for key, value in desired.items()):
+        return current
+    payload = copy.deepcopy(current)
+    payload.update(desired)
+    status, body = http_request_text(
+        arr_config_url(port, api_version=api_version, config_name=config_name),
+        method="PUT",
+        payload=payload,
+        headers={"X-Api-Key": api_key},
+    )
+    if status not in (200, 202):
+        raise HaaCError(f"{app_name} {config_name} bootstrap failed.\nHTTP {status}\n{body}")
+    refreshed = arr_config_json(port, api_key=api_key, config_name=config_name, api_version=api_version)
+    for key, value in desired.items():
+        if refreshed.get(key) != value:
+            raise HaaCError(f"{app_name} {config_name} bootstrap did not persist {key}={value!r}.")
+    return refreshed
+
+
+def ensure_arr_common_settings(
+    port: int,
+    *,
+    app_name: str,
+    api_key: str,
+    api_version: str = "v3",
+) -> None:
+    app_key = app_name.strip().lower()
+    if app_key not in ARR_COMMON_NAMING_DEFAULTS:
+        raise HaaCError(f"Unsupported ARR common-settings target: {app_name}")
+    ensure_arr_config_fragment(
+        port,
+        app_name=app_name,
+        api_key=api_key,
+        config_name="naming",
+        desired=ARR_COMMON_NAMING_DEFAULTS[app_key],
+        api_version=api_version,
+    )
+    ensure_arr_config_fragment(
+        port,
+        app_name=app_name,
+        api_key=api_key,
+        config_name="mediamanagement",
+        desired=ARR_COMMON_MEDIA_MANAGEMENT_DEFAULTS,
+        api_version=api_version,
+    )
+    ensure_arr_config_fragment(
+        port,
+        app_name=app_name,
+        api_key=api_key,
+        config_name="downloadclient",
+        desired=ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS,
+        api_version=api_version,
+    )
+
+
 def schema_item_by_implementation(
     schema_items: list[dict[str, object]],
     *,
@@ -6044,6 +6142,13 @@ def seerr_public_settings(port: int) -> dict[str, object]:
     return response
 
 
+def seerr_main_settings(port: int, *, opener: urllib.request.OpenerDirector) -> dict[str, object]:
+    response = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/main", opener=opener)
+    if not isinstance(response, dict):
+        raise HaaCError("Seerr main settings endpoint returned an unexpected response")
+    return response
+
+
 def jellyfin_public_info(port: int) -> dict[str, object]:
     response = http_request_json(f"http://127.0.0.1:{port}/System/Info/Public")
     if not isinstance(response, dict):
@@ -6234,6 +6339,31 @@ def ensure_seerr_jellyfin_settings(
         refreshed = http_request_json(f"http://127.0.0.1:{port}/api/v1/settings/jellyfin", opener=opener)
         if not isinstance(refreshed, dict):
             raise HaaCError("Seerr Jellyfin settings refresh returned an unexpected response")
+    return refreshed
+
+
+def ensure_seerr_main_settings(
+    opener: urllib.request.OpenerDirector,
+    port: int,
+    *,
+    domain_name: str,
+) -> dict[str, object]:
+    current = seerr_main_settings(port, opener=opener)
+    desired = {"applicationUrl": f"https://seerr.{domain_name}"}
+    if all(str(current.get(key) or "").strip() == str(value).strip() for key, value in desired.items()):
+        return current
+    saved = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/settings/main",
+        method="POST",
+        payload=desired,
+        opener=opener,
+    )
+    if not isinstance(saved, dict):
+        raise HaaCError("Seerr could not persist its main settings")
+    refreshed = seerr_main_settings(port, opener=opener)
+    for key, value in desired.items():
+        if str(refreshed.get(key) or "").strip() != str(value).strip():
+            raise HaaCError(f"Seerr main settings did not persist {key}={value!r}.")
     return refreshed
 
 
@@ -6726,6 +6856,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 api_key=radarr_api_key,
                 sabnzbd_api_key=sabnzbd_api_key,
             )
+            ensure_arr_common_settings(port, app_name="Radarr", api_key=radarr_api_key)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/sonarr", 80) as port:
             require_http_status(
                 f"http://127.0.0.1:{port}/ping",
@@ -6757,6 +6888,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 api_key=sonarr_api_key,
                 sabnzbd_api_key=sabnzbd_api_key,
             )
+            ensure_arr_common_settings(port, app_name="Sonarr", api_key=sonarr_api_key)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/lidarr", 80) as port:
             require_http_status(
                 f"http://127.0.0.1:{port}/ping",
@@ -6791,6 +6923,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 sabnzbd_api_key=sabnzbd_api_key,
                 api_version="v1",
             )
+            ensure_arr_common_settings(port, app_name="Lidarr", api_key=lidarr_api_key, api_version="v1")
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/prowlarr", 80) as port:
             require_http_status(
                 f"http://127.0.0.1:{port}/ping",
@@ -6883,6 +7016,7 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 email=email,
                 public_settings=public_settings,
             )
+            ensure_seerr_main_settings(opener, port, domain_name=env["DOMAIN_NAME"])
             jellyfin_settings = ensure_seerr_jellyfin_settings(opener, port, domain_name=env["DOMAIN_NAME"])
             libraries = json_array(jellyfin_settings.get("libraries") if isinstance(jellyfin_settings, dict) else [])
             if not any(bool(item.get("enabled")) for item in libraries):

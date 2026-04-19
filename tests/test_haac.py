@@ -1614,6 +1614,24 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertNotIn("urlBase", payload)
         self.assertNotIn("serverType", payload)
 
+    def test_ensure_seerr_main_settings_persists_public_application_url(self) -> None:
+        opener = object()
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                {"applicationTitle": "Seerr", "applicationUrl": ""},
+                {"applicationTitle": "Seerr", "applicationUrl": "https://seerr.example.com"},
+                {"applicationTitle": "Seerr", "applicationUrl": "https://seerr.example.com"},
+            ],
+        ) as request_json:
+            result = haac.ensure_seerr_main_settings(opener, 5055, domain_name="example.com")
+
+        payload = request_json.call_args_list[1].kwargs["payload"]
+        self.assertEqual(payload, {"applicationUrl": "https://seerr.example.com"})
+        self.assertEqual(payload["applicationUrl"], "https://seerr.example.com")
+        self.assertEqual(result["applicationUrl"], "https://seerr.example.com")
+
     def test_jellyfin_startup_incomplete_uses_public_info_flag(self) -> None:
         self.assertTrue(haac.jellyfin_startup_incomplete({"StartupWizardCompleted": False}))
         self.assertFalse(haac.jellyfin_startup_incomplete({"StartupWizardCompleted": True}))
@@ -2136,12 +2154,55 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertNotIn("activeLanguageProfileId", payload)
         self.assertNotIn("activeAnimeLanguageProfileId", payload)
 
-    def test_jellyfin_default_libraries_match_movies_and_tv_paths(self) -> None:
+    def test_ensure_arr_config_fragment_merges_and_verifies_desired_fields(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                {"renameMovies": False, "replaceIllegalCharacters": True, "id": 1},
+                {"renameMovies": True, "replaceIllegalCharacters": True, "id": 1},
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_text", return_value=(202, "")) as request:
+                result = haac.ensure_arr_config_fragment(
+                    7878,
+                    app_name="Radarr",
+                    api_key="radarr-key",
+                    config_name="naming",
+                    desired={"renameMovies": True},
+                )
+
+        payload = request.call_args.kwargs["payload"]
+        self.assertTrue(payload["renameMovies"])
+        self.assertTrue(payload["replaceIllegalCharacters"])
+        self.assertEqual(payload["id"], 1)
+        self.assertTrue(result["renameMovies"])
+
+    def test_ensure_arr_common_settings_reconciles_all_sections(self) -> None:
+        with mock.patch.object(haac, "ensure_arr_config_fragment") as ensure_fragment:
+            haac.ensure_arr_common_settings(7878, app_name="Lidarr", api_key="lidarr-key", api_version="v1")
+
+        self.assertEqual(ensure_fragment.call_count, 3)
+        self.assertEqual(ensure_fragment.call_args_list[0].kwargs["config_name"], "naming")
+        self.assertEqual(ensure_fragment.call_args_list[0].kwargs["desired"], haac.ARR_COMMON_NAMING_DEFAULTS["lidarr"])
+        self.assertEqual(ensure_fragment.call_args_list[1].kwargs["config_name"], "mediamanagement")
+        self.assertEqual(
+            ensure_fragment.call_args_list[1].kwargs["desired"],
+            haac.ARR_COMMON_MEDIA_MANAGEMENT_DEFAULTS,
+        )
+        self.assertEqual(ensure_fragment.call_args_list[2].kwargs["config_name"], "downloadclient")
+        self.assertEqual(
+            ensure_fragment.call_args_list[2].kwargs["desired"],
+            haac.ARR_COMMON_DOWNLOAD_CLIENT_DEFAULTS,
+        )
+
+    def test_jellyfin_default_libraries_match_movies_tv_and_music_paths(self) -> None:
         self.assertEqual(
             haac.JELLYFIN_DEFAULT_LIBRARIES,
             (
                 {"name": "Movies", "collectionType": "movies", "path": "/data/movies"},
                 {"name": "TV Shows", "collectionType": "tvshows", "path": "/data/tv"},
+                {"name": "Music", "collectionType": "music", "path": "/data/music"},
             ),
         )
 
@@ -2188,18 +2249,26 @@ class ArrStackSurfaceTests(unittest.TestCase):
                     {"Name": "Movies", "Locations": ["/data/movies"]},
                     {"Name": "TV Shows", "Locations": ["/data/tv"]},
                 ],
+                [
+                    {"Name": "Movies", "Locations": ["/data/movies"]},
+                    {"Name": "TV Shows", "Locations": ["/data/tv"]},
+                    {"Name": "Music", "Locations": ["/data/music"]},
+                ],
             ],
         ):
-            with mock.patch.object(haac, "http_request_text", side_effect=[(204, ""), (204, "")]) as request:
+            with mock.patch.object(haac, "http_request_text", side_effect=[(204, ""), (204, ""), (204, "")]) as request:
                 folders = haac.ensure_jellyfin_libraries(8096, access_token="demo-token")
 
-        self.assertEqual(len(folders), 2)
+        self.assertEqual(len(folders), 3)
         first_url = request.call_args_list[0].args[0]
         second_url = request.call_args_list[1].args[0]
+        third_url = request.call_args_list[2].args[0]
         self.assertIn("collectionType=movies", first_url)
         self.assertIn("paths=%2Fdata%2Fmovies", first_url)
         self.assertIn("collectionType=tvshows", second_url)
         self.assertIn("paths=%2Fdata%2Ftv", second_url)
+        self.assertIn("collectionType=music", third_url)
+        self.assertIn("paths=%2Fdata%2Fmusic", third_url)
 
     def test_parser_registers_reconcile_media_stack(self) -> None:
         parser = haac.build_parser()
@@ -2315,6 +2384,13 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("lidarr-imported", readme)
         self.assertIn("SABnzbd", readme)
         self.assertIn("/data/usenet/complete", readme)
+        self.assertIn("renameMovies", readme)
+        self.assertIn("renameEpisodes", readme)
+        self.assertIn("renameTracks", readme)
+        self.assertIn("Music library", readme)
+        self.assertIn("Readarr` stays deferred", readme)
+        self.assertIn("archived/deprecated", readme)
+        self.assertIn("public application URL", readme)
 
     def test_recyclarr_config_template_vendors_official_profiles_with_secret_refs(self) -> None:
         config = (

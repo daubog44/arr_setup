@@ -165,15 +165,16 @@ The repo-managed ARR best-practice automation surface currently includes:
 - explicit qBittorrent category routing for `radarr`, `tv-sonarr`, `lidarr`, `prowlarr`, `radarr-imported`, `tv-sonarr-imported`, and `lidarr-imported`
 - SABnzbd default incomplete/complete paths under `/data/usenet/incomplete` and `/data/usenet/complete`, plus managed categories for `movies`, `tv`, `music`, and `prowlarr`
 - Radarr, Sonarr, Lidarr, and Prowlarr internal-service download client and application wiring
-- Jellyfin first-run admin bootstrap plus the default Movies and TV libraries
-- Seerr first-run login through Jellyfin and persistence of the repo-managed Jellyfin, Radarr, and Sonarr settings; music stays outside the Seerr contract because Seerr is still movies/TV-only
+- Radarr, Sonarr, and Lidarr common settings reconciliation through their public APIs, including `renameMovies=true`, `renameEpisodes=true`, `renameTracks=true`, `deleteEmptyFolders=true`, `setPermissionsLinux=true`, `chmodFolder=775`, and hardlinks kept enabled
+- Jellyfin first-run admin bootstrap plus the default Movies, TV Shows, and Music library set
+- Seerr first-run login through Jellyfin plus persistence of the repo-managed public application URL and the repo-managed Jellyfin, Radarr, and Sonarr settings; music stays outside the Seerr contract because Seerr is still movies/TV-only
 - Bazarr language defaults plus Radarr and Sonarr integration wiring
 - Recyclarr runtime secret generation and an immediate sync against the vendored TRaSH-oriented profiles
 - Grafana visibility for Radarr, Sonarr, Lidarr, Prowlarr, FlareSolverr, SABnzbd, Bazarr, Unpackerr, and Autobrr through native metrics or supported exporters
 
 There is no separate `.env` knob for qBittorrent categories. The managed category contract is intentionally fixed so reruns stay deterministic and hardlink-friendly.
 
-The auxiliary wave intentionally stops at `Lidarr` and `SABnzbd`. `Huntarr` stays deferred because the current external reference stack marks it as deprecated, and `Readarr`, `Mylar`, `Tdarr`, and adjacent apps stay out of this wave until they have a dedicated spec with their own storage and lifecycle contract.
+The curated supported media suite today is `Radarr`, `Sonarr`, `Prowlarr`, `qBittorrent/QUI`, `Bazarr`, `Lidarr`, `SABnzbd`, `Seerr`, `Jellyfin`, `Autobrr`, `FlareSolverr`, `Unpackerr`, and `Recyclarr`. Adjacent candidates are evaluated conservatively instead of being added just because another stack includes them. `Huntarr` stays deferred because the current external reference stack marks it as deprecated, `Readarr` stays deferred because the current LinuxServer packaging is archived/deprecated and the latest published package is still a nightly tag, and `Mylar`, `Tdarr`, `Whisparr`, and other domain-specific apps stay out of the default repo-managed stack until they have a dedicated spec with their own storage, lifecycle, and trust-boundary contract.
 
 The supported login model is:
 
