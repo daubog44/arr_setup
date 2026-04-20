@@ -21,6 +21,7 @@ spec:
           simulation.yaml: |
             simulation: false
             exclusions:
+              - crowdsecurity/crowdsec-appsec-outofband
               - crowdsecurity/http-crawl-non_statics
 
         agent:
