@@ -84,12 +84,11 @@ spec:
               path: /
               appsec_configs:
                 - crowdsecurity/appsec-default
-                - crowdsecurity/crs
               labels:
                 type: appsec
           env:
             - name: COLLECTIONS
-              value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs crowdsecurity/appsec-generic-rules"
+              value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules"
           metrics:
             enabled: true
             serviceMonitor:
