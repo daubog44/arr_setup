@@ -30,9 +30,15 @@ spec:
               import pathlib
               import os
 
-              radarr_api_key = (os.environ.get("RADARR_API_KEY") or "").strip()
-              sonarr_api_key = (os.environ.get("SONARR_API_KEY") or "").strip()
-              whisparr_api_key = (os.environ.get("WHISPARR_API_KEY") or "").strip()
+              def normalize_api_key(name: str) -> str:
+                  value = (os.environ.get(name) or "").strip()
+                  if len(value) != 32:
+                      return ""
+                  return value
+
+              radarr_api_key = normalize_api_key("RADARR_API_KEY")
+              sonarr_api_key = normalize_api_key("SONARR_API_KEY")
+              whisparr_api_key = normalize_api_key("WHISPARR_API_KEY")
               config = """
               [webserver]
                 metrics = true

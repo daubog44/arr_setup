@@ -28,7 +28,7 @@ vars:
   K3S_KUBECONFIG:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" kubeconfig-path'
   MASTER_IP:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tofu-output --dir "{{.TOFU_DIR}}" --name master_ip --default 127.0.0.1'
+    sh: '{{.PYTHON_CMD}} "scripts/haac.py" master-ip'
   PROXMOX_HOST:
     sh: '{{.PYTHON_CMD}} "scripts/haac.py" proxmox-access-host'
 

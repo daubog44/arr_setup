@@ -71,6 +71,7 @@ LITMUS_MONGODB_SECRET_OUTPUT = K8S_DIR / "platform" / "chaos" / "litmus-mongodb-
 LITMUS_MONGODB_SECRET_NAME = "litmus-mongodb-credentials"
 LITMUS_CHAOS_CATALOG_INDEX = K8S_DIR / "platform" / "chaos" / "litmus-workflow-catalog" / "catalog.json"
 HOMEPAGE_WIDGETS_SECRET_OUTPUT = SECRETS_DIR / "homepage-widgets-sealed-secret.yaml"
+MEDIA_AUTH_SECRET_OUTPUT = SECRETS_DIR / "media-auth-sealed-secret.yaml"
 SEMAPHORE_MAINTENANCE_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-maintenance-ssh-sealed-secret.yaml"
 SEMAPHORE_REPO_DEPLOY_SSH_SECRET_OUTPUT = SECRETS_DIR / "semaphore-repo-deploy-ssh-sealed-secret.yaml"
 RECYCLARR_CONFIG_TEMPLATE = (
@@ -109,6 +110,7 @@ GITOPS_GENERATED_OUTPUTS = (
     CROWDSEC_TRAEFIK_SECRET_OUTPUT,
     LITMUS_ADMIN_SECRET_OUTPUT,
     LITMUS_MONGODB_SECRET_OUTPUT,
+    MEDIA_AUTH_SECRET_OUTPUT,
     *GITOPS_RENDERED_OUTPUTS,
 )
 FALCO_APP_OUTPUT = K8S_DIR / "platform" / "applications" / "falco-app.yaml"
@@ -550,6 +552,34 @@ def proxmox_node_name(env: dict[str, str]) -> str:
 def proxmox_access_host(env: dict[str, str]) -> str:
     access_host = env.get("PROXMOX_ACCESS_HOST", "").strip()
     return access_host or proxmox_node_name(env)
+
+
+def resolved_master_ip_value(
+    env: dict[str, str] | None = None,
+    *,
+    tofu_dir: Path = ROOT / "tofu",
+    fallback: str = "127.0.0.1",
+) -> str:
+    env = env or merged_env()
+    declared = strip_ip_cidr(env.get("K3S_MASTER_IP", ""))
+    if declared:
+        return declared
+    tofu_value = strip_ip_cidr(tofu_output_value(tofu_dir, "master_ip", fallback))
+    if tofu_value:
+        return tofu_value
+    return strip_ip_cidr(fallback) or "127.0.0.1"
+
+
+def effective_master_ip_argument(
+    master_ip: str,
+    *,
+    env: dict[str, str] | None = None,
+    tofu_dir: Path = ROOT / "tofu",
+) -> str:
+    candidate = strip_ip_cidr(master_ip)
+    if candidate and candidate not in {"127.0.0.1", "0.0.0.0", "localhost"}:
+        return candidate
+    return resolved_master_ip_value(env, tofu_dir=tofu_dir)
 
 
 def maintenance_user(env: dict[str, str]) -> str:
@@ -1639,7 +1669,8 @@ def ssh_tunnel(proxmox_host: str, master_ip: str, local_port: int | None = None,
 @contextmanager
 def cluster_session(proxmox_host: str, master_ip: str, kubeconfig: Path, kubectl: str):
     ensure_parent(kubeconfig)
-    with ssh_tunnel(proxmox_host, master_ip) as local_port:
+    effective_master_ip = effective_master_ip_argument(master_ip)
+    with ssh_tunnel(proxmox_host, effective_master_ip) as local_port:
         session_dir, session_kubeconfig = session_kubeconfig_copy(kubeconfig, f"https://127.0.0.1:{local_port}")
         try:
             wait_for_k8s_api(session_kubeconfig, kubectl)
@@ -2124,6 +2155,7 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
         crowdsec_bouncer_config.write_text(crowdsec_traefik_dynamic_config(env), encoding="utf-8")
         crowdsec_bouncer_key = temp_dir / "crowdsec-lapi-key"
         crowdsec_bouncer_key.write_text(env["CROWDSEC_BOUNCER_KEY"], encoding="utf-8")
+        bazarr_username, bazarr_password = bazarr_auth_identity(env)
         env["AUTHELIA_CONFIG_CHECKSUM"] = hashlib.sha256(
             (
                 authelia_configuration.read_text(encoding="utf-8")
@@ -2193,6 +2225,16 @@ def generate_secrets_core(kubeconfig: Path, kubectl: str, *, fetch_cert: bool) -
                 "QBITTORRENT_USERNAME": env.get("QBITTORRENT_USERNAME", "admin"),
                 "QUI_PASSWORD": env["QUI_PASSWORD"],
                 "QBITTORRENT_PASSWORD_PBKDF2": env["QBITTORRENT_PASSWORD_PBKDF2"],
+            },
+            None,
+        ),
+        (
+            "media-auth",
+            "media",
+            MEDIA_AUTH_SECRET_OUTPUT,
+            {
+                "BAZARR_AUTH_USERNAME": bazarr_username,
+                "BAZARR_AUTH_PASSWORD": bazarr_password,
             },
             None,
         ),
@@ -3041,18 +3083,26 @@ def recover_stale_argocd_operation(
 
 
 def recover_stalled_downloaders_rollout(kubectl: str, kubeconfig: Path) -> bool:
-    if run(
+    serviceaccount = run(
         [kubectl, "--kubeconfig", str(kubeconfig), "get", "serviceaccount", "downloaders-bootstrap", "-n", "media"],
         check=False,
-    ).returncode != 0:
+        capture_output=True,
+    )
+    if serviceaccount.returncode != 0:
         return False
 
-    deployment = kubectl_json(
-        kubectl,
-        kubeconfig,
-        ["get", "deployment", "downloaders", "-n", "media", "-o", "json"],
-        context="Read media/downloaders deployment",
+    deployment_payload = run(
+        [kubectl, "--kubeconfig", str(kubeconfig), "get", "deployment", "downloaders", "-n", "media", "-o", "json"],
+        check=False,
+        capture_output=True,
     )
+    if deployment_payload.returncode != 0:
+        return False
+
+    try:
+        deployment = json.loads(deployment_payload.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise HaaCError("Read media/downloaders deployment\nInvalid JSON returned by kubectl") from exc
     pod_annotations = (
         ((deployment.get("spec") or {}).get("template") or {}).get("metadata") or {}
     ).get("annotations") or {}
@@ -9294,6 +9344,10 @@ def cmd_kubeconfig_path(_: argparse.Namespace) -> None:
     print(local_kubeconfig_path())
 
 
+def cmd_master_ip(_: argparse.Namespace) -> None:
+    print(resolved_master_ip_value())
+
+
 def cmd_proxmox_access_host(_: argparse.Namespace) -> None:
     print(proxmox_access_host(merged_env()))
 
@@ -9660,6 +9714,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     command = subparsers.add_parser("kubeconfig-path")
     command.set_defaults(func=cmd_kubeconfig_path)
+
+    command = subparsers.add_parser("master-ip")
+    command.set_defaults(func=cmd_master_ip)
 
     command = subparsers.add_parser("proxmox-access-host")
     command.set_defaults(func=cmd_proxmox_access_host)

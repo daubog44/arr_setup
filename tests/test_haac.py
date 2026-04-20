@@ -189,6 +189,15 @@ class MergedEnvTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unsupported characters"):
                     haac.merged_env()
 
+    def test_resolved_master_ip_prefers_env_and_strips_cidr(self) -> None:
+        with mock.patch.object(haac, "merged_env", return_value={"K3S_MASTER_IP": "192.168.0.211/24"}):
+            self.assertEqual(haac.resolved_master_ip_value(), "192.168.0.211")
+
+    def test_effective_master_ip_argument_recovers_from_loopback_default(self) -> None:
+        with mock.patch.object(haac, "merged_env", return_value={"K3S_MASTER_IP": "192.168.0.211/24"}):
+            self.assertEqual(haac.effective_master_ip_argument("127.0.0.1"), "192.168.0.211")
+            self.assertEqual(haac.effective_master_ip_argument("192.168.0.212"), "192.168.0.212")
+
 
 class QbittorrentPasswordHashTests(unittest.TestCase):
     def test_qbittorrent_password_pbkdf2_is_deterministic(self) -> None:
@@ -529,7 +538,32 @@ class GitopsStagePathTests(unittest.TestCase):
         self.assertIn(str(haac.ARGOCD_OIDC_SECRET_OUTPUT), stage_paths)
         self.assertIn(str(haac.LITMUS_ADMIN_SECRET_OUTPUT), stage_paths)
         self.assertIn(str(haac.LITMUS_MONGODB_SECRET_OUTPUT), stage_paths)
+        self.assertIn(str(haac.MEDIA_AUTH_SECRET_OUTPUT), stage_paths)
         self.assertIn(str(haac.VALUES_OUTPUT), stage_paths)
+
+
+class DownloadersRecoveryTests(unittest.TestCase):
+    def test_recover_stalled_downloaders_rollout_returns_false_when_serviceaccount_is_missing(self) -> None:
+        with mock.patch.object(
+            haac,
+            "run",
+            return_value=mock.Mock(returncode=1, stdout="", stderr='Error from server (NotFound): serviceaccounts "downloaders-bootstrap" not found'),
+        ) as run_mock:
+            recovered = haac.recover_stalled_downloaders_rollout("kubectl", Path("demo-kubeconfig"))
+
+        self.assertFalse(recovered)
+        self.assertEqual(run_mock.call_count, 1)
+
+    def test_recover_stalled_downloaders_rollout_returns_false_when_deployment_is_missing(self) -> None:
+        responses = [
+            mock.Mock(returncode=0, stdout="apiVersion: v1", stderr=""),
+            mock.Mock(returncode=1, stdout="", stderr='Error from server (NotFound): deployments.apps "downloaders" not found'),
+        ]
+        with mock.patch.object(haac, "run", side_effect=responses) as run_mock:
+            recovered = haac.recover_stalled_downloaders_rollout("kubectl", Path("demo-kubeconfig"))
+
+        self.assertFalse(recovered)
+        self.assertEqual(run_mock.call_count, 2)
 
 
 class SyncRepoTests(unittest.TestCase):
@@ -2959,6 +2993,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("verify:arr-flow", taskfile)
         self.assertIn("media:verify-flow", taskfile)
         self.assertIn("verify-arr-flow", media_taskfile)
+        self.assertIn('"scripts/haac.py" master-ip', taskfile)
+        self.assertIn('"scripts/haac.py" master-ip', internal_taskfile)
         self.assertIn('verify-web --domain "{{.DOMAIN_NAME_VALUE}}" --master-ip "{{.MASTER_IP}}"', internal_taskfile)
         self.assertIn("clear-crowdsec-operator-ban", internal_taskfile)
 
@@ -3328,6 +3364,8 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn("RADARR_API_KEY", unpackerr)
         self.assertIn("SONARR_API_KEY", unpackerr)
         self.assertIn("WHISPARR_API_KEY", unpackerr)
+        self.assertIn("def normalize_api_key", unpackerr)
+        self.assertIn("if len(value) != 32:", unpackerr)
         self.assertIn("[[whisparr]]", unpackerr)
         self.assertIn("labels:\n    app: unpackerr", unpackerr)
         self.assertIn("kind: StatefulSet", seerr)
