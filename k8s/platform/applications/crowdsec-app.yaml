@@ -18,6 +18,26 @@ spec:
         container_runtime: containerd
 
         config:
+          config.yaml.local: |
+            api:
+              client:
+                unregister_on_exit: true
+              server:
+                auto_registration:
+                  enabled: true
+                  token: "${REGISTRATION_TOKEN}"
+                  allowed_ranges:
+                    - "127.0.0.1/32"
+                    - "::1/128"
+                    - "10.42.0.0/16"
+            db_config:
+              type: sqlite
+              use_wal: true
+              flush:
+                bouncers_autodelete:
+                  api_key: 1h
+                agents_autodelete:
+                  login_password: 1h
           parsers:
             s02-enrich:
               zz-haac-operator-false-positives.yaml: |
