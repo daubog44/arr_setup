@@ -12,7 +12,7 @@ spec:
     repoURL: https://crowdsecurity.github.io/helm-charts
     chart: crowdsec
     # renovate: registryUrl=https://crowdsecurity.github.io/helm-charts chart=crowdsec
-    targetRevision: "0.20.1"
+    targetRevision: "0.23.0"
     helm:
       values: |
         container_runtime: containerd
@@ -82,7 +82,7 @@ spec:
                 type: appsec
           env:
             - name: COLLECTIONS
-              value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-generic-rules"
+              value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs crowdsecurity/appsec-generic-rules"
           metrics:
             enabled: true
             serviceMonitor:

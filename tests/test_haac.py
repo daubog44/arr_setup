@@ -3201,6 +3201,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("BOUNCER_KEY_traefik", app_template)
         self.assertIn("crowdsecurity/traefik", app_template)
         self.assertIn("crowdsecurity/appsec-virtual-patching", app_template)
+        self.assertIn("crowdsecurity/appsec-crs", app_template)
         self.assertIn("crowdsecurity/appsec-generic-rules", app_template)
         self.assertIn("serviceMonitor:", app_template)
         self.assertIn("podMonitor:", app_template)
