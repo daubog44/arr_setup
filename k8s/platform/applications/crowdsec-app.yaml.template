@@ -18,6 +18,28 @@ spec:
         container_runtime: containerd
 
         config:
+          parsers:
+            s02-enrich:
+              zz-haac-operator-false-positives.yaml: |
+                name: "haac/operator-false-positives"
+                description: "Ignore supported operator and media UI 403 flows that would otherwise trigger generic CrowdSec ban scenarios."
+                whitelist:
+                  reason: "supported homelab operator surface"
+                  expression:
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/Sessions/Playing/Progress' && evt.Meta.http_verb == 'POST'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/homelab' && evt.Meta.http_verb == 'POST'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/haac-alerts' && evt.Meta.http_verb == 'POST'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/live/ws' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/login/ping' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/user/orgs' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/user/preferences' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/plugins/grafana-exploretraces-app/settings' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/plugins/grafana-lokiexplore-app/settings' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/plugins/grafana-metricsdrilldown-app/settings' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path == '/api/plugins/grafana-pyroscope-app/settings' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path startsWith '/apis/features.grafana.app/' && evt.Meta.http_verb == 'POST'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path startsWith '/apis/dashboard.grafana.app/' && evt.Meta.http_verb == 'GET'
+                    - evt.Meta.http_status == '403' && evt.Meta.http_path startsWith '/avatar/' && evt.Meta.http_verb == 'GET'
           simulation.yaml: |
             simulation: false
             exclusions:
@@ -77,6 +99,25 @@ spec:
 
         appsec:
           enabled: true
+          configs:
+            haac-operator-surface.yaml: |
+              name: custom/haac-operator-surface
+              on_match:
+                - filter: req.Host == "ntfy.${DOMAIN_NAME}" && (req.URL.Path == "/homelab" || req.URL.Path == "/haac-alerts")
+                  apply:
+                    - CancelEvent()
+                    - SetRemediation("allow")
+                    - CancelAlert()
+                - filter: req.Host == "jellyfin.${DOMAIN_NAME}" && req.URL.Path == "/Sessions/Playing/Progress"
+                  apply:
+                    - CancelEvent()
+                    - SetRemediation("allow")
+                    - CancelAlert()
+                - filter: req.Host == "grafana.${DOMAIN_NAME}" && (req.URL.Path == "/api/live/ws" || req.URL.Path == "/api/login/ping" || req.URL.Path == "/api/user/orgs" || req.URL.Path == "/api/user/preferences" || req.URL.Path startsWith "/api/plugins/grafana-" || req.URL.Path startsWith "/apis/features.grafana.app/" || req.URL.Path startsWith "/apis/dashboard.grafana.app/" || req.URL.Path startsWith "/avatar/")
+                  apply:
+                    - CancelEvent()
+                    - SetRemediation("allow")
+                    - CancelAlert()
           acquisitions:
             - source: appsec
               listen_addr: "0.0.0.0:7422"
@@ -84,6 +125,7 @@ spec:
               appsec_configs:
                 - crowdsecurity/appsec-default
                 - crowdsecurity/crs
+                - custom/haac-operator-surface
               labels:
                 type: appsec
           env:

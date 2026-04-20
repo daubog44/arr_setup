@@ -4933,13 +4933,20 @@ def detect_public_ip(timeout_seconds: int = 10) -> str:
     return ""
 
 
+OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS = {
+    "crowdsecurity/crowdsec-appsec-outofband",
+    "crowdsecurity/http-crawl-non_statics",
+    "LePresidente/http-generic-403-bf",
+}
+
+
 def crowdsec_has_operator_probe_ban(decisions_payload: object, source_ip: str) -> bool:
     if not isinstance(decisions_payload, list):
         return False
     for alert in decisions_payload:
         if not isinstance(alert, dict):
             continue
-        if str(alert.get("scenario") or "") != "crowdsecurity/crowdsec-appsec-outofband":
+        if str(alert.get("scenario") or "") not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
             continue
         for decision in alert.get("decisions") or []:
             if not isinstance(decision, dict):
@@ -4956,7 +4963,7 @@ def crowdsec_operator_probe_ban_ips(decisions_payload: object) -> set[str]:
     for alert in decisions_payload:
         if not isinstance(alert, dict):
             continue
-        if str(alert.get("scenario") or "") != "crowdsecurity/crowdsec-appsec-outofband":
+        if str(alert.get("scenario") or "") not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
             continue
         for decision in alert.get("decisions") or []:
             if not isinstance(decision, dict):
@@ -4965,6 +4972,25 @@ def crowdsec_operator_probe_ban_ips(decisions_payload: object) -> set[str]:
                 value = str(decision.get("value") or "").strip()
                 if value:
                     candidates.add(value)
+    return candidates
+
+
+def crowdsec_operator_probe_ban_scenarios(decisions_payload: object, source_ip: str) -> set[str]:
+    candidates: set[str] = set()
+    if not isinstance(decisions_payload, list):
+        return candidates
+    for alert in decisions_payload:
+        if not isinstance(alert, dict):
+            continue
+        scenario = str(alert.get("scenario") or "").strip()
+        if scenario not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
+            continue
+        for decision in alert.get("decisions") or []:
+            if not isinstance(decision, dict):
+                continue
+            if str(decision.get("scope") or "").lower() == "ip" and str(decision.get("value") or "").strip() == source_ip:
+                candidates.add(scenario)
+                break
     return candidates
 
 
@@ -5016,29 +5042,31 @@ def clear_operator_crowdsec_probe_ban(
             decisions_payload = json.loads(decisions_raw) if decisions_raw else []
         except json.JSONDecodeError:
             return False
-        if not crowdsec_has_operator_probe_ban(decisions_payload, source_ip):
+        scenarios = crowdsec_operator_probe_ban_scenarios(decisions_payload, source_ip)
+        if not scenarios:
             return False
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(session_kubeconfig),
-                "-n",
-                "crowdsec",
-                "exec",
-                pod_name,
-                "--",
-                "cscli",
-                "decisions",
-                "delete",
-                "--ip",
-                source_ip,
-                "--scenario",
-                "crowdsecurity/crowdsec-appsec-outofband",
-            ],
-            check=False,
-            capture_output=True,
-        )
+        for scenario in sorted(scenarios):
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "-n",
+                    "crowdsec",
+                    "exec",
+                    pod_name,
+                    "--",
+                    "cscli",
+                    "decisions",
+                    "delete",
+                    "--ip",
+                    source_ip,
+                    "--scenario",
+                    scenario,
+                ],
+                check=False,
+                capture_output=True,
+            )
     return True
 
 
@@ -5097,27 +5125,71 @@ def clear_current_operator_crowdsec_probe_ban(
         if len(candidates) != 1:
             return False
         candidate_ip = next(iter(candidates))
-        run(
-            [
-                kubectl,
-                "--kubeconfig",
-                str(session_kubeconfig),
-                "-n",
-                "crowdsec",
-                "exec",
-                pod_name,
-                "--",
-                "cscli",
-                "decisions",
-                "delete",
-                "--ip",
-                candidate_ip,
-                "--scenario",
-                "crowdsecurity/crowdsec-appsec-outofband",
-            ],
-            check=False,
-            capture_output=True,
-        )
+        scenarios = crowdsec_operator_probe_ban_scenarios(decisions_payload, candidate_ip)
+        if not scenarios:
+            return False
+        for scenario in sorted(scenarios):
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "-n",
+                    "crowdsec",
+                    "exec",
+                    pod_name,
+                    "--",
+                    "cscli",
+                    "decisions",
+                    "delete",
+                    "--ip",
+                    candidate_ip,
+                    "--scenario",
+                    scenario,
+                ],
+                check=False,
+                capture_output=True,
+            )
+    return True
+
+
+def restart_traefik_for_crowdsec_recovery(
+    master_ip: str,
+    proxmox_host: str,
+    kubeconfig: Path,
+    kubectl: str,
+) -> bool:
+    try:
+        with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "-n",
+                    "kube-system",
+                    "rollout",
+                    "restart",
+                    "deployment/traefik",
+                ],
+                capture_output=True,
+            )
+            run(
+                [
+                    kubectl,
+                    "--kubeconfig",
+                    str(session_kubeconfig),
+                    "-n",
+                    "kube-system",
+                    "rollout",
+                    "status",
+                    "deployment/traefik",
+                    "--timeout=180s",
+                ],
+                capture_output=True,
+            )
+    except HaaCError:
+        return False
     return True
 
 
@@ -5201,9 +5273,15 @@ def verify_web(
         and kubeconfig is not None
         and all(result["status"] == "403" for result in failures)
     ):
-        public_ip = detect_public_ip()
-        if public_ip and clear_operator_crowdsec_probe_ban(master_ip, proxmox_host, kubeconfig, kubectl, public_ip):
-            print("[warn] Cleared a temporary CrowdSec AppSec ban for the current operator IP; retrying public URL verification once.")
+        recovered = False
+        if clear_current_operator_crowdsec_probe_ban(master_ip, proxmox_host, kubeconfig, kubectl):
+            print("[warn] Cleared temporary CrowdSec false-positive bans for the current operator IP.")
+            recovered = True
+        if restart_traefik_for_crowdsec_recovery(master_ip, proxmox_host, kubeconfig, kubectl):
+            print("[warn] Restarted Traefik to flush the CrowdSec bouncer state after the all-403 failure.")
+            recovered = True
+        if recovered:
+            print("[warn] Retrying public URL verification once after CrowdSec recovery.")
             return verify_web(
                 domain_name,
                 retries=retries,
@@ -9371,9 +9449,9 @@ def cmd_clear_crowdsec_operator_ban(args: argparse.Namespace) -> None:
         args.kubectl,
     )
     if cleared:
-        print("[ok] Cleared a temporary CrowdSec AppSec ban for the current operator IP.")
+        print("[ok] Cleared temporary CrowdSec false-positive bans for the current operator IP.")
     else:
-        print("[ok] No temporary CrowdSec AppSec ban was active for the current operator IP.")
+        print("[ok] No temporary CrowdSec false-positive ban was active for the current operator IP.")
 
 
 def cmd_verify_web(args: argparse.Namespace) -> None:

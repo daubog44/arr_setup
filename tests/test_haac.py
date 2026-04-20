@@ -3032,11 +3032,19 @@ class EndpointVerificationTests(unittest.TestCase):
             {
                 "scenario": "crowdsecurity/crowdsec-appsec-outofband",
                 "decisions": [{"scope": "Ip", "value": "203.0.113.24"}],
+            },
+            {
+                "scenario": "LePresidente/http-generic-403-bf",
+                "decisions": [{"scope": "Ip", "value": "203.0.113.24"}],
             }
         ]
         self.assertTrue(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
         self.assertFalse(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.25"))
         self.assertEqual(haac.crowdsec_operator_probe_ban_ips(payload), {"203.0.113.24"})
+        self.assertEqual(
+            haac.crowdsec_operator_probe_ban_scenarios(payload, "203.0.113.24"),
+            {"crowdsecurity/crowdsec-appsec-outofband", "LePresidente/http-generic-403-bf"},
+        )
 
     def test_verify_web_retries_once_after_crowdsec_operator_ban_cleanup(self) -> None:
         endpoint = {
@@ -3058,8 +3066,8 @@ class EndpointVerificationTests(unittest.TestCase):
                     "endpoint_verification_success",
                     side_effect=lambda endpoint, response, auth_url: int(response["status"]) == 200,
                 ):
-                    with mock.patch.object(haac, "detect_public_ip", return_value="203.0.113.24"):
-                        with mock.patch.object(haac, "clear_operator_crowdsec_probe_ban", return_value=True) as clear_mock:
+                    with mock.patch.object(haac, "clear_current_operator_crowdsec_probe_ban", return_value=True) as clear_mock:
+                        with mock.patch.object(haac, "restart_traefik_for_crowdsec_recovery", return_value=True) as restart_mock:
                             with contextlib.redirect_stdout(io.StringIO()):
                                 haac.verify_web(
                                     "example.com",
@@ -3070,7 +3078,8 @@ class EndpointVerificationTests(unittest.TestCase):
                                     kubeconfig=Path("demo"),
                                     kubectl="kubectl",
                                 )
-        clear_mock.assert_called_once_with("192.168.0.10", "192.168.0.20", Path("demo"), "kubectl", "203.0.113.24")
+        clear_mock.assert_called_once_with("192.168.0.10", "192.168.0.20", Path("demo"), "kubectl")
+        restart_mock.assert_called_once_with("192.168.0.10", "192.168.0.20", Path("demo"), "kubectl")
 
     def test_recyclarr_config_template_vendors_official_profiles_with_secret_refs(self) -> None:
         config = (
@@ -3118,6 +3127,9 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn('bodyText.includes("Lidarr")', verifier)
         self.assertIn('bodyText.includes("SABnzbd")', verifier)
         self.assertIn('currentUrl.pathname.startsWith("/setup")', verifier)
+        self.assertIn("buildVerifierSafeRouteMatcher", verifier)
+        self.assertIn('pathPrefixes: ["/signalr/messages/negotiate"]', verifier)
+        self.assertIn('pathPrefixes: ["/homelab", "/haac-alerts"]', verifier)
 
     def test_arr_dashboard_configmap_is_repo_managed(self) -> None:
         dashboard = (ROOT / "k8s" / "platform" / "observability" / "arr-stack-dashboard-configmap.yaml").read_text(
@@ -3276,8 +3288,24 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn("crowdsecurity/traefik", app_template)
         self.assertIn("crowdsecurity/appsec-virtual-patching", app_template)
         self.assertIn("crowdsecurity/appsec-crs", app_template)
+        self.assertIn("crowdsecurity/crs", app_template)
         self.assertIn("crowdsecurity/appsec-generic-rules", app_template)
         self.assertIn("crowdsecurity/http-crawl-non_statics", app_template)
+        self.assertIn('name: "haac/operator-false-positives"', app_template)
+        self.assertIn("evt.Meta.http_path == '/Sessions/Playing/Progress'", app_template)
+        self.assertIn("evt.Meta.http_path == '/homelab'", app_template)
+        self.assertIn("evt.Meta.http_path == '/haac-alerts'", app_template)
+        self.assertIn("evt.Meta.http_path == '/api/live/ws'", app_template)
+        self.assertIn("evt.Meta.http_path startsWith '/apis/features.grafana.app/'", app_template)
+        self.assertIn("evt.Meta.http_path startsWith '/avatar/'", app_template)
+        self.assertIn("name: custom/haac-operator-surface", app_template)
+        self.assertIn('req.Host == "ntfy.${DOMAIN_NAME}"', app_template)
+        self.assertIn('req.Host == "jellyfin.${DOMAIN_NAME}"', app_template)
+        self.assertIn('req.Host == "grafana.${DOMAIN_NAME}"', app_template)
+        self.assertIn('CancelEvent()', app_template)
+        self.assertIn('SetRemediation("allow")', app_template)
+        self.assertIn('CancelAlert()', app_template)
+        self.assertIn("- custom/haac-operator-surface", app_template)
         self.assertIn("serviceMonitor:", app_template)
         self.assertIn("podMonitor:", app_template)
         self.assertIn("crowdsec-bouncer-traefik-plugin", traefik_template)

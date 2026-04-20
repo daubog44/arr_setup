@@ -68,6 +68,14 @@ The supported proof in this repo is an intentionally bad request such as `/.env`
 
 The repo keeps `crowdsecurity/http-crawl-non_statics` in simulation mode. That scenario is low-confidence and produced false positives against supported SPA-style operator UIs such as Headlamp and Policy Reporter/Kyverno during real browser verification. The signal remains visible, but remediation from that scenario is intentionally disabled.
 
+The repo also keeps a narrow repo-managed false-positive contract for supported operator/media paths that legitimately create noisy `403` or AppSec matches during normal verification:
+
+- Ntfy topic publishing on `/homelab` and `/haac-alerts`
+- Jellyfin playback progress on `/Sessions/Playing/Progress`
+- a small Grafana auxiliary route set used by the official SPA shell
+
+Those paths are allowlisted by exact path plus host conditions only. OWASP CRS and the broader CrowdSec AppSec surface remain enabled for the rest of the ingress.
+
 ## CrowdSec Versus DDoS
 
 CrowdSec helps with intelligent application-layer abuse handling:
