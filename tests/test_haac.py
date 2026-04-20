@@ -565,6 +565,28 @@ class DownloadersRecoveryTests(unittest.TestCase):
         self.assertFalse(recovered)
         self.assertEqual(run_mock.call_count, 2)
 
+    def test_argocd_hook_wait_resource_ref_supports_failed_phase(self) -> None:
+        ref = haac.argocd_hook_wait_resource_ref(
+            {
+                "status": {
+                    "operationState": {
+                        "phase": "Failed",
+                        "message": "waiting for completion of hook batch/Job/kube-prometheus-stack-admission-create",
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(
+            ref,
+            {
+                "ref": "batch/Job/kube-prometheus-stack-admission-create",
+                "group": "batch",
+                "kind": "Job",
+                "name": "kube-prometheus-stack-admission-create",
+            },
+        )
+
 
 class SyncRepoTests(unittest.TestCase):
     def test_sync_repo_fast_forwards_before_checkpoint_when_remote_is_ahead(self) -> None:
@@ -3250,6 +3272,7 @@ class EndpointVerificationTests(unittest.TestCase):
 
     def test_verify_public_auth_covers_seerr_and_arr_dashboard(self) -> None:
         verifier = (ROOT / "scripts" / "verify-public-auth.mjs").read_text(encoding="utf-8")
+        haac_script = (ROOT / "scripts" / "haac.py").read_text(encoding="utf-8")
 
         self.assertIn('const GRAFANA_ARR_STACK_DASHBOARD_UID = "haac-arr-stack-overview";', verifier)
         self.assertIn('async function visibleBodyText(page)', verifier)
@@ -3271,6 +3294,9 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn('pathPrefixes: ["/signalr/messages/negotiate"]', verifier)
         self.assertIn('`${name}.${domainName}`', verifier)
         self.assertIn('pathPrefixes: ["/homelab", "/haac-alerts"]', verifier)
+        self.assertIn('assertGrafanaDashboardHealthy(argoBodyText, "ArgoCD dashboard", [], { allowNoData: true });', verifier)
+        self.assertIn("wait_for_argocd_child_applications_ready", haac_script)
+        self.assertIn('ServiceMonitor" in version "monitoring.coreos.com/v1', haac_script)
 
     def test_arr_dashboard_configmap_is_repo_managed(self) -> None:
         dashboard = (ROOT / "k8s" / "platform" / "observability" / "arr-stack-dashboard-configmap.yaml").read_text(

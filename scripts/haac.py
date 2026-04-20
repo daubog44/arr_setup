@@ -120,6 +120,7 @@ SECURITY_SIGNAL_RESIDUE_TARGETS = {
     "argocd": ("argocd-repo-server-", "argocd-redis-"),
     "security": ("falco-falcosidekick-ui-", "trivy-operator-"),
 }
+WAIT_FOR_STACK_ROOT_APPLICATIONS = {"haac-root", "haac-platform", "argocd", "haac-workloads", "haac-stack"}
 TRIVY_NAMESPACED_REPORT_RESOURCES = (
     "configauditreports.aquasecurity.github.io",
     "exposedsecretreports.aquasecurity.github.io",
@@ -2541,7 +2542,7 @@ def argocd_tracking_parent_application(app: dict[str, object]) -> str:
 def argocd_hook_wait_resource_ref(app: dict[str, object]) -> dict[str, str] | None:
     status = app.get("status") or {}
     operation_state = status.get("operationState") or {}
-    if (operation_state.get("phase") or "").strip() != "Running":
+    if (operation_state.get("phase") or "").strip() not in {"Running", "Failed"}:
         return None
     message = str(operation_state.get("message") or "").strip()
     match = re.search(r"waiting for completion of hook\s+([^\s]+)", message, flags=re.IGNORECASE)
@@ -2743,6 +2744,73 @@ def recover_missing_hook_argocd_operation(
     return True
 
 
+def monitoring_servicemonitor_crd_available(kubectl: str, kubeconfig: Path) -> bool:
+    completed = run(
+        [kubectl, "--kubeconfig", str(kubeconfig), "get", "crd", "servicemonitors.monitoring.coreos.com"],
+        check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
+def recover_missing_api_resource_argocd_operation(
+    kubectl: str,
+    kubeconfig: Path,
+    application: str,
+    app: dict[str, object],
+) -> bool:
+    status = app.get("status") or {}
+    operation_state = status.get("operationState") or {}
+    message = str(operation_state.get("message") or "").strip()
+    if not message:
+        return False
+    if 'no matches for kind "ServiceMonitor" in version "monitoring.coreos.com/v1"' not in message:
+        return False
+    if not monitoring_servicemonitor_crd_available(kubectl, kubeconfig):
+        return False
+    refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
+    print(f"[heal] Refreshed {application} after the ServiceMonitor CRD became available")
+    return True
+
+
+def list_argocd_child_applications(kubectl: str, kubeconfig: Path) -> list[str]:
+    payload = kubectl_json(
+        kubectl,
+        kubeconfig,
+        ["get", "applications", "-n", "argocd", "-o", "json"],
+        context="Read ArgoCD applications",
+    )
+    names: list[str] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(((item.get("metadata") or {}).get("name")) or "").strip()
+        if not name or name in WAIT_FOR_STACK_ROOT_APPLICATIONS:
+            continue
+        names.append(name)
+    return sorted(set(names))
+
+
+def wait_for_argocd_child_applications_ready(
+    kubectl: str,
+    kubeconfig: Path,
+    *,
+    deadline: float,
+    expected_revision: str | None = None,
+    gitops_repo_url: str | None = None,
+) -> None:
+    for application in list_argocd_child_applications(kubectl, kubeconfig):
+        wait_for_argocd_application_ready(
+            kubectl,
+            kubeconfig,
+            application=application,
+            stage_label="Child application gate",
+            deadline=deadline,
+            expected_revision=expected_revision,
+            gitops_repo_url=gitops_repo_url,
+        )
+
+
 def wait_for_argocd_application_ready(
     kubectl: str,
     kubeconfig: Path,
@@ -2780,6 +2848,9 @@ def wait_for_argocd_application_ready(
             deadline=deadline,
             gitops_repo_url=gitops_repo_url,
         ):
+            time.sleep(5)
+            continue
+        if recover_missing_api_resource_argocd_operation(kubectl, kubeconfig, application, app):
             time.sleep(5)
             continue
         if application == "haac-stack" and recover_stalled_downloaders_rollout(kubectl, kubeconfig):
@@ -3710,16 +3781,36 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
                         ) from exc
                 print("[ok] Downloader readiness gate")
                 last_verified_phase = "Downloader readiness gate"
-                return
+                break
             time.sleep(10)
-        raise HaaCError(
-            bootstrap_recovery_summary(
-                failing_phase="GitOps readiness",
-                last_verified_phase=last_verified_phase,
-                rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
-                detail="Timed out waiting for downloaders pod readiness",
+        else:
+            raise HaaCError(
+                bootstrap_recovery_summary(
+                    failing_phase="GitOps readiness",
+                    last_verified_phase=last_verified_phase,
+                    rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                    detail="Timed out waiting for downloaders pod readiness",
+                )
             )
-        )
+
+        try:
+            wait_for_argocd_child_applications_ready(
+                kubectl,
+                session_kubeconfig,
+                deadline=deadline,
+                expected_revision=expected_revision,
+                gitops_repo_url=gitops_repo,
+            )
+        except HaaCError as exc:
+            raise HaaCError(
+                bootstrap_recovery_summary(
+                    failing_phase="GitOps readiness",
+                    last_verified_phase=last_verified_phase,
+                    rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                    detail=str(exc),
+                )
+            ) from exc
+        last_verified_phase = "Child application gates"
 
 
 def verify_cluster(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl: str) -> None:
