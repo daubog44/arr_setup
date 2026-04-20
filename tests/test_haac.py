@@ -3046,6 +3046,115 @@ class EndpointVerificationTests(unittest.TestCase):
             {"crowdsecurity/crowdsec-appsec-outofband", "LePresidente/http-generic-403-bf"},
         )
 
+    def test_crowdsec_http_probing_ban_only_matches_supported_false_positive_routes(self) -> None:
+        payload = [
+            {
+                "scenario": "crowdsecurity/http-probing",
+                "decisions": [{"scope": "Ip", "value": "203.0.113.24"}],
+                "events": [
+                    {
+                        "meta": [
+                            {"key": "http_path", "value": "/api/live/ws"},
+                            {"key": "http_verb", "value": "GET"},
+                        ]
+                    },
+                    {
+                        "meta": [
+                            {"key": "http_path", "value": "/apis/features.grafana.app/v0alpha1/namespaces/default/ofrep/v1/evaluate/flags"},
+                            {"key": "http_verb", "value": "POST"},
+                        ]
+                    },
+                ],
+            }
+        ]
+        self.assertTrue(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
+        self.assertEqual(haac.crowdsec_operator_probe_ban_scenarios(payload, "203.0.113.24"), {"crowdsecurity/http-probing"})
+
+    def test_crowdsec_http_probing_ban_matches_servarr_signalr_negotiate(self) -> None:
+        payload = [
+            {
+                "scenario": "crowdsecurity/http-probing",
+                "decisions": [{"scope": "Ip", "value": "203.0.113.24"}],
+                "events": [
+                    {
+                        "meta": [
+                            {"key": "http_path", "value": "/signalr/messages/negotiate?access_token=abc123&negotiateVersion=1"},
+                            {"key": "http_verb", "value": "POST"},
+                        ]
+                    }
+                ],
+            }
+        ]
+        self.assertTrue(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
+        self.assertEqual(haac.crowdsec_operator_probe_ban_scenarios(payload, "203.0.113.24"), {"crowdsecurity/http-probing"})
+
+    def test_crowdsec_http_probing_ban_ignores_non_allowlisted_routes(self) -> None:
+        payload = [
+            {
+                "scenario": "crowdsecurity/http-probing",
+                "decisions": [{"scope": "Ip", "value": "203.0.113.24"}],
+                "events": [
+                    {
+                        "meta": [
+                            {"key": "http_path", "value": "/admin"},
+                            {"key": "http_verb", "value": "GET"},
+                        ]
+                    }
+                ],
+            }
+        ]
+        self.assertFalse(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
+        self.assertEqual(haac.crowdsec_operator_probe_ban_scenarios(payload, "203.0.113.24"), set())
+
+    def test_crowdsec_appsec_ban_matches_target_uri_without_http_verb(self) -> None:
+        payload = [
+            {
+                "scenario": "crowdsecurity/crowdsec-appsec-outofband",
+                "decisions": [{"id": 12, "scope": "Ip", "value": "203.0.113.24"}],
+                "events": [
+                    {
+                        "meta": [
+                            {"key": "target_uri", "value": "/homelab"},
+                        ]
+                    },
+                    {
+                        "meta": [
+                            {"key": "target_uri", "value": "[\"/Sessions/Playing/Progress\"]"},
+                        ]
+                    },
+                ],
+            }
+        ]
+        self.assertTrue(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
+        self.assertEqual(
+            haac.crowdsec_operator_probe_ban_scenarios(payload, "203.0.113.24"),
+            {"crowdsecurity/crowdsec-appsec-outofband"},
+        )
+        self.assertEqual(haac.crowdsec_operator_probe_ban_decision_ids(payload, "203.0.113.24"), {"12"})
+
+    def test_crowdsec_appsec_ban_matches_grafana_prometheus_proxy_query(self) -> None:
+        payload = [
+            {
+                "scenario": "crowdsecurity/crowdsec-appsec-outofband",
+                "decisions": [{"id": 24, "scope": "Ip", "value": "203.0.113.24"}],
+                "events": [
+                    {
+                        "meta": [
+                            {
+                                "key": "target_uri",
+                                "value": '/api/datasources/proxy/uid/prometheus/api/v1/query?query=count(up%7Bnamespace%3D%22kyverno%22%7D)',
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+        self.assertTrue(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
+        self.assertEqual(
+            haac.crowdsec_operator_probe_ban_decision_ids(payload, "203.0.113.24"),
+            {"24"},
+        )
+
     def test_verify_web_retries_once_after_crowdsec_operator_ban_cleanup(self) -> None:
         endpoint = {
             "name": "auth",
@@ -3109,15 +3218,9 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn('const GRAFANA_ARR_STACK_DASHBOARD_UID = "haac-arr-stack-overview";', verifier)
         self.assertIn('async function visibleBodyText(page)', verifier)
         self.assertIn('const body = await visibleBodyText(page);', verifier)
-        self.assertIn("radarr_movie_total", verifier)
-        self.assertIn("sonarr_series_total", verifier)
-        self.assertIn("prowlarr_indexer_total", verifier)
-        self.assertIn("lidarr_artists_total", verifier)
-        self.assertIn("sabnzbd_info", verifier)
-        self.assertIn("autobrr_info", verifier)
-        self.assertIn("flaresolverr_request_total", verifier)
-        self.assertIn("bazarr_system_status", verifier)
-        self.assertIn("unpackerr_uptime_seconds_total", verifier)
+        self.assertNotIn("/api/datasources/proxy/uid/", verifier)
+        self.assertNotIn("assertGrafanaMetricPresent", verifier)
+        self.assertNotIn("queryGrafanaPrometheus", verifier)
         self.assertIn('bazarr: { appNativeSelector:', verifier)
         self.assertIn('lidarr: { appNativeSelector:', verifier)
         self.assertIn('whisparr: { appNativeSelector:', verifier)
@@ -3128,7 +3231,9 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn('bodyText.includes("SABnzbd")', verifier)
         self.assertIn('currentUrl.pathname.startsWith("/setup")', verifier)
         self.assertIn("buildVerifierSafeRouteMatcher", verifier)
+        self.assertIn('allowNoData: true', verifier)
         self.assertIn('pathPrefixes: ["/signalr/messages/negotiate"]', verifier)
+        self.assertIn('`${name}.${domainName}`', verifier)
         self.assertIn('pathPrefixes: ["/homelab", "/haac-alerts"]', verifier)
 
     def test_arr_dashboard_configmap_is_repo_managed(self) -> None:

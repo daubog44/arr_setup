@@ -4936,8 +4936,90 @@ def detect_public_ip(timeout_seconds: int = 10) -> str:
 OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS = {
     "crowdsecurity/crowdsec-appsec-outofband",
     "crowdsecurity/http-crawl-non_statics",
+    "crowdsecurity/http-probing",
     "LePresidente/http-generic-403-bf",
 }
+
+OPERATOR_CROWDSEC_FALSE_POSITIVE_ROUTE_RULES = (
+    {"path": "/Sessions/Playing/Progress", "verb": "POST"},
+    {"path": "/homelab", "verb": "POST"},
+    {"path": "/haac-alerts", "verb": "POST"},
+    {"path_prefix": "/signalr/messages/negotiate", "verb": "POST"},
+    {"path": "/api/live/ws", "verb": "GET"},
+    {"path": "/api/login/ping", "verb": "GET"},
+    {"path": "/api/user/orgs", "verb": "GET"},
+    {"path": "/api/user/preferences", "verb": "GET"},
+    {"path_prefix": "/api/datasources/proxy/uid/prometheus/api/v1/query", "verb": "GET"},
+    {"path": "/api/plugins/grafana-exploretraces-app/settings", "verb": "GET"},
+    {"path": "/api/plugins/grafana-lokiexplore-app/settings", "verb": "GET"},
+    {"path": "/api/plugins/grafana-metricsdrilldown-app/settings", "verb": "GET"},
+    {"path": "/api/plugins/grafana-pyroscope-app/settings", "verb": "GET"},
+    {"path_prefix": "/apis/features.grafana.app/", "verb": "POST"},
+    {"path_prefix": "/apis/dashboard.grafana.app/", "verb": "GET"},
+    {"path_prefix": "/avatar/", "verb": "GET"},
+)
+
+
+def normalize_crowdsec_meta_value(value: object) -> str:
+    text = str(value or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return text.strip("\"'")
+        if isinstance(parsed, list) and parsed:
+            return str(parsed[0] or "").strip()
+    return text.strip("\"'")
+
+
+def crowdsec_event_route_pairs(alert: object) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    if not isinstance(alert, dict):
+        return pairs
+    for event in alert.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        meta_map: dict[str, str] = {}
+        for item in event.get("meta") or []:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key") or "").strip()
+            if not key:
+                continue
+            meta_map[key] = normalize_crowdsec_meta_value(item.get("value"))
+        path = meta_map.get("http_path") or meta_map.get("uri") or meta_map.get("target_uri")
+        verb = meta_map.get("http_verb") or meta_map.get("method") or ""
+        if path:
+            pairs.append((path.strip(), verb.strip().upper()))
+    return pairs
+
+
+def crowdsec_route_matches_operator_false_positive_surface(path: str, verb: str) -> bool:
+    normalized_path = str(path or "").strip()
+    normalized_verb = str(verb or "").strip().upper()
+    for rule in OPERATOR_CROWDSEC_FALSE_POSITIVE_ROUTE_RULES:
+        expected_verb = str(rule.get("verb") or "").strip().upper()
+        if expected_verb and normalized_verb and expected_verb != normalized_verb:
+            continue
+        exact_path = str(rule.get("path") or "").strip()
+        if exact_path and normalized_path == exact_path:
+            return True
+        path_prefix = str(rule.get("path_prefix") or "").strip()
+        if path_prefix and normalized_path.startswith(path_prefix):
+            return True
+    return False
+
+
+def crowdsec_alert_matches_operator_false_positive_surface(alert: object) -> bool:
+    if not isinstance(alert, dict):
+        return False
+    scenario = str(alert.get("scenario") or "").strip()
+    if scenario not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
+        return False
+    route_pairs = crowdsec_event_route_pairs(alert)
+    if not route_pairs:
+        return scenario != "crowdsecurity/http-probing"
+    return all(crowdsec_route_matches_operator_false_positive_surface(path, verb) for path, verb in route_pairs)
 
 
 def crowdsec_has_operator_probe_ban(decisions_payload: object, source_ip: str) -> bool:
@@ -4946,7 +5028,7 @@ def crowdsec_has_operator_probe_ban(decisions_payload: object, source_ip: str) -
     for alert in decisions_payload:
         if not isinstance(alert, dict):
             continue
-        if str(alert.get("scenario") or "") not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
+        if not crowdsec_alert_matches_operator_false_positive_surface(alert):
             continue
         for decision in alert.get("decisions") or []:
             if not isinstance(decision, dict):
@@ -4963,7 +5045,7 @@ def crowdsec_operator_probe_ban_ips(decisions_payload: object) -> set[str]:
     for alert in decisions_payload:
         if not isinstance(alert, dict):
             continue
-        if str(alert.get("scenario") or "") not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
+        if not crowdsec_alert_matches_operator_false_positive_surface(alert):
             continue
         for decision in alert.get("decisions") or []:
             if not isinstance(decision, dict):
@@ -4983,7 +5065,7 @@ def crowdsec_operator_probe_ban_scenarios(decisions_payload: object, source_ip: 
         if not isinstance(alert, dict):
             continue
         scenario = str(alert.get("scenario") or "").strip()
-        if scenario not in OPERATOR_CROWDSEC_FALSE_POSITIVE_SCENARIOS:
+        if not crowdsec_alert_matches_operator_false_positive_surface(alert):
             continue
         for decision in alert.get("decisions") or []:
             if not isinstance(decision, dict):
@@ -4991,6 +5073,28 @@ def crowdsec_operator_probe_ban_scenarios(decisions_payload: object, source_ip: 
             if str(decision.get("scope") or "").lower() == "ip" and str(decision.get("value") or "").strip() == source_ip:
                 candidates.add(scenario)
                 break
+    return candidates
+
+
+def crowdsec_operator_probe_ban_decision_ids(decisions_payload: object, source_ip: str) -> set[str]:
+    candidates: set[str] = set()
+    if not isinstance(decisions_payload, list):
+        return candidates
+    for alert in decisions_payload:
+        if not isinstance(alert, dict):
+            continue
+        if not crowdsec_alert_matches_operator_false_positive_surface(alert):
+            continue
+        for decision in alert.get("decisions") or []:
+            if not isinstance(decision, dict):
+                continue
+            if str(decision.get("scope") or "").lower() != "ip":
+                continue
+            if str(decision.get("value") or "").strip() != source_ip:
+                continue
+            decision_id = str(decision.get("id") or "").strip()
+            if decision_id:
+                candidates.add(decision_id)
     return candidates
 
 
@@ -5045,7 +5149,8 @@ def clear_operator_crowdsec_probe_ban(
         scenarios = crowdsec_operator_probe_ban_scenarios(decisions_payload, source_ip)
         if not scenarios:
             return False
-        for scenario in sorted(scenarios):
+        decision_ids = crowdsec_operator_probe_ban_decision_ids(decisions_payload, source_ip)
+        for decision_id in sorted(decision_ids):
             run(
                 [
                     kubectl,
@@ -5059,10 +5164,8 @@ def clear_operator_crowdsec_probe_ban(
                     "cscli",
                     "decisions",
                     "delete",
-                    "--ip",
-                    source_ip,
-                    "--scenario",
-                    scenario,
+                    "--id",
+                    decision_id,
                 ],
                 check=False,
                 capture_output=True,
@@ -5128,7 +5231,8 @@ def clear_current_operator_crowdsec_probe_ban(
         scenarios = crowdsec_operator_probe_ban_scenarios(decisions_payload, candidate_ip)
         if not scenarios:
             return False
-        for scenario in sorted(scenarios):
+        decision_ids = crowdsec_operator_probe_ban_decision_ids(decisions_payload, candidate_ip)
+        for decision_id in sorted(decision_ids):
             run(
                 [
                     kubectl,
@@ -5142,10 +5246,8 @@ def clear_current_operator_crowdsec_probe_ban(
                     "cscli",
                     "decisions",
                     "delete",
-                    "--ip",
-                    candidate_ip,
-                    "--scenario",
-                    scenario,
+                    "--id",
+                    decision_id,
                 ],
                 check=False,
                 capture_output=True,

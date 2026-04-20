@@ -1,6 +1,6 @@
 ## 1. Contracts
 
-- [ ] 1.1 Add OpenSpec deltas for a repo-managed cold-cycle acceptance surface
+- [x] 1.1 Add OpenSpec deltas for a repo-managed cold-cycle acceptance surface
 
 ## 2. Validation
 

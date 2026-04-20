@@ -73,8 +73,11 @@ The repo also keeps a narrow repo-managed false-positive contract for supported 
 - Ntfy topic publishing on `/homelab` and `/haac-alerts`
 - Jellyfin playback progress on `/Sessions/Playing/Progress`
 - a small Grafana auxiliary route set used by the official SPA shell
+- legacy operator-browser cleanup for Servarr SignalR negotiate requests and old Grafana datasource-proxy verification traffic
 
 Those paths are allowlisted by exact path plus host conditions only. OWASP CRS and the broader CrowdSec AppSec surface remain enabled for the rest of the ingress.
+
+The repo-managed browser verifier deliberately does not query Prometheus through Grafana's datasource proxy anymore. That browser pattern triggered CrowdSec AppSec `sql_injection` false positives against benign PromQL verification requests. Metric-family proof remains covered by the cluster-local Python verification ladder instead of the public browser path.
 
 ## CrowdSec Versus DDoS
 
