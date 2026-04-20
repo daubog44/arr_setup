@@ -8,6 +8,7 @@ import copy
 import hashlib
 import http.client
 import http.cookiejar
+import ipaddress
 import json
 import os
 import platform
@@ -4895,7 +4896,242 @@ def probe_web_status(url: str, timeout_seconds: int = 10) -> int:
     return endpointlib.probe_web_status(url, timeout_seconds)
 
 
-def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> None:
+def parse_cloudflare_trace_ip(body: str) -> str:
+    for line in body.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "ip":
+            candidate = value.strip()
+            try:
+                ipaddress.ip_address(candidate)
+            except ValueError:
+                return ""
+            return candidate
+    return ""
+
+
+def detect_public_ip(timeout_seconds: int = 10) -> str:
+    probes = (
+        ("https://www.cloudflare.com/cdn-cgi/trace", parse_cloudflare_trace_ip),
+        ("https://api.ipify.org", lambda body: body.strip()),
+    )
+    headers = {"User-Agent": "haac-verify-web/1.0", "Accept": "text/plain"}
+    for url, parser in probes:
+        try:
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                body = response.read(4096).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        candidate = parser(body)
+        if not candidate:
+            continue
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        return candidate
+    return ""
+
+
+def crowdsec_has_operator_probe_ban(decisions_payload: object, source_ip: str) -> bool:
+    if not isinstance(decisions_payload, list):
+        return False
+    for alert in decisions_payload:
+        if not isinstance(alert, dict):
+            continue
+        if str(alert.get("scenario") or "") != "crowdsecurity/crowdsec-appsec-outofband":
+            continue
+        for decision in alert.get("decisions") or []:
+            if not isinstance(decision, dict):
+                continue
+            if str(decision.get("scope") or "").lower() == "ip" and str(decision.get("value") or "") == source_ip:
+                return True
+    return False
+
+
+def crowdsec_operator_probe_ban_ips(decisions_payload: object) -> set[str]:
+    candidates: set[str] = set()
+    if not isinstance(decisions_payload, list):
+        return candidates
+    for alert in decisions_payload:
+        if not isinstance(alert, dict):
+            continue
+        if str(alert.get("scenario") or "") != "crowdsecurity/crowdsec-appsec-outofband":
+            continue
+        for decision in alert.get("decisions") or []:
+            if not isinstance(decision, dict):
+                continue
+            if str(decision.get("scope") or "").lower() == "ip":
+                value = str(decision.get("value") or "").strip()
+                if value:
+                    candidates.add(value)
+    return candidates
+
+
+def clear_operator_crowdsec_probe_ban(
+    master_ip: str,
+    proxmox_host: str,
+    kubeconfig: Path,
+    kubectl: str,
+    source_ip: str,
+) -> bool:
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        pod_name = run_stdout(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "-n",
+                "crowdsec",
+                "get",
+                "pods",
+                "-l",
+                "type=lapi",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+            ],
+            check=False,
+        )
+        if not pod_name:
+            return False
+        decisions_raw = run_stdout(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "-n",
+                "crowdsec",
+                "exec",
+                pod_name,
+                "--",
+                "cscli",
+                "decisions",
+                "list",
+                "-o",
+                "json",
+            ],
+            check=False,
+        )
+        try:
+            decisions_payload = json.loads(decisions_raw) if decisions_raw else []
+        except json.JSONDecodeError:
+            return False
+        if not crowdsec_has_operator_probe_ban(decisions_payload, source_ip):
+            return False
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "-n",
+                "crowdsec",
+                "exec",
+                pod_name,
+                "--",
+                "cscli",
+                "decisions",
+                "delete",
+                "--ip",
+                source_ip,
+                "--scenario",
+                "crowdsecurity/crowdsec-appsec-outofband",
+            ],
+            check=False,
+            capture_output=True,
+        )
+    return True
+
+
+def clear_current_operator_crowdsec_probe_ban(
+    master_ip: str,
+    proxmox_host: str,
+    kubeconfig: Path,
+    kubectl: str,
+) -> bool:
+    public_ip = detect_public_ip()
+    if public_ip and clear_operator_crowdsec_probe_ban(master_ip, proxmox_host, kubeconfig, kubectl, public_ip):
+        return True
+
+    with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        pod_name = run_stdout(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "-n",
+                "crowdsec",
+                "get",
+                "pods",
+                "-l",
+                "type=lapi",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+            ],
+            check=False,
+        )
+        if not pod_name:
+            return False
+        decisions_raw = run_stdout(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "-n",
+                "crowdsec",
+                "exec",
+                pod_name,
+                "--",
+                "cscli",
+                "decisions",
+                "list",
+                "-o",
+                "json",
+            ],
+            check=False,
+        )
+        try:
+            decisions_payload = json.loads(decisions_raw) if decisions_raw else []
+        except json.JSONDecodeError:
+            return False
+        candidates = crowdsec_operator_probe_ban_ips(decisions_payload)
+        if len(candidates) != 1:
+            return False
+        candidate_ip = next(iter(candidates))
+        run(
+            [
+                kubectl,
+                "--kubeconfig",
+                str(session_kubeconfig),
+                "-n",
+                "crowdsec",
+                "exec",
+                pod_name,
+                "--",
+                "cscli",
+                "decisions",
+                "delete",
+                "--ip",
+                candidate_ip,
+                "--scenario",
+                "crowdsecurity/crowdsec-appsec-outofband",
+            ],
+            check=False,
+            capture_output=True,
+        )
+    return True
+
+
+def verify_web(
+    domain_name: str,
+    retries: int = 30,
+    sleep_seconds: int = 10,
+    *,
+    master_ip: str | None = None,
+    proxmox_host: str | None = None,
+    kubeconfig: Path | None = None,
+    kubectl: str = "kubectl",
+    allow_crowdsec_recovery: bool = True,
+) -> None:
     endpoints = load_endpoint_specs(domain_name)
     results: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
@@ -4957,6 +5193,27 @@ def verify_web(domain_name: str, retries: int = 30, sleep_seconds: int = 10) -> 
     overall = "full-success" if not failures else "partial-failure"
     reachable = len(results) - len(failures)
     print(f"Endpoint verification result: {overall} ({reachable}/{len(results)} reachable)")
+    if (
+        failures
+        and allow_crowdsec_recovery
+        and master_ip
+        and proxmox_host
+        and kubeconfig is not None
+        and all(result["status"] == "403" for result in failures)
+    ):
+        public_ip = detect_public_ip()
+        if public_ip and clear_operator_crowdsec_probe_ban(master_ip, proxmox_host, kubeconfig, kubectl, public_ip):
+            print("[warn] Cleared a temporary CrowdSec AppSec ban for the current operator IP; retrying public URL verification once.")
+            return verify_web(
+                domain_name,
+                retries=retries,
+                sleep_seconds=sleep_seconds,
+                master_ip=master_ip,
+                proxmox_host=proxmox_host,
+                kubeconfig=kubeconfig,
+                kubectl=kubectl,
+                allow_crowdsec_recovery=False,
+            )
     if failures:
         print("Failed endpoints:")
         for result in failures:
@@ -9106,8 +9363,27 @@ def cmd_cleanup_security_signal_residue(args: argparse.Namespace) -> None:
     cleanup_security_signal_residue(args.master_ip, args.proxmox_host, Path(args.kubeconfig), args.kubectl)
 
 
+def cmd_clear_crowdsec_operator_ban(args: argparse.Namespace) -> None:
+    cleared = clear_current_operator_crowdsec_probe_ban(
+        args.master_ip,
+        args.proxmox_host,
+        Path(args.kubeconfig),
+        args.kubectl,
+    )
+    if cleared:
+        print("[ok] Cleared a temporary CrowdSec AppSec ban for the current operator IP.")
+    else:
+        print("[ok] No temporary CrowdSec AppSec ban was active for the current operator IP.")
+
+
 def cmd_verify_web(args: argparse.Namespace) -> None:
-    verify_web(args.domain)
+    verify_web(
+        args.domain,
+        master_ip=args.master_ip,
+        proxmox_host=args.proxmox_host,
+        kubeconfig=Path(args.kubeconfig) if args.kubeconfig else None,
+        kubectl=args.kubectl or "kubectl",
+    )
 
 
 def cmd_sync_cloudflare(args: argparse.Namespace) -> None:
@@ -9319,8 +9595,19 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--kubectl", default="kubectl")
     command.set_defaults(func=cmd_cleanup_security_signal_residue)
 
+    command = subparsers.add_parser("clear-crowdsec-operator-ban")
+    command.add_argument("--master-ip", required=True)
+    command.add_argument("--proxmox-host", required=True)
+    command.add_argument("--kubeconfig", required=True)
+    command.add_argument("--kubectl", default="kubectl")
+    command.set_defaults(func=cmd_clear_crowdsec_operator_ban)
+
     command = subparsers.add_parser("verify-web")
     command.add_argument("--domain", required=True)
+    command.add_argument("--master-ip")
+    command.add_argument("--proxmox-host")
+    command.add_argument("--kubeconfig")
+    command.add_argument("--kubectl")
     command.set_defaults(func=cmd_verify_web)
 
     command = subparsers.add_parser("sync-cloudflare")

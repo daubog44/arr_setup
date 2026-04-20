@@ -2951,6 +2951,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
     def test_taskfiles_wire_media_post_install(self) -> None:
         taskfile = (ROOT / "Taskfile.yml").read_text(encoding="utf-8")
         media_taskfile = (ROOT / "Taskfile.media.yml").read_text(encoding="utf-8")
+        internal_taskfile = (ROOT / "Taskfile.internal.yml").read_text(encoding="utf-8")
 
         self.assertIn("media:\n    taskfile: ./Taskfile.media.yml", taskfile)
         self.assertIn("- task: media:post-install", taskfile)
@@ -2958,6 +2959,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("verify:arr-flow", taskfile)
         self.assertIn("media:verify-flow", taskfile)
         self.assertIn("verify-arr-flow", media_taskfile)
+        self.assertIn('verify-web --domain "{{.DOMAIN_NAME_VALUE}}" --master-ip "{{.MASTER_IP}}"', internal_taskfile)
+        self.assertIn("clear-crowdsec-operator-ban", internal_taskfile)
 
     def test_env_example_documents_jellyfin_admin_overrides(self) -> None:
         env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -2997,6 +3000,77 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("Readarr` stays deferred", readme)
         self.assertIn("archived/deprecated", readme)
         self.assertIn("public application URL", readme)
+        self.assertIn("docs/reference/operator-bootstrap.md", readme)
+        self.assertIn("docs/reference/media-stack.md", readme)
+        self.assertIn("docs/reference/security-stack.md", readme)
+
+    def test_reference_docs_cover_bootstrap_media_and_security_contracts(self) -> None:
+        operator = (ROOT / "docs" / "reference" / "operator-bootstrap.md").read_text(encoding="utf-8")
+        media = (ROOT / "docs" / "reference" / "media-stack.md").read_text(encoding="utf-8")
+        security = (ROOT / "docs" / "reference" / "security-stack.md").read_text(encoding="utf-8")
+        task_up_runbook = (ROOT / "docs" / "runbooks" / "task-up.md").read_text(encoding="utf-8")
+
+        self.assertIn("task up", operator)
+        self.assertIn("`.env`", operator)
+        self.assertIn("task down", operator)
+        self.assertIn("Seerr is a request broker", media)
+        self.assertIn("Prowlarr is the indexer source of truth", media)
+        self.assertIn("Italian-First Defaults", media)
+        self.assertIn("Cloudflare", security)
+        self.assertIn("CrowdSec", security)
+        self.assertIn("volumetric DDoS", security)
+        self.assertIn("docs/reference/operator-bootstrap.md", task_up_runbook)
+
+
+class EndpointVerificationTests(unittest.TestCase):
+    def test_parse_cloudflare_trace_ip_extracts_valid_address(self) -> None:
+        body = "fl=22f23\nh=www.cloudflare.com\nip=203.0.113.24\nts=1234"
+        self.assertEqual(haac.parse_cloudflare_trace_ip(body), "203.0.113.24")
+
+    def test_crowdsec_has_operator_probe_ban_detects_matching_ip(self) -> None:
+        payload = [
+            {
+                "scenario": "crowdsecurity/crowdsec-appsec-outofband",
+                "decisions": [{"scope": "Ip", "value": "203.0.113.24"}],
+            }
+        ]
+        self.assertTrue(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.24"))
+        self.assertFalse(haac.crowdsec_has_operator_probe_ban(payload, "203.0.113.25"))
+        self.assertEqual(haac.crowdsec_operator_probe_ban_ips(payload), {"203.0.113.24"})
+
+    def test_verify_web_retries_once_after_crowdsec_operator_ban_cleanup(self) -> None:
+        endpoint = {
+            "name": "auth",
+            "namespace": "mgmt",
+            "url": "https://auth.example.com",
+            "auth": "public",
+        }
+        responses = iter(
+            [
+                {"status": 403, "location": "", "body": ""},
+                {"status": 200, "location": "", "body": "<html>ok</html>"},
+            ]
+        )
+        with mock.patch.object(haac, "load_endpoint_specs", return_value=[endpoint]):
+            with mock.patch.object(haac.endpointlib, "probe_web_response", side_effect=lambda url: next(responses)):
+                with mock.patch.object(
+                    haac.endpointlib,
+                    "endpoint_verification_success",
+                    side_effect=lambda endpoint, response, auth_url: int(response["status"]) == 200,
+                ):
+                    with mock.patch.object(haac, "detect_public_ip", return_value="203.0.113.24"):
+                        with mock.patch.object(haac, "clear_operator_crowdsec_probe_ban", return_value=True) as clear_mock:
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                haac.verify_web(
+                                    "example.com",
+                                    retries=1,
+                                    sleep_seconds=0,
+                                    master_ip="192.168.0.10",
+                                    proxmox_host="192.168.0.20",
+                                    kubeconfig=Path("demo"),
+                                    kubectl="kubectl",
+                                )
+        clear_mock.assert_called_once_with("192.168.0.10", "192.168.0.20", Path("demo"), "kubectl", "203.0.113.24")
 
     def test_recyclarr_config_template_vendors_official_profiles_with_secret_refs(self) -> None:
         config = (
@@ -3203,6 +3277,7 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("crowdsecurity/appsec-virtual-patching", app_template)
         self.assertIn("crowdsecurity/appsec-crs", app_template)
         self.assertIn("crowdsecurity/appsec-generic-rules", app_template)
+        self.assertIn("crowdsecurity/http-crawl-non_statics", app_template)
         self.assertIn("serviceMonitor:", app_template)
         self.assertIn("podMonitor:", app_template)
         self.assertIn("crowdsec-bouncer-traefik-plugin", traefik_template)

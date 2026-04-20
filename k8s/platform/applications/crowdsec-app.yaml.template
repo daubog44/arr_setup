@@ -17,6 +17,12 @@ spec:
       values: |
         container_runtime: containerd
 
+        config:
+          simulation.yaml: |
+            simulation: false
+            exclusions:
+              - crowdsecurity/http-crawl-non_statics
+
         agent:
           acquisition:
             - namespace: kube-system

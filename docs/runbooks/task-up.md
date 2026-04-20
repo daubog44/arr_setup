@@ -6,6 +6,14 @@ Run one command that provisions, configures, deploys, and verifies the homelab.
 
 That same command is also the normal recovery path after a partial or converged run. Operators should rerun `task up` unless the failure output explicitly says a manual fix is required first.
 
+## Related References
+
+Use these alongside this runbook when you need the full repo contract:
+
+- `docs/reference/operator-bootstrap.md`
+- `docs/reference/media-stack.md`
+- `docs/reference/security-stack.md`
+
 ## Preferred Commands
 
 - Windows: `.\haac.ps1 up`

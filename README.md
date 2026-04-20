@@ -124,6 +124,16 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 - `verify-all`: cluster and endpoint checks
 - `down`: graceful shutdown and destroy
 
+## Detailed References
+
+The quick start and command summary live here, but the durable detailed guides now live under `docs/reference/`:
+
+- `docs/reference/operator-bootstrap.md`: the real `task up` phase contract, generated artifact boundaries, rerun paths, and codebase split
+- `docs/reference/media-stack.md`: Seerr, Prowlarr, ARR, downloader, NAS, and Jellyfin request-to-playback flow
+- `docs/reference/security-stack.md`: Cloudflare, Authelia, Kyverno, Falco, Trivy, and CrowdSec layering
+
+Use those guides when changing bootstrap, media automation, or security behavior instead of treating the README as the only source of truth.
+
 ## Task Up Contract
 
 `task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline. The shell wrappers now prefer the repo-local Go/Cobra entrypoint when `go` is available, pass raw Task arguments through unchanged, and fall back to the Python bridge if the staged Go path is unavailable or fails.
