@@ -78,6 +78,7 @@ The portable set is:
 
 The remaining system dependencies stay OS-level on purpose:
 
+- `go`
 - `python`
 - `git`
 - `ssh`
@@ -95,7 +96,7 @@ If you do have `task` installed, `task up` still works.
 
 1. Copy `.env.example` to `.env`.
 2. Fill in the required secrets and infrastructure values.
-3. Run `python scripts/haac.py install-tools` or the local wrapper:
+3. Run the local wrapper to bootstrap the repo-local tools and build the Cobra entrypoint:
    - Windows: `.\haac.ps1 install-tools`
    - Linux/macOS: `sh ./haac.sh install-tools`
 4. Run `python scripts/haac.py check-env` or:
@@ -136,7 +137,7 @@ Use those guides when changing bootstrap, media automation, or security behavior
 
 ## Task Up Contract
 
-`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline. The shell wrappers now prefer the repo-local Go/Cobra entrypoint when `go` is available, pass raw Task arguments through unchanged, and fall back to the Python bridge if the staged Go path is unavailable or fails.
+`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline. The shell wrappers now execute a repo-local Go/Cobra binary, preserve raw Task arguments unchanged, and build that binary in place with `go build` only when it is missing.
 
 That bootstrap path is also the supported rerun path. A partial or previously successful run should be recoverable by rerunning the same command unless the failure output explicitly says manual intervention is required.
 

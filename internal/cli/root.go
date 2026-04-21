@@ -38,14 +38,14 @@ func Execute() int {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "haac",
-		Short:         "Staged HaaC operator CLI",
-		Long:          "HaaC keeps Task as the product surface. Known maintenance commands live here, and any other arguments pass through to Task unchanged.",
+		Short:         "HaaC operator CLI",
+		Long:          "HaaC exposes a Cobra-owned operator surface and passes supported task targets through to the repo-local Task binary without a Python fallback.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 
+	root.AddCommand(newInstallToolsCmd())
 	root.AddCommand(newTaskCmd())
-	root.AddCommand(newLegacyCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }
@@ -68,26 +68,10 @@ func newTaskCmd() *cobra.Command {
 	}
 }
 
-func newLegacyCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:                "legacy [haac.py args...]",
-		Short:              "Run the legacy Python CLI directly",
-		Hidden:             true,
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			bridge, err := newBridge()
-			if err != nil {
-				return err
-			}
-			return bridge.runLegacy(args)
-		},
-	}
-}
-
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the staged Cobra foundation version",
+		Short: "Print the HaaC CLI version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println(version)
 		},
@@ -103,7 +87,7 @@ func wantsTaskPassthrough(args []string) bool {
 		return false
 	}
 	switch first {
-	case "help", "legacy", "task", "version":
+	case "help", "install-tools", "task", "version":
 		return false
 	case "-h", "--help":
 		return false

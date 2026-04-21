@@ -3,14 +3,69 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-else
-  echo "python3 or python is required" >&2
-  exit 1
-fi
+host_platform() {
+  uname_s=$(uname -s | tr '[:upper:]' '[:lower:]')
+  case "$uname_s" in
+    linux*) printf '%s\n' "linux" ;;
+    darwin*) printf '%s\n' "darwin" ;;
+    *) echo "unsupported platform for haac: $uname_s" >&2; exit 1 ;;
+  esac
+}
+
+host_arch() {
+  uname_m=$(uname -m | tr '[:upper:]' '[:lower:]')
+  case "$uname_m" in
+    x86_64|amd64) printf '%s\n' "amd64" ;;
+    arm64|aarch64) printf '%s\n' "arm64" ;;
+    *) echo "unsupported architecture for haac: $uname_m" >&2; exit 1 ;;
+  esac
+}
+
+haac_binary_path() {
+  printf '%s/.tools/%s-%s/bin/haac\n' "$SCRIPT_DIR" "$(host_platform)" "$(host_arch)"
+}
+
+haac_binary_stale() {
+  binary=$1
+  if [ ! -x "$binary" ]; then
+    return 0
+  fi
+
+  for source in "$SCRIPT_DIR/go.mod" "$SCRIPT_DIR/go.sum"; do
+    if [ -f "$source" ] && [ "$source" -nt "$binary" ]; then
+      return 0
+    fi
+  done
+
+  if find "$SCRIPT_DIR/cmd" "$SCRIPT_DIR/internal" -type f -newer "$binary" -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+ensure_haac_binary() {
+  binary=$(haac_binary_path)
+  if [ -x "$binary" ] && ! haac_binary_stale "$binary"; then
+    printf '%s\n' "$binary"
+    return 0
+  fi
+
+  if ! command -v go >/dev/null 2>&1; then
+    echo "repo-local haac binary not found at $binary and Go is unavailable. Install Go or build cmd/haac first." >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "$binary")"
+  (
+    cd "$SCRIPT_DIR"
+    go build -o "$binary" ./cmd/haac
+  )
+  if [ ! -x "$binary" ]; then
+    echo "failed to build repo-local haac binary at $binary" >&2
+    exit 1
+  fi
+  printf '%s\n' "$binary"
+}
 
 for arg in "$@"; do
   case "$arg" in
@@ -21,12 +76,5 @@ for arg in "$@"; do
   esac
 done
 
-if command -v go >/dev/null 2>&1; then
-  cd "$SCRIPT_DIR"
-  if go run ./cmd/haac "$@"; then
-    exit 0
-  fi
-  echo "warning: Go/Cobra entrypoint failed; falling back to the Python bridge." >&2
-fi
-
-exec "$PYTHON_BIN" "$SCRIPT_DIR/scripts/haac.py" task-run -- "$@"
+HAAC_BIN=$(ensure_haac_binary)
+exec "$HAAC_BIN" "$@"

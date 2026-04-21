@@ -13,6 +13,7 @@ func TestWantsTaskPassthrough(t *testing.T) {
 		{name: "empty args show cobra help", args: nil, want: false},
 		{name: "help subcommand stays local", args: []string{"help"}, want: false},
 		{name: "help flag stays local", args: []string{"--help"}, want: false},
+		{name: "install-tools stays local", args: []string{"install-tools"}, want: false},
 		{name: "version subcommand stays local", args: []string{"version"}, want: false},
 		{name: "task passthrough handles target", args: []string{"up"}, want: true},
 		{name: "task passthrough keeps global flag ordering", args: []string{"-n", "up"}, want: true},
@@ -63,5 +64,15 @@ func TestEnsurePublicTaskArgs(t *testing.T) {
 	}
 	if err := ensurePublicTaskArgs([]string{"task", "internal:deploy-argocd"}); err == nil {
 		t.Fatal("ensurePublicTaskArgs did not reject an internal task")
+	}
+}
+
+func TestRootCommandDoesNotExposeLegacySubcommand(t *testing.T) {
+	t.Parallel()
+
+	for _, cmd := range newRootCmd().Commands() {
+		if cmd.Name() == "legacy" {
+			t.Fatal("legacy subcommand should not be exposed once the Cobra surface is the supported entrypoint")
+		}
 	}
 }

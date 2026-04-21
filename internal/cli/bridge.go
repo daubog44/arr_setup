@@ -14,8 +14,6 @@ type bridge struct {
 	repoRoot string
 }
 
-var lookPath = exec.LookPath
-
 func newBridge() (*bridge, error) {
 	root, err := repoRoot()
 	if err != nil {
@@ -31,8 +29,8 @@ func repoRoot() (string, error) {
 	}
 	for current := cwd; ; current = filepath.Dir(current) {
 		taskfile := filepath.Join(current, "Taskfile.yml")
-		legacyCLI := filepath.Join(current, "scripts", "haac.py")
-		if fileExists(taskfile) && fileExists(legacyCLI) {
+		goMod := filepath.Join(current, "go.mod")
+		if fileExists(taskfile) && fileExists(goMod) {
 			return current, nil
 		}
 		parent := filepath.Dir(current)
@@ -57,15 +55,6 @@ func (b *bridge) runTask(args []string) error {
 	localTaskDir := filepath.Dir(taskBinary)
 	env = upsertEnv(env, "PATH", prependPath(localTaskDir, os.Getenv("PATH")))
 	return b.run(taskBinary, args, env)
-}
-
-func (b *bridge) runLegacy(args []string) error {
-	pythonBinary, err := pythonBinary()
-	if err != nil {
-		return err
-	}
-	commandArgs := append([]string{filepath.Join(b.repoRoot, "scripts", "haac.py")}, args...)
-	return b.run(pythonBinary, commandArgs, os.Environ())
 }
 
 func (b *bridge) run(binary string, args []string, env []string) error {
@@ -98,24 +87,6 @@ func taskBinaryName() string {
 		return "task.exe"
 	}
 	return "task"
-}
-
-func pythonBinary() (string, error) {
-	if requested := strings.TrimSpace(os.Getenv("PYTHON_CMD")); requested != "" {
-		if binary, err := lookPath(requested); err == nil {
-			return binary, nil
-		}
-	}
-	candidates := []string{"python3", "python"}
-	if runtime.GOOS == "windows" {
-		candidates = []string{"python", "python3"}
-	}
-	for _, candidate := range candidates {
-		if binary, err := lookPath(candidate); err == nil {
-			return binary, nil
-		}
-	}
-	return "", errors.New("python interpreter not found")
 }
 
 func prependPath(first, current string) string {
