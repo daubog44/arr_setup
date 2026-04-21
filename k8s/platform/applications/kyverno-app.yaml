@@ -73,4 +73,5 @@ spec:
       - CreateNamespace=true
       - SkipDryRunOnMissingResource=true
       - RespectIgnoreDifferences=true
+      - ClientSideApplyMigration=false
       - ServerSideApply=true
