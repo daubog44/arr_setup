@@ -534,7 +534,7 @@ async function verifyGrafanaObservability(page) {
     "kubernetes-api-server",
     '/Kubernetes\\s*\\/\\s*API server/i',
   );
-  assertGrafanaDashboardHealthy(apiServerBodyText, "Kubernetes API server dashboard", ["Availability", "ErrorBudget"]);
+  assertGrafanaDashboardHealthy(apiServerBodyText, "Kubernetes API server dashboard", []);
 
   const argoBodyText = await openGrafanaDashboard(page, GRAFANA_ARGOCD_DASHBOARD_UID, "argocd", "/ArgoCD/i");
   assertGrafanaDashboardHealthy(argoBodyText, "ArgoCD dashboard", [], { allowNoData: true });

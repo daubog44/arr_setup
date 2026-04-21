@@ -1840,6 +1840,59 @@ class ArgocdRevisionGateTests(unittest.TestCase):
                         interval_seconds=1,
                     )
 
+    def test_sync_argocd_application_patches_operation_sync(self) -> None:
+        with mock.patch.object(haac, "run") as run:
+            haac.sync_argocd_application("kubectl", Path("demo-kubeconfig"), "policy-reporter")
+
+        command = run.call_args.args[0]
+        payload = json.loads(command[-1])
+        self.assertEqual(
+            command[:-1],
+            [
+                "kubectl",
+                "--kubeconfig",
+                "demo-kubeconfig",
+                "patch",
+                "application",
+                "policy-reporter",
+                "-n",
+                "argocd",
+                "--type",
+                "merge",
+                "--patch",
+            ],
+        )
+        self.assertEqual(payload["operation"]["initiatedBy"]["username"], "haac")
+        self.assertEqual(payload["operation"]["sync"]["syncStrategy"], {"hook": {}})
+
+    def test_recover_missing_api_resource_restarts_sync_once_crd_exists(self) -> None:
+        app = {
+            "status": {
+                "operationState": {
+                    "message": (
+                        'one or more synchronization tasks completed unsuccessfully, reason: '
+                        'resource mapping not found for name: "policy-reporter-monitoring" namespace: "security" '
+                        'from "/tmp/demo": no matches for kind "ServiceMonitor" in version '
+                        '"monitoring.coreos.com/v1" ensure CRDs are installed first'
+                    )
+                }
+            }
+        }
+
+        with mock.patch.object(haac, "monitoring_servicemonitor_crd_available", return_value=True):
+            with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                with mock.patch.object(haac, "sync_argocd_application") as sync:
+                    healed = haac.recover_missing_api_resource_argocd_operation(
+                        "kubectl",
+                        Path("demo-kubeconfig"),
+                        "policy-reporter",
+                        app,
+                    )
+
+        self.assertTrue(healed)
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "policy-reporter", hard=True)
+        sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "policy-reporter")
+
 
 class ArrStackSurfaceTests(unittest.TestCase):
     def test_up_task_phases_include_media_post_install(self) -> None:
@@ -1928,6 +1981,140 @@ class ArrStackSurfaceTests(unittest.TestCase):
         self.assertEqual(headers["Host"], haac.QBITTORRENT_WEBUI_HOST_HEADER)
         self.assertEqual(headers["Referer"], f"http://{haac.QBITTORRENT_WEBUI_HOST_HEADER}/")
 
+    def test_prowlarr_baseline_indexers_include_public_movie_and_tv_sources(self) -> None:
+        self.assertEqual(
+            tuple(item["name"] for item in haac.PROWLARR_BASELINE_INDEXERS),
+            ("YTS", "1337x"),
+        )
+        self.assertEqual(haac.PROWLARR_BASELINE_INDEXERS[1]["tags"], ("flaresolverr",))
+
+    def test_arr_verifier_candidates_use_curated_public_domain_smoke_titles(self) -> None:
+        self.assertEqual(
+            tuple(item["title"] for item in haac.ARR_VERIFIER_CANDIDATES),
+            (
+                "Metropolis",
+                "Charade",
+                "Carnival of Souls",
+                "The Last Man on Earth",
+                "The Cabinet of Dr. Caligari",
+            ),
+        )
+
+    def test_default_prowlarr_app_profile_id_prefers_standard(self) -> None:
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            return_value=[
+                {"id": 2, "name": "Secondary"},
+                {"id": 1, "name": "Standard"},
+            ],
+        ):
+            profile_id = haac.default_prowlarr_app_profile_id(9696, api_key="api-key")
+
+        self.assertEqual(profile_id, 1)
+
+    def test_ensure_prowlarr_flaresolverr_proxy_creates_tagged_proxy(self) -> None:
+        schema_item = {
+            "implementation": "FlareSolverr",
+            "fields": [
+                {"name": "host", "value": "http://localhost:8191/"},
+                {"name": "requestTimeout", "value": 60},
+            ],
+            "tags": [],
+        }
+        configured_proxy = {
+            "implementation": "FlareSolverr",
+            "fields": [
+                {"name": "host", "value": haac.FLARESOLVERR_INTERNAL_URL},
+                {"name": "requestTimeout", "value": 60},
+            ],
+            "tags": [1],
+        }
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [],
+                [{"label": "flaresolverr", "id": 1}],
+                [],
+                [schema_item],
+                [configured_proxy],
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_text", side_effect=[(201, "{}"), (201, "{}")]) as request_text:
+                result = haac.ensure_prowlarr_flaresolverr_proxy(9696, api_key="api-key")
+
+        first_payload = request_text.call_args_list[0].kwargs["payload"]
+        second_payload = request_text.call_args_list[1].kwargs["payload"]
+        self.assertEqual(first_payload, {"label": "flaresolverr"})
+        self.assertEqual(second_payload["name"], "FlareSolverr")
+        self.assertEqual(second_payload["tags"], [1])
+        self.assertEqual(haac.field_value(second_payload["fields"], "host"), haac.FLARESOLVERR_INTERNAL_URL)
+        self.assertEqual(result[0]["implementation"], "FlareSolverr")
+
+    def test_ensure_prowlarr_indexer_uses_schema_name_and_magnet_preference(self) -> None:
+        schema_item = {
+            "name": "YTS",
+            "indexerUrls": ["https://yts.bz/"],
+            "appProfileId": 0,
+            "fields": [
+                {"name": "baseUrl"},
+                {"name": "torrentBaseSettings.preferMagnetUrl", "value": False},
+            ],
+        }
+        configured_item = {
+            "name": "YTS",
+            "appProfileId": 1,
+            "tags": [7],
+            "fields": [
+                {"name": "baseUrl", "value": "https://yts.bz/"},
+                {"name": "torrentBaseSettings.preferMagnetUrl", "value": True},
+            ],
+        }
+        with mock.patch.object(
+            haac,
+            "http_request_json",
+            side_effect=[
+                [],
+                [{"id": 1, "name": "Standard"}],
+                [],
+                [{"label": "flaresolverr", "id": 7}],
+                [schema_item],
+                [configured_item],
+            ],
+        ):
+            with mock.patch.object(haac, "http_request_text", return_value=(201, "{}")) as request_text:
+                result = haac.ensure_prowlarr_indexer(
+                    9696,
+                    api_key="api-key",
+                    name="YTS",
+                    tag_labels=("flaresolverr",),
+                )
+
+        payload = request_text.call_args.kwargs["payload"]
+        self.assertEqual(result[0]["name"], "YTS")
+        self.assertEqual(payload["name"], "YTS")
+        self.assertEqual(payload["appProfileId"], 1)
+        self.assertEqual(payload["tags"], [7])
+        self.assertTrue(haac.field_value(payload["fields"], "torrentBaseSettings.preferMagnetUrl"))
+        self.assertEqual(haac.field_value(payload["fields"], "baseUrl"), "https://yts.bz/")
+
+    def test_run_prowlarr_command_posts_requested_name(self) -> None:
+        with mock.patch.object(haac, "http_request_json", return_value={"name": "ApplicationIndexerSync"}) as request_json:
+            result = haac.run_prowlarr_command(9696, api_key="api-key", name="ApplicationIndexerSync")
+
+        self.assertEqual(result["name"], "ApplicationIndexerSync")
+        self.assertEqual(request_json.call_args.kwargs["payload"], {"name": "ApplicationIndexerSync"})
+
+    def test_trigger_radarr_release_download_injects_movie_id_when_missing(self) -> None:
+        release = {"guid": "release-guid", "indexerId": 2}
+        with mock.patch.object(haac, "http_request_json", return_value={"ok": True}) as request_json:
+            result = haac.trigger_radarr_release_download(7878, api_key="radarr-key", release=release, movie_id=42)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(request_json.call_args.kwargs["payload"]["movieId"], 42)
+        self.assertEqual(request_json.call_args.kwargs["payload"]["guid"], "release-guid")
+
     def test_exact_seeded_prowlarr_releases_prefers_small_seeded_exact_title_year(self) -> None:
         results = [
             {"title": "The General (1926) [1080p] [BluRay] [YTS] [YIFY]", "size": 1713691904, "seeders": 96},
@@ -1944,6 +2131,24 @@ class ArrStackSurfaceTests(unittest.TestCase):
             "The General (1926) [720p] [BluRay] [YTS] [YIFY]",
             "The General (1926) [1080p] [BluRay] [YTS] [YIFY]",
         ])
+
+    def test_exact_jellyfin_movie_match_accepts_localized_title_when_year_and_path_match(self) -> None:
+        items = [
+            {
+                "Name": "L'ultimo uomo della Terra",
+                "ProductionYear": 1964,
+                "Path": "/data/movies/The Last Man on Earth (1964)/The Last Man on Earth (1964) {imdb-tt0058700} [WEBRip-720p][Opus 2.0][x265]-budgetbits.mkv",
+            }
+        ]
+
+        match = haac.exact_jellyfin_movie_match(
+            items,
+            title="The Last Man on Earth",
+            year=1964,
+            imported_file_path="/data/movies/The Last Man on Earth (1964)/The Last Man on Earth (1964) {imdb-tt0058700} [WEBRip-720p][Opus 2.0][x265]-budgetbits.mkv",
+        )
+
+        self.assertEqual(match["Name"], "L'ultimo uomo della Terra")
 
     def test_arr_verifier_candidate_rank_prefers_fresh_title_over_stale_existing_movie(self) -> None:
         fresh_rank = haac.arr_verifier_candidate_rank(
@@ -1969,6 +2174,36 @@ class ArrStackSurfaceTests(unittest.TestCase):
 
         self.assertLess(imported_rank, fresh_rank)
 
+    def test_arr_verifier_candidate_rank_deprioritizes_titles_only_present_in_jellyfin(self) -> None:
+        fresh_rank = haac.arr_verifier_candidate_rank(
+            {},
+            [{"title": "Night of the Living Dead (1968) [BluRay] [720p] [YTS] [YIFY]", "size": 828855296, "seeders": 58}],
+        )
+        stale_library_rank = haac.arr_verifier_candidate_rank(
+            {},
+            [{"title": "Nosferatu A Symphony of Horror 1922 Tinted 1080p BluRay HEVC x265 5.1 BONE", "size": 1673963520, "seeders": 59}],
+            seerr_match={
+                "mediaInfo": {
+                    "jellyfinMediaId": "006091dbf4b87956147ce22c93581932",
+                    "mediaUrl": "https://jellyfin.example/web/#/details?id=006091dbf4b87956147ce22c93581932",
+                }
+            },
+        )
+
+        self.assertLess(fresh_rank, stale_library_rank)
+
+    def test_arr_verifier_candidate_rank_prefers_smaller_smoke_candidate_once_size_is_acceptable(self) -> None:
+        smaller_rank = haac.arr_verifier_candidate_rank(
+            {},
+            [{"title": "The Last Man on Earth (1964) 720p", "size": 315_118_048, "seeders": 20}],
+        )
+        larger_rank = haac.arr_verifier_candidate_rank(
+            {},
+            [{"title": "Metropolis (1927) 1080p", "size": 1_514_190_720, "seeders": 102}],
+        )
+
+        self.assertLess(smaller_rank, larger_rank)
+
     def test_preferred_arr_verifier_release_prefers_download_allowed_small_release(self) -> None:
         releases = [
             {"title": "Large OK", "size": 6_850_472_960, "seeders": 8, "downloadAllowed": True},
@@ -1979,6 +2214,77 @@ class ArrStackSurfaceTests(unittest.TestCase):
         preferred = haac.preferred_arr_verifier_release(releases)
 
         self.assertEqual(preferred["title"], "Small OK")
+
+    def test_preferred_arr_verifier_release_prefers_approved_release_over_rejected_small_one(self) -> None:
+        releases = [
+            {
+                "title": "Night.of.the.Living.Dead.1968.REMASTERED.REPACK.720p.BluRay.999MB.HQ.x265.10bit GalaxyRG",
+                "size": 1_048_172_288,
+                "seeders": 15,
+                "downloadAllowed": True,
+                "approved": False,
+                "rejected": True,
+                "temporarilyRejected": False,
+                "rejections": ["999.6 MB is smaller than minimum allowed 2.4 GB"],
+            },
+            {
+                "title": "Night of the Living Dead 1968 4K SDR 2160p BDRemux Ita Eng x265-NAHOM",
+                "size": 58_765_889_536,
+                "seeders": 3,
+                "downloadAllowed": True,
+                "approved": True,
+                "rejected": False,
+                "temporarilyRejected": False,
+                "rejections": [],
+            },
+        ]
+
+        preferred = haac.preferred_arr_verifier_release(releases)
+
+        self.assertEqual(preferred["title"], "Night of the Living Dead 1968 4K SDR 2160p BDRemux Ita Eng x265-NAHOM")
+
+    def test_console_safe_text_replaces_unencodable_console_characters(self) -> None:
+        fake_stdout = type("FakeStdout", (), {"encoding": "cp1252"})()
+        with mock.patch.object(haac.sys, "stdout", fake_stdout):
+            safe_text = haac.console_safe_text("GalaxyRG ⭐")
+
+        self.assertEqual(safe_text, "GalaxyRG ?")
+
+    def test_torrent_matches_selected_release_prefers_download_id_hash(self) -> None:
+        torrent = {"name": "Metropolis (Restored)", "hash": "7782ab24188091eae3f61fd218b2dffb4bf9cf9c"}
+
+        self.assertTrue(
+            haac.torrent_matches_selected_release(
+                torrent,
+                selected_title="Metropolis (Restored)(1927) MP 4 [Dascubadude]",
+                selected_download_id="7782AB24188091EAE3F61FD218B2DFFB4BF9CF9C",
+            )
+        )
+
+    def test_torrent_matches_selected_release_falls_back_to_normalized_name_overlap(self) -> None:
+        torrent = {"name": "Metropolis (Restored)"}
+
+        self.assertTrue(
+            haac.torrent_matches_selected_release(
+                torrent,
+                selected_title="Metropolis (Restored)(1927) MP 4 [Dascubadude]",
+            )
+        )
+
+    def test_qbittorrent_cleanup_arr_verifier_artifacts_only_targets_incomplete_smoke_titles(self) -> None:
+        torrents = [
+            {"name": "Metropolis (Restored)", "hash": "AAA", "category": "radarr", "progress": 0.25},
+            {"name": "Normal User Download", "hash": "BBB", "category": "radarr", "progress": 0.10},
+            {"name": "Charade", "hash": "CCC", "category": "radarr-imported", "progress": 0.10},
+            {"name": "Carnival of Souls", "hash": "DDD", "category": "radarr", "progress": 1.0},
+        ]
+        with mock.patch.object(haac, "qbittorrent_torrents_info", return_value=torrents):
+            with mock.patch.object(haac, "qbittorrent_delete_torrents") as delete_torrents:
+                removed = haac.qbittorrent_cleanup_arr_verifier_artifacts(8080, opener=object())
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(delete_torrents.call_args.kwargs["hashes"], ["AAA"])
+        self.assertTrue(delete_torrents.call_args.kwargs["delete_files"])
 
     def test_container_media_path_to_host_nas_path_maps_data_root(self) -> None:
         host_path = haac.container_media_path_to_host_nas_path(
@@ -3007,6 +3313,8 @@ class ArrStackRepoFileTests(unittest.TestCase):
     def test_taskfiles_wire_media_post_install(self) -> None:
         taskfile = (ROOT / "Taskfile.yml").read_text(encoding="utf-8")
         media_taskfile = (ROOT / "Taskfile.media.yml").read_text(encoding="utf-8")
+        chaos_taskfile = (ROOT / "Taskfile.chaos.yml").read_text(encoding="utf-8")
+        security_taskfile = (ROOT / "Taskfile.security.yml").read_text(encoding="utf-8")
         internal_taskfile = (ROOT / "Taskfile.internal.yml").read_text(encoding="utf-8")
 
         self.assertIn("media:\n    taskfile: ./Taskfile.media.yml", taskfile)
@@ -3016,6 +3324,9 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("media:verify-flow", taskfile)
         self.assertIn("verify-arr-flow", media_taskfile)
         self.assertIn('"scripts/haac.py" master-ip', taskfile)
+        self.assertIn('"scripts/haac.py" master-ip', media_taskfile)
+        self.assertIn('"scripts/haac.py" master-ip', chaos_taskfile)
+        self.assertIn('"scripts/haac.py" master-ip', security_taskfile)
         self.assertIn('"scripts/haac.py" master-ip', internal_taskfile)
         self.assertIn('verify-web --domain "{{.DOMAIN_NAME_VALUE}}" --master-ip "{{.MASTER_IP}}"', internal_taskfile)
         self.assertIn("clear-crowdsec-operator-ban", internal_taskfile)
@@ -3294,9 +3605,11 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn('pathPrefixes: ["/signalr/messages/negotiate"]', verifier)
         self.assertIn('`${name}.${domainName}`', verifier)
         self.assertIn('pathPrefixes: ["/homelab", "/haac-alerts"]', verifier)
+        self.assertIn('assertGrafanaDashboardHealthy(apiServerBodyText, "Kubernetes API server dashboard", []);', verifier)
         self.assertIn('assertGrafanaDashboardHealthy(argoBodyText, "ArgoCD dashboard", [], { allowNoData: true });', verifier)
         self.assertIn("wait_for_argocd_child_applications_ready", haac_script)
         self.assertIn('ServiceMonitor" in version "monitoring.coreos.com/v1', haac_script)
+        self.assertIn("recover_stale_crowdsec_runtime_registrations", haac_script)
 
     def test_arr_dashboard_configmap_is_repo_managed(self) -> None:
         dashboard = (ROOT / "k8s" / "platform" / "observability" / "arr-stack-dashboard-configmap.yaml").read_text(
@@ -3454,6 +3767,14 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn("name: crowdsec", app_template)
         self.assertIn("chart: crowdsec", app_template)
         self.assertIn("BOUNCER_KEY_traefik", app_template)
+        self.assertIn("unregister_on_exit: true", app_template)
+        self.assertIn("auto_registration:", app_template)
+        self.assertIn('token: "${REGISTRATION_TOKEN}"', app_template)
+        self.assertIn('- "10.42.0.0/16"', app_template)
+        self.assertIn("use_wal: true", app_template)
+        self.assertIn("bouncers_autodelete:", app_template)
+        self.assertIn("agents_autodelete:", app_template)
+        self.assertIn("login_password: 1h", app_template)
         self.assertIn("crowdsecurity/traefik", app_template)
         self.assertIn("crowdsecurity/appsec-virtual-patching", app_template)
         self.assertIn("crowdsecurity/appsec-crs", app_template)
@@ -3500,6 +3821,47 @@ class EndpointVerificationTests(unittest.TestCase):
         self.assertIn("forwardedHeadersTrustedIPs:", rendered)
         self.assertIn("- 10.42.0.0/16", rendered)
         self.assertIn("- 103.21.244.0/22", rendered)
+
+
+class CrowdSecRuntimeRecoveryTests(unittest.TestCase):
+    def test_parse_rfc3339_timestamp_returns_none_for_invalid_values(self) -> None:
+        self.assertIsNone(haac.parse_rfc3339_timestamp(""))
+        self.assertIsNone(haac.parse_rfc3339_timestamp("not-a-timestamp"))
+
+    def test_stale_crowdsec_runtime_machine_names_only_returns_non_ready_stale_matches(self) -> None:
+        machines = [
+            {"machineId": "crowdsec-agent-a", "last_heartbeat": "2026-04-20T09:00:00Z"},
+            {"machineId": "crowdsec-agent-b", "last_heartbeat": "2026-04-20T09:50:00Z"},
+            {"machineId": "crowdsec-agent-c", "last_heartbeat": "2026-04-20T09:00:00Z"},
+        ]
+        pod_readiness = {
+            "crowdsec-agent-a": False,
+            "crowdsec-agent-b": False,
+            "crowdsec-agent-c": True,
+        }
+
+        stale = haac.stale_crowdsec_runtime_machine_names(
+            machines,
+            pod_readiness,
+            now=haac.parse_rfc3339_timestamp("2026-04-20T10:10:00Z"),
+            stale_after_seconds=1800,
+        )
+
+        self.assertEqual(stale, ["crowdsec-agent-a"])
+
+    def test_recover_stale_crowdsec_runtime_registrations_deletes_machine_and_pod(self) -> None:
+        with mock.patch.object(haac, "crowdsec_lapi_pod_name", return_value="crowdsec-lapi-0"):
+            with mock.patch.object(haac, "crowdsec_runtime_pod_readiness", return_value={"crowdsec-agent-a": False}):
+                with mock.patch.object(haac, "crowdsec_registered_machines", return_value=[{"machineId": "crowdsec-agent-a"}]):
+                    with mock.patch.object(haac, "stale_crowdsec_runtime_machine_names", return_value=["crowdsec-agent-a"]):
+                        with mock.patch.object(haac, "delete_crowdsec_machine_registration") as delete_machine:
+                            with mock.patch.object(haac, "delete_crowdsec_runtime_pod") as delete_pod:
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    result = haac.recover_stale_crowdsec_runtime_registrations("kubectl", Path("demo"))
+
+        self.assertTrue(result)
+        delete_machine.assert_called_once_with("kubectl", Path("demo"), lapi_pod="crowdsec-lapi-0", machine_name="crowdsec-agent-a")
+        delete_pod.assert_called_once_with("kubectl", Path("demo"), pod_name="crowdsec-agent-a")
 
 
 if __name__ == "__main__":

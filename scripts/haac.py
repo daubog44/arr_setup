@@ -30,6 +30,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from haaclib import endpoints as endpointlib
@@ -121,6 +122,8 @@ SECURITY_SIGNAL_RESIDUE_TARGETS = {
     "security": ("falco-falcosidekick-ui-", "trivy-operator-"),
 }
 WAIT_FOR_STACK_ROOT_APPLICATIONS = {"haac-root", "haac-platform", "argocd", "haac-workloads", "haac-stack"}
+CROWDSEC_RUNTIME_MACHINE_TYPES = {"agent", "appsec"}
+CROWDSEC_STALE_MACHINE_MAX_AGE_SECONDS = 1800
 TRIVY_NAMESPACED_REPORT_RESOURCES = (
     "configauditreports.aquasecurity.github.io",
     "exposedsecretreports.aquasecurity.github.io",
@@ -342,15 +345,34 @@ ARR_LANGUAGE_SCORE_OVERRIDES = {
 }
 ARR_LANGUAGE_CUSTOM_FORMAT_PREFIX = "HAAC Language: Prefer "
 ARR_VERIFIER_CANDIDATES = (
+    {"query": "Metropolis", "title": "Metropolis", "year": 1927, "tmdbId": 19},
+    {"query": "Charade", "title": "Charade", "year": 1963, "tmdbId": 4808},
+    {"query": "Carnival of Souls", "title": "Carnival of Souls", "year": 1962, "tmdbId": 16093},
+    {"query": "The Last Man on Earth", "title": "The Last Man on Earth", "year": 1964, "tmdbId": 21159},
+    {"query": "The Cabinet of Dr. Caligari", "title": "The Cabinet of Dr. Caligari", "year": 1920, "tmdbId": 234},
+)
+ARR_VERIFIER_LEGACY_CANDIDATES = (
     {"query": "The General", "title": "The General", "year": 1926, "tmdbId": 961},
     {"query": "His Girl Friday", "title": "His Girl Friday", "year": 1940, "tmdbId": 3085},
     {"query": "Nosferatu", "title": "Nosferatu", "year": 1922, "tmdbId": 653},
     {"query": "Night of the Living Dead", "title": "Night of the Living Dead", "year": 1968, "tmdbId": 10331},
     {"query": "Sita Sings the Blues", "title": "Sita Sings the Blues", "year": 2008, "tmdbId": 20529},
 )
+ARR_VERIFIER_CLEANUP_TITLES = tuple(
+    dict.fromkeys(
+        str(item["title"])
+        for item in [*ARR_VERIFIER_CANDIDATES, *ARR_VERIFIER_LEGACY_CANDIDATES]
+    )
+)
 ARR_VERIFIER_PREFERRED_MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024
 ARR_VERIFIER_POLL_SECONDS = 15
 ARR_VERIFIER_AVOID_RELEASE_TOKENS = ("yts", "yify")
+PROWLARR_BASELINE_INDEXERS = (
+    {"name": "YTS", "preferMagnetUrl": True},
+    {"name": "1337x", "preferMagnetUrl": True, "tags": ("flaresolverr",)},
+)
+PROWLARR_FLARESOLVERR_TAG = "flaresolverr"
+FLARESOLVERR_INTERNAL_URL = "http://flaresolverr.media.svc.cluster.local:8191/"
 QBITTORRENT_WEBUI_HOST_HEADER = "127.0.0.1:8080"
 UP_PHASE_ORDER = (
     "Preflight",
@@ -2513,6 +2535,35 @@ def refresh_argocd_application(kubectl: str, kubeconfig: Path, application: str,
     )
 
 
+def sync_argocd_application(kubectl: str, kubeconfig: Path, application: str, *, use_hooks: bool = True) -> None:
+    sync_strategy = {"hook": {}} if use_hooks else {"apply": {}}
+    patch_payload = {
+        "operation": {
+            "initiatedBy": {"username": "haac"},
+            "sync": {
+                "syncStrategy": sync_strategy,
+            },
+        }
+    }
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "patch",
+            "application",
+            application,
+            "-n",
+            "argocd",
+            "--type",
+            "merge",
+            "--patch",
+            json.dumps(patch_payload),
+        ],
+        capture_output=True,
+    )
+
+
 def argocd_tracking_parent_application(app: dict[str, object]) -> str:
     metadata = app.get("metadata") or {}
     annotations = metadata.get("annotations") or {}
@@ -2769,7 +2820,8 @@ def recover_missing_api_resource_argocd_operation(
     if not monitoring_servicemonitor_crd_available(kubectl, kubeconfig):
         return False
     refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
-    print(f"[heal] Refreshed {application} after the ServiceMonitor CRD became available")
+    sync_argocd_application(kubectl, kubeconfig, application)
+    print(f"[heal] Re-synced {application} after the ServiceMonitor CRD became available")
     return True
 
 
@@ -2881,6 +2933,10 @@ def wait_for_argocd_application_ready(
             )
             time.sleep(10)
             continue
+        if application == "crowdsec" and sync_status == "Synced" and health_status == "Progressing":
+            if recover_stale_crowdsec_runtime_registrations(kubectl, kubeconfig):
+                time.sleep(10)
+                continue
 
         if operation_phase in {"Error", "Failed"}:
             detail = (operation_state.get("message") or f"ArgoCD application {application} failed").strip()
@@ -5239,6 +5295,175 @@ def crowdsec_operator_probe_ban_decision_ids(decisions_payload: object, source_i
     return candidates
 
 
+def parse_rfc3339_timestamp(value: object) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def crowdsec_lapi_pod_name(kubectl: str, kubeconfig: Path) -> str:
+    return run_stdout(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "-n",
+            "crowdsec",
+            "get",
+            "pods",
+            "-l",
+            "type=lapi",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        check=False,
+    )
+
+
+def crowdsec_registered_machines(kubectl: str, kubeconfig: Path, *, lapi_pod: str) -> list[dict[str, object]]:
+    machines_raw = run_stdout(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "-n",
+            "crowdsec",
+            "exec",
+            lapi_pod,
+            "--",
+            "cscli",
+            "machines",
+            "list",
+            "-o",
+            "json",
+        ],
+        check=False,
+    )
+    try:
+        payload = json.loads(machines_raw) if machines_raw else []
+    except json.JSONDecodeError:
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def crowdsec_runtime_pod_readiness(kubectl: str, kubeconfig: Path) -> dict[str, bool]:
+    payload = kubectl_json(
+        kubectl,
+        kubeconfig,
+        ["get", "pods", "-n", "crowdsec", "-o", "json"],
+        context="Read CrowdSec runtime pods",
+    )
+    readiness: dict[str, bool] = {}
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        if str(labels.get("k8s-app") or "").strip() != "crowdsec":
+            continue
+        runtime_type = str(labels.get("type") or "").strip()
+        if runtime_type not in CROWDSEC_RUNTIME_MACHINE_TYPES:
+            continue
+        name = str(metadata.get("name") or "").strip()
+        if not name:
+            continue
+        conditions = (item.get("status") or {}).get("conditions") or []
+        ready = any(
+            isinstance(condition, dict)
+            and str(condition.get("type") or "").strip() == "Ready"
+            and str(condition.get("status") or "").strip() == "True"
+            for condition in conditions
+        )
+        readiness[name] = ready
+    return readiness
+
+
+def stale_crowdsec_runtime_machine_names(
+    machines: list[dict[str, object]],
+    pod_readiness: dict[str, bool],
+    *,
+    now: float | None = None,
+    stale_after_seconds: int = CROWDSEC_STALE_MACHINE_MAX_AGE_SECONDS,
+) -> list[str]:
+    current_time = time.time() if now is None else now
+    stale: list[str] = []
+    for machine in machines:
+        name = str(machine.get("machineId") or "").strip()
+        if not name or name not in pod_readiness or pod_readiness[name]:
+            continue
+        last_heartbeat = parse_rfc3339_timestamp(machine.get("last_heartbeat") or machine.get("updated_at"))
+        if last_heartbeat is None:
+            continue
+        if current_time - last_heartbeat >= stale_after_seconds:
+            stale.append(name)
+    return sorted(set(stale))
+
+
+def delete_crowdsec_machine_registration(kubectl: str, kubeconfig: Path, *, lapi_pod: str, machine_name: str) -> None:
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "-n",
+            "crowdsec",
+            "exec",
+            lapi_pod,
+            "--",
+            "cscli",
+            "machines",
+            "delete",
+            "--ignore-missing",
+            machine_name,
+        ],
+        check=False,
+        capture_output=True,
+    )
+
+
+def delete_crowdsec_runtime_pod(kubectl: str, kubeconfig: Path, *, pod_name: str) -> None:
+    run(
+        [
+            kubectl,
+            "--kubeconfig",
+            str(kubeconfig),
+            "-n",
+            "crowdsec",
+            "delete",
+            "pod",
+            pod_name,
+            "--ignore-not-found=true",
+            "--wait=false",
+        ],
+        check=False,
+        capture_output=True,
+    )
+
+
+def recover_stale_crowdsec_runtime_registrations(kubectl: str, kubeconfig: Path) -> bool:
+    lapi_pod = crowdsec_lapi_pod_name(kubectl, kubeconfig)
+    if not lapi_pod:
+        return False
+    pod_readiness = crowdsec_runtime_pod_readiness(kubectl, kubeconfig)
+    if not pod_readiness:
+        return False
+    stale_names = stale_crowdsec_runtime_machine_names(
+        crowdsec_registered_machines(kubectl, kubeconfig, lapi_pod=lapi_pod),
+        pod_readiness,
+    )
+    if not stale_names:
+        return False
+    for machine_name in stale_names:
+        delete_crowdsec_machine_registration(kubectl, kubeconfig, lapi_pod=lapi_pod, machine_name=machine_name)
+        delete_crowdsec_runtime_pod(kubectl, kubeconfig, pod_name=machine_name)
+    print(f"[heal] Pruned stale CrowdSec runtime registrations: {', '.join(stale_names)}")
+    return True
+
+
 def clear_operator_crowdsec_probe_ban(
     master_ip: str,
     proxmox_host: str,
@@ -6067,6 +6292,47 @@ def qbittorrent_torrents_info(
     )
 
 
+def qbittorrent_delete_torrents(
+    port: int,
+    *,
+    opener: urllib.request.OpenerDirector,
+    hashes: list[str],
+    delete_files: bool,
+) -> None:
+    normalized_hashes = [str(value).strip() for value in hashes if str(value).strip()]
+    if not normalized_hashes:
+        return
+    status, body = http_request_form_text(
+        f"http://127.0.0.1:{port}/api/v2/torrents/delete",
+        fields=(
+            ("hashes", "|".join(normalized_hashes)),
+            ("deleteFiles", "true" if delete_files else "false"),
+        ),
+        opener=opener,
+        headers=qbittorrent_webui_headers(),
+    )
+    if status != 200:
+        raise HaaCError(f"qBittorrent cleanup failed.\nHTTP {status}\n{body}")
+
+
+def qbittorrent_cleanup_arr_verifier_artifacts(port: int, *, opener: urllib.request.OpenerDirector) -> int:
+    cleanup_titles = tuple(normalize_media_title(title) for title in ARR_VERIFIER_CLEANUP_TITLES)
+    current = qbittorrent_torrents_info(port, opener=opener)
+    hashes_to_remove = [
+        str(item.get("hash") or item.get("infohash_v1") or "").strip()
+        for item in current
+        if str(item.get("category") or "").strip() == ARR_QBITTORRENT_CATEGORIES["radarr"]
+        and float(item.get("progress") or 0.0) < 1.0
+        and any(
+            candidate in normalize_media_title(str(item.get("name") or ""))
+            or normalize_media_title(str(item.get("name") or "")) in candidate
+            for candidate in cleanup_titles
+        )
+    ]
+    qbittorrent_delete_torrents(port, opener=opener, hashes=hashes_to_remove, delete_files=True)
+    return len([item for item in hashes_to_remove if item])
+
+
 def ensure_qbittorrent_category_paths(
     port: int,
     *,
@@ -6561,6 +6827,18 @@ def schema_item_by_implementation(
         if str(item.get("implementation") or "").strip().lower() == implementation.lower():
             return copy.deepcopy(item)
     raise HaaCError(f"{label} schema does not expose implementation {implementation}.")
+
+
+def schema_item_by_name(
+    schema_items: list[dict[str, object]],
+    *,
+    name: str,
+    label: str,
+) -> dict[str, object]:
+    for item in schema_items:
+        if str(item.get("name") or "").strip().lower() == name.lower():
+            return copy.deepcopy(item)
+    raise HaaCError(f"{label} schema does not expose name {name}.")
 
 
 def field_value(fields: list[dict[str, object]], name: str) -> object:
@@ -7134,6 +7412,203 @@ def ensure_prowlarr_application(
     if str(field_value(configured_fields, "baseUrl") or "").strip() != downstream_url:
         raise HaaCError(f"Prowlarr {implementation} application persisted with an unexpected URL.")
     return current
+
+
+def prowlarr_indexers(port: int, *, api_key: str) -> list[dict[str, object]]:
+    return json_array(http_request_json(f"http://127.0.0.1:{port}/api/v1/indexer", headers={"X-Api-Key": api_key}))
+
+
+def prowlarr_tags(port: int, *, api_key: str) -> list[dict[str, object]]:
+    return json_array(http_request_json(f"http://127.0.0.1:{port}/api/v1/tag", headers={"X-Api-Key": api_key}))
+
+
+def find_prowlarr_tag(items: list[dict[str, object]], *, label: str) -> dict[str, object] | None:
+    for item in items:
+        if str(item.get("label") or "").strip().lower() == label.lower():
+            return copy.deepcopy(item)
+    return None
+
+
+def ensure_prowlarr_tag(port: int, *, api_key: str, label: str) -> dict[str, object]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v1/tag"
+    current = prowlarr_tags(port, api_key=api_key)
+    existing = find_prowlarr_tag(current, label=label)
+    if existing:
+        return existing
+    status, body = http_request_text(base_url, method="POST", payload={"label": label}, headers=headers)
+    if status not in (200, 201, 202):
+        raise HaaCError(f"Prowlarr tag bootstrap failed for {label}.\nHTTP {status}\n{body}")
+    current = prowlarr_tags(port, api_key=api_key)
+    created = find_prowlarr_tag(current, label=label)
+    if not created:
+        raise HaaCError(f"Prowlarr tag {label} did not persist.")
+    return created
+
+
+def prowlarr_indexer_proxies(port: int, *, api_key: str) -> list[dict[str, object]]:
+    return json_array(http_request_json(f"http://127.0.0.1:{port}/api/v1/indexerProxy", headers={"X-Api-Key": api_key}))
+
+
+def find_prowlarr_indexer_proxy(items: list[dict[str, object]], *, implementation: str) -> dict[str, object] | None:
+    for item in items:
+        if str(item.get("implementation") or "").strip().lower() == implementation.lower():
+            return copy.deepcopy(item)
+    return None
+
+
+def ensure_prowlarr_flaresolverr_proxy(port: int, *, api_key: str, tag_label: str = PROWLARR_FLARESOLVERR_TAG) -> list[dict[str, object]]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v1/indexerProxy"
+    tag = ensure_prowlarr_tag(port, api_key=api_key, label=tag_label)
+    tag_id = int(tag.get("id") or 0)
+    if tag_id <= 0:
+        raise HaaCError("Prowlarr FlareSolverr proxy bootstrap could not resolve a usable tag id.")
+    current = prowlarr_indexer_proxies(port, api_key=api_key)
+    existing = find_prowlarr_indexer_proxy(current, implementation="FlareSolverr")
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = next(
+            (copy.deepcopy(item) for item in schema if str(item.get("implementation") or "").strip() == "FlareSolverr"),
+            None,
+        )
+        if payload is None:
+            raise HaaCError("Prowlarr FlareSolverr proxy schema is not available.")
+    fields = json_array(payload.get("fields"))
+    payload["name"] = "FlareSolverr"
+    payload["tags"] = [tag_id]
+    set_field_value(fields, "host", FLARESOLVERR_INTERNAL_URL, required=False)
+    set_field_value(fields, "requestTimeout", 60, required=False)
+    payload["fields"] = fields
+    if payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"Prowlarr FlareSolverr proxy bootstrap failed.\nHTTP {status}\n{body}")
+    current = prowlarr_indexer_proxies(port, api_key=api_key)
+    configured = find_prowlarr_indexer_proxy(current, implementation="FlareSolverr")
+    if not configured:
+        raise HaaCError("Prowlarr FlareSolverr proxy did not persist.")
+    configured_fields = json_array(configured.get("fields"))
+    if int(tag_id) not in [int(value) for value in configured.get("tags") or [] if str(value).strip()]:
+        raise HaaCError("Prowlarr FlareSolverr proxy did not persist the managed tag.")
+    if str(field_value(configured_fields, "host") or "").strip() != FLARESOLVERR_INTERNAL_URL:
+        raise HaaCError("Prowlarr FlareSolverr proxy persisted with an unexpected host URL.")
+    return current
+
+
+def prowlarr_app_profiles(port: int, *, api_key: str) -> list[dict[str, object]]:
+    return json_array(http_request_json(f"http://127.0.0.1:{port}/api/v1/appProfile", headers={"X-Api-Key": api_key}))
+
+
+def default_prowlarr_app_profile_id(port: int, *, api_key: str) -> int:
+    profiles = prowlarr_app_profiles(port, api_key=api_key)
+    profile = preferred_option(profiles, name_preferences=("Standard",))
+    profile_id = int(profile.get("id") or 0)
+    if profile_id <= 0:
+        raise HaaCError("Prowlarr indexer bootstrap could not resolve a usable app profile.")
+    return profile_id
+
+
+def find_prowlarr_indexer(items: list[dict[str, object]], *, name: str) -> dict[str, object] | None:
+    for item in items:
+        if str(item.get("name") or "").strip().lower() == name.lower():
+            return copy.deepcopy(item)
+    return None
+
+
+def ensure_prowlarr_indexer(
+    port: int,
+    *,
+    api_key: str,
+    name: str,
+    prefer_magnet_url: bool = True,
+    tag_labels: tuple[str, ...] = (),
+) -> list[dict[str, object]]:
+    headers = {"X-Api-Key": api_key}
+    base_url = f"http://127.0.0.1:{port}/api/v1/indexer"
+    current = prowlarr_indexers(port, api_key=api_key)
+    default_app_profile_id = default_prowlarr_app_profile_id(port, api_key=api_key)
+    desired_tag_ids = [
+        int(ensure_prowlarr_tag(port, api_key=api_key, label=label).get("id") or 0)
+        for label in tag_labels
+        if str(label).strip()
+    ]
+    if desired_tag_ids and any(tag_id <= 0 for tag_id in desired_tag_ids):
+        raise HaaCError(f"Prowlarr indexer bootstrap could not resolve usable tags for {name}.")
+    existing = find_prowlarr_indexer(current, name=name)
+    if existing:
+        payload = existing
+    else:
+        schema = json_array(http_request_json(f"{base_url}/schema", headers=headers))
+        payload = schema_item_by_name(schema, name=name, label="Prowlarr indexer")
+    fields = json_array(payload.get("fields"))
+    payload["enable"] = True
+    payload["name"] = name
+    payload["priority"] = int(payload.get("priority") or 25)
+    if int(payload.get("appProfileId") or 0) <= 0:
+        payload["appProfileId"] = default_app_profile_id
+    if desired_tag_ids:
+        payload["tags"] = desired_tag_ids
+    indexer_urls = [str(value).strip() for value in payload.get("indexerUrls") or [] if str(value).strip()]
+    if indexer_urls:
+        set_field_value(fields, "baseUrl", indexer_urls[0], required=False)
+    if prefer_magnet_url:
+        set_field_value(fields, "torrentBaseSettings.preferMagnetUrl", True, required=False)
+    payload["fields"] = fields
+    if existing and payload.get("id"):
+        status, body = http_request_text(
+            f"{base_url}/{payload['id']}",
+            method="PUT",
+            payload=payload,
+            headers=headers,
+        )
+        expected = (200, 202)
+    else:
+        status, body = http_request_text(base_url, method="POST", payload=payload, headers=headers)
+        expected = (200, 201, 202)
+    if status not in expected:
+        raise HaaCError(f"Prowlarr indexer bootstrap failed for {name}.\nHTTP {status}\n{body}")
+    current = prowlarr_indexers(port, api_key=api_key)
+    configured = find_prowlarr_indexer(current, name=name)
+    if not configured:
+        raise HaaCError(f"Prowlarr indexer {name} did not persist.")
+    configured_fields = json_array(configured.get("fields"))
+    if int(configured.get("appProfileId") or 0) <= 0:
+        raise HaaCError(f"Prowlarr indexer {name} did not persist a usable app profile.")
+    if desired_tag_ids:
+        configured_tag_ids = {int(value) for value in configured.get("tags") or [] if str(value).strip()}
+        if configured_tag_ids != set(desired_tag_ids):
+            raise HaaCError(f"Prowlarr indexer {name} did not persist the managed tag set.")
+    if indexer_urls and str(field_value(configured_fields, "baseUrl") or "").strip() != indexer_urls[0]:
+        raise HaaCError(f"Prowlarr indexer {name} persisted with an unexpected base URL.")
+    if prefer_magnet_url and "torrentBaseSettings.preferMagnetUrl" in {
+        str(field.get("name") or "").strip() for field in configured_fields
+    } and not bool(field_value(configured_fields, "torrentBaseSettings.preferMagnetUrl")):
+        raise HaaCError(f"Prowlarr indexer {name} did not persist the magnet preference.")
+    return current
+
+
+def run_prowlarr_command(port: int, *, api_key: str, name: str) -> dict[str, object]:
+    response = http_request_json(
+        f"http://127.0.0.1:{port}/api/v1/command",
+        method="POST",
+        payload={"name": name},
+        headers={"X-Api-Key": api_key},
+    )
+    if not isinstance(response, dict) or str(response.get("name") or "").strip() != name:
+        raise HaaCError(f"Prowlarr command {name} did not start as expected.")
+    return response
 
 
 def sabnzbd_api_request_json(
@@ -8165,21 +8640,30 @@ def arr_verifier_candidate_rank(
     movie: dict[str, object],
     prowlarr_matches: list[dict[str, object]],
     *,
+    seerr_match: dict[str, object] | None = None,
     preferred_max_size_bytes: int = ARR_VERIFIER_PREFERRED_MAX_SIZE_BYTES,
 ) -> tuple[int, int, int, int, str]:
     best_release = prowlarr_matches[0] if prowlarr_matches else {}
+    media_info = json_object((seerr_match or {}).get("mediaInfo") if isinstance(seerr_match, dict) else {})
+    stale_external_library_item = (
+        not movie
+        and (
+            str(media_info.get("jellyfinMediaId") or "").strip()
+            or str(media_info.get("mediaUrl") or "").strip()
+        )
+    )
     if movie and bool(movie.get("hasFile")):
         lifecycle_rank = 0
     elif not movie:
-        lifecycle_rank = 1
+        lifecycle_rank = 3 if stale_external_library_item else 1
     else:
         lifecycle_rank = 2
     return (
         lifecycle_rank,
         arr_verifier_release_penalty(str(best_release.get("title") or "")),
         0 if 0 < int(best_release.get("size") or 0) <= preferred_max_size_bytes else 1,
-        -int(best_release.get("seeders") or 0),
         int(best_release.get("size") or 0) or sys.maxsize,
+        -int(best_release.get("seeders") or 0),
         str(best_release.get("title") or ""),
     )
 
@@ -8216,7 +8700,7 @@ def choose_arr_verifier_candidate(
             movie = radarr_movie_by_tmdb_id(radarr_port, api_key=radarr_api_key, tmdb_id=int(candidate["tmdbId"]))
             ranked_matches.append(
                 (
-                    arr_verifier_candidate_rank(movie, prowlarr_matches),
+                    arr_verifier_candidate_rank(movie, prowlarr_matches, seerr_match=seerr_match),
                     candidate,
                     seerr_match,
                     prowlarr_matches,
@@ -8297,6 +8781,12 @@ def preferred_arr_verifier_release(
     sorted_releases = sorted(
         releases,
         key=lambda item: (
+            0
+            if bool(item.get("approved"))
+            and not bool(item.get("rejected"))
+            and not bool(item.get("temporarilyRejected"))
+            and not json_array(item.get("rejections"))
+            else 1,
             arr_verifier_release_penalty(str(item.get("title") or "")),
             0 if bool(item.get("downloadAllowed")) else 1,
             0 if 0 < int(item.get("size") or 0) <= preferred_max_size_bytes else 1,
@@ -8308,11 +8798,20 @@ def preferred_arr_verifier_release(
     return sorted_releases[0]
 
 
-def trigger_radarr_release_download(port: int, *, api_key: str, release: dict[str, object]) -> dict[str, object]:
+def trigger_radarr_release_download(
+    port: int,
+    *,
+    api_key: str,
+    release: dict[str, object],
+    movie_id: int,
+) -> dict[str, object]:
+    payload = copy.deepcopy(release)
+    if int(payload.get("movieId") or 0) <= 0:
+        payload["movieId"] = int(movie_id)
     response = http_request_json(
         f"http://127.0.0.1:{port}/api/v3/release",
         method="POST",
-        payload=release,
+        payload=payload,
         headers={"X-Api-Key": api_key},
     )
     return json_object(response)
@@ -8338,6 +8837,26 @@ def radarr_movie_files(port: int, *, api_key: str, movie_id: int) -> list[dict[s
 
 def match_release_title(record_title: str, selected_title: str) -> bool:
     return normalize_media_title(record_title) == normalize_media_title(selected_title)
+
+
+def torrent_matches_selected_release(
+    torrent: dict[str, object],
+    *,
+    selected_title: str,
+    selected_download_id: str = "",
+) -> bool:
+    torrent_hash = str(torrent.get("hash") or torrent.get("infohash_v1") or "").strip().upper()
+    if selected_download_id and torrent_hash and torrent_hash == selected_download_id.strip().upper():
+        return True
+    torrent_name = normalize_media_title(str(torrent.get("name") or ""))
+    wanted_name = normalize_media_title(selected_title)
+    return bool(torrent_name and wanted_name) and (torrent_name == wanted_name or torrent_name in wanted_name or wanted_name in torrent_name)
+
+
+def console_safe_text(value: object) -> str:
+    text = str(value)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
 def container_media_path_to_host_nas_path(container_path: str, *, host_nas_path: str) -> PurePosixPath:
@@ -8392,11 +8911,21 @@ def exact_jellyfin_movie_match(
     *,
     title: str,
     year: int,
+    imported_file_path: str = "",
 ) -> dict[str, object]:
+    normalized_title = normalize_media_title(title)
+    normalized_imported_path = str(imported_file_path).strip()
     for item in items:
         item_title = str(item.get("Name") or item.get("name") or "").strip()
         item_year = int(item.get("ProductionYear") or item.get("productionYear") or 0)
-        if normalize_media_title(item_title) == normalize_media_title(title) and item_year == int(year):
+        item_path = str(item.get("Path") or item.get("path") or "").strip()
+        if normalize_media_title(item_title) == normalized_title and item_year == int(year):
+            return item
+        if normalized_imported_path and item_path == normalized_imported_path and item_year == int(year):
+            return item
+    for item in items:
+        item_year = int(item.get("ProductionYear") or item.get("productionYear") or 0)
+        if item_year == int(year):
             return item
     return {}
 
@@ -8419,6 +8948,15 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
     host_nas_path = env["HOST_NAS_PATH"].strip()
 
     with cluster_session(proxmox_host, master_ip, kubeconfig, kubectl) as session_kubeconfig:
+        with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/qbittorrent", 8080) as qbit_port:
+            qbit_opener = qbittorrent_login_via_port_forward(
+                qbit_port,
+                username=downloader_username,
+                password=downloader_password,
+            )
+            removed_verifier_torrents = qbittorrent_cleanup_arr_verifier_artifacts(qbit_port, opener=qbit_opener)
+            if removed_verifier_torrents:
+                print(f"[heal] Removed {removed_verifier_torrents} stale ARR verifier torrent artifact(s) from qBittorrent")
         print("[stage] ARR candidate selection")
         prowlarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "prowlarr")
         radarr_api_key = read_arr_service_api_key(kubectl, session_kubeconfig, "radarr")
@@ -8460,6 +8998,7 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
             print(f"[ok] ARR candidate selection: {candidate_title} ({candidate_year})")
 
         print("[stage] ARR request and release handoff")
+        selected_download_id = ""
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/radarr", 80) as radarr_port:
             movie = wait_for_radarr_movie(radarr_port, api_key=radarr_api_key, tmdb_id=candidate_tmdb_id)
             if not movie:
@@ -8473,8 +9012,15 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
                 item for item in radarr_history_records(radarr_port, api_key=radarr_api_key) if int(item.get("movieId") or 0) == movie_id
             ]
             if bool(movie.get("hasFile")):
-                selected_title = str(next((item.get("sourceTitle") for item in history_records if str(item.get("eventType") or "").lower() == "grabbed"), "") or candidate_title).strip()
-                print(f"[ok] ARR request and release handoff: existing imported candidate {selected_title}")
+                grabbed_record = next(
+                    (item for item in history_records if str(item.get("eventType") or "").lower() == "grabbed"),
+                    {},
+                )
+                selected_title = str(grabbed_record.get("sourceTitle") or candidate_title).strip()
+                selected_download_id = str(
+                    grabbed_record.get("downloadId") or json_object(grabbed_record.get("data")).get("torrentInfoHash") or ""
+                ).strip()
+                print(f"[ok] ARR request and release handoff: existing imported candidate {console_safe_text(selected_title)}")
             else:
                 releases = exact_radarr_release_matches(
                     radarr_release_records(radarr_port, api_key=radarr_api_key, movie_id=movie_id),
@@ -8498,8 +9044,35 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
                     match_release_title(str(item.get("sourceTitle") or ""), selected_title) for item in history_records
                 )
                 if not already_selected:
-                    trigger_radarr_release_download(radarr_port, api_key=radarr_api_key, release=selected_release)
-                print(f"[ok] ARR request and release handoff: {selected_title}")
+                    trigger_radarr_release_download(
+                        radarr_port,
+                        api_key=radarr_api_key,
+                        release=selected_release,
+                        movie_id=movie_id,
+                    )
+                history_records = [
+                    item for item in radarr_history_records(radarr_port, api_key=radarr_api_key) if int(item.get("movieId") or 0) == movie_id
+                ]
+                grabbed_record = next(
+                    (
+                        item
+                        for item in history_records
+                        if str(item.get("eventType") or "").lower() == "grabbed"
+                        and (
+                            match_release_title(str(item.get("sourceTitle") or ""), selected_title)
+                            or str(item.get("downloadId") or "").strip().upper()
+                            == str(selected_release.get("infoHash") or "").strip().upper()
+                        )
+                    ),
+                    {},
+                )
+                selected_download_id = str(
+                    grabbed_record.get("downloadId")
+                    or json_object(grabbed_record.get("data")).get("torrentInfoHash")
+                    or selected_release.get("infoHash")
+                    or ""
+                ).strip()
+                print(f"[ok] ARR request and release handoff: {console_safe_text(selected_title)}")
 
         print("[stage] Downloader and NAS import")
         torrent_match: dict[str, object] = {}
@@ -8518,7 +9091,11 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
                     (
                         item
                         for item in torrents
-                        if match_release_title(str(item.get("name") or ""), selected_title)
+                        if torrent_matches_selected_release(
+                            item,
+                            selected_title=selected_title,
+                            selected_download_id=selected_download_id,
+                        )
                     ),
                     {},
                 )
@@ -8542,14 +9119,17 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
                 arr_verifier_failure(
                     furthest_verified="Radarr release handoff",
                     blocker="downloader/VPN drift",
-                    detail=f"qBittorrent never exposed the selected release {selected_title!r} through the managed VPN-backed downloader path.",
+                    detail=(
+                        "qBittorrent never exposed the selected release "
+                        f"{console_safe_text(selected_title)!r} through the managed VPN-backed downloader path."
+                    ),
                 )
             if float(torrent_match.get("progress") or 0.0) < 1.0:
                 arr_verifier_failure(
                     furthest_verified="qBittorrent handoff",
                     blocker="downloader/VPN drift",
                     detail=(
-                        f"qBittorrent is still stuck before completion for {selected_title!r}. "
+                        f"qBittorrent is still stuck before completion for {console_safe_text(selected_title)!r}. "
                         f"State={torrent_match.get('state')!r} progress={float(torrent_match.get('progress') or 0.0):.3f} "
                         f"speed={int(torrent_match.get('dlspeed') or 0)}B/s."
                     ),
@@ -8557,7 +9137,7 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
             arr_verifier_failure(
                 furthest_verified="qBittorrent download completion",
                 blocker="NAS/import drift",
-                detail=f"Radarr did not import {selected_title!r} into the NAS-backed media tree before timeout.",
+                detail=f"Radarr did not import {console_safe_text(selected_title)!r} into the NAS-backed media tree before timeout.",
             )
 
         print("[stage] Jellyfin visibility")
@@ -8574,7 +9154,12 @@ def verify_arr_flow(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl
                     title=candidate_title,
                     user_id=user_id,
                 )
-                exact_item = exact_jellyfin_movie_match(items, title=candidate_title, year=candidate_year)
+                exact_item = exact_jellyfin_movie_match(
+                    items,
+                    title=candidate_title,
+                    year=candidate_year,
+                    imported_file_path=imported_file_path,
+                )
                 if exact_item:
                     print(
                         "[ok] Jellyfin visibility: "
@@ -8845,6 +9430,22 @@ def reconcile_media_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, k
                 downstream_api_key=whisparr_api_key,
                 downstream_url=WHISPARR_INTERNAL_URL,
             )
+            if any(
+                PROWLARR_FLARESOLVERR_TAG in {
+                    str(label).strip() for label in indexer.get("tags", ()) if str(label).strip()
+                }
+                for indexer in PROWLARR_BASELINE_INDEXERS
+            ):
+                ensure_prowlarr_flaresolverr_proxy(port, api_key=prowlarr_api_key)
+            for indexer in PROWLARR_BASELINE_INDEXERS:
+                ensure_prowlarr_indexer(
+                    port,
+                    api_key=prowlarr_api_key,
+                    name=str(indexer["name"]),
+                    prefer_magnet_url=bool(indexer.get("preferMagnetUrl", True)),
+                    tag_labels=tuple(str(label).strip() for label in indexer.get("tags", ()) if str(label).strip()),
+                )
+            run_prowlarr_command(port, api_key=prowlarr_api_key, name="ApplicationIndexerSync")
         bazarr_api_key = read_bazarr_service_api_key(kubectl, session_kubeconfig)
         with kubectl_port_forward(kubectl, session_kubeconfig, "media", "svc/bazarr", 80) as port:
             require_http_status(
