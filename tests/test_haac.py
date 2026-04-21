@@ -291,7 +291,7 @@ class TaskRunStreamingTests(unittest.TestCase):
 class UpFailureSummaryTests(unittest.TestCase):
     def test_emit_up_failure_summary_preserves_explicit_recovery_lines(self) -> None:
         lines = [
-            "task: [configure-os] python scripts/haac.py run-ansible",
+            "task: [configure-os] powershell -ExecutionPolicy Bypass -File ./haac.ps1 run-ansible",
             "[recovery] Failing phase: GitOps readiness",
             "[recovery] Last verified phase: GitOps publication",
             "[recovery] Full rerun guidance: Retry GitOps post-install after fixing the failing app.",
@@ -310,12 +310,12 @@ class UpFailureSummaryTests(unittest.TestCase):
     def test_emit_up_failure_summary_handles_nested_gitops_tasks_monotonically(self) -> None:
         lines = [
             "task: [preflight] task: check-env",
-            "task: [configure-os] python scripts/haac.py run-ansible",
-            "task: [internal:push-changes] python scripts/haac.py push-changes",
-            "task: [internal:wait-for-argocd-sync] python scripts/haac.py wait-for-stack",
-            "task: [security:post-install] python scripts/haac.py run-ansible --playbook ansible/maintenance-security-playbook.yml",
-            "task: [check-env] python scripts/haac.py check-env",
-            "task: [chaos:post-install] python scripts/haac.py reconcile-litmus-chaos",
+            "task: [configure-os] powershell -ExecutionPolicy Bypass -File ./haac.ps1 run-ansible",
+            "task: [internal:push-changes] powershell -ExecutionPolicy Bypass -File ./haac.ps1 push-changes",
+            "task: [internal:wait-for-argocd-sync] powershell -ExecutionPolicy Bypass -File ./haac.ps1 wait-for-stack",
+            "task: [security:post-install] powershell -ExecutionPolicy Bypass -File ./haac.ps1 run-ansible --playbook ansible/maintenance-security-playbook.yml",
+            "task: [check-env] powershell -ExecutionPolicy Bypass -File ./haac.ps1 check-env",
+            "task: [chaos:post-install] powershell -ExecutionPolicy Bypass -File ./haac.ps1 reconcile-litmus-chaos",
         ]
 
         with mock.patch("builtins.print") as fake_print:

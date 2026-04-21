@@ -20,7 +20,7 @@ Use these alongside this runbook when you need the full repo contract:
 - Linux/macOS: `sh ./haac.sh up`
 - Global Task: `task up`
 
-All three entrypoints run the same Task pipeline through `scripts/haac.py`.
+All three entrypoints run the same Task pipeline through the supported `haac` Cobra surface.
 
 ## Required `.env` Inputs
 
@@ -30,7 +30,7 @@ All three entrypoints run the same Task pipeline through `scripts/haac.py`.
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
 - public routing: `DOMAIN_NAME`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_TOKEN`
 
-`LXC_PASSWORD` is the documented password source of truth. Supporting `scripts/haac.py` commands derive the effective Proxmox host password from it unless `PROXMOX_HOST_PASSWORD` is explicitly provided by the caller.
+`LXC_PASSWORD` is the documented password source of truth. The supported `haac` commands derive the effective Proxmox host password from it unless `PROXMOX_HOST_PASSWORD` is explicitly provided by the caller.
 
 Proxmox access uses two related inputs:
 
@@ -40,10 +40,10 @@ Proxmox access uses two related inputs:
 ## Preflight Contract
 
 1. `.env` is present and complete.
-2. `python scripts/haac.py install-tools` has been run at least once.
-3. `python scripts/haac.py check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
-4. `python scripts/haac.py doctor` passes and confirms the local workstation toolchain.
-5. `python scripts/haac.py sync-repo` can fetch and merge the writable `origin/<GITOPS_REPO_REVISION>` branch before provisioning starts.
+2. `haac install-tools` has been run at least once through `.\haac.ps1` or `sh ./haac.sh`.
+3. `haac check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
+4. `haac doctor` passes and confirms the local workstation toolchain.
+5. `haac sync-repo` can fetch and merge the writable `origin/<GITOPS_REPO_REVISION>` branch before provisioning starts.
 
 ## Phase Contract
 

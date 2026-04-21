@@ -99,10 +99,10 @@ If you do have `task` installed, `task up` still works.
 3. Run the local wrapper to bootstrap the repo-local tools and build the Cobra entrypoint:
    - Windows: `.\haac.ps1 install-tools`
    - Linux/macOS: `sh ./haac.sh install-tools`
-4. Run `python scripts/haac.py check-env` or:
+4. Run the Cobra-owned preflight command:
    - Windows: `.\haac.ps1 check-env`
    - Linux/macOS: `sh ./haac.sh check-env`
-5. Run `python scripts/haac.py doctor` or:
+5. Run the Cobra-owned tooling check:
    - Windows: `.\haac.ps1 doctor`
    - Linux/macOS: `sh ./haac.sh doctor`
 6. Run the full bootstrap:
@@ -210,7 +210,7 @@ The operator-facing Seerr discovery contract is intentionally narrow:
 - FlareSolverr only assists the indexers that need challenge solving; it does not replace Prowlarr
 - Lidarr and Whisparr stay outside the Seerr UI contract unless upstream Seerr adds first-class support
 
-`LXC_PASSWORD` remains the documented password source of truth. Supporting `scripts/haac.py` bootstrap commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
+`LXC_PASSWORD` remains the documented password source of truth. The supported `haac` operator commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
 
 `task up` is now publish-only on the Git boundary. It stages only generated GitOps artifacts and refuses to merge remote state when the branch is behind or diverged.
 
@@ -220,7 +220,7 @@ Git merge policy is explicit. `task sync` owns the local checkpoint plus safe fa
 
 SSH trust is no longer forced off by default. The operator path now uses a repo-local `known_hosts` file together with `StrictHostKeyChecking=accept-new`, so the first bootstrap stays practical without silently bypassing host verification on later runs.
 
-ArgoCD bootstrap ownership is now local to the repo: Ansible prepares the cluster prerequisites, while `scripts/haac.py deploy-argocd` installs ArgoCD from `k8s/platform/argocd/install-overlay` and only then applies the app-of-apps root.
+ArgoCD bootstrap ownership is now local to the repo: Ansible prepares the cluster prerequisites, while the supported `haac deploy-argocd` path installs ArgoCD from `k8s/platform/argocd/install-overlay` and only then applies the app-of-apps root.
 
 Cloudflare Tunnel autoupdate is configurable again through `.env` via `HAAC_ENABLE_CLOUDFLARED_AUTOUPDATE`. Trivy remains intentionally bounded to avoid control-plane churn on the single-master SQLite/Kine topology.
 
@@ -287,7 +287,7 @@ Supporting files:
 - `openspec/agents/`
 - `.codex/skills/haac-*`
 
-The loop uses the same source of truth as the operator workflow: `.env`, `Taskfile.yml`, `scripts/haac.py`, and the active OpenSpec changes.
+The loop uses the same source of truth as the operator workflow: `.env`, `Taskfile.yml`, the supported `haac` operator surface, and the active OpenSpec changes.
 
 ## Spec-Driven Workflow
 
@@ -331,7 +331,7 @@ That split is deliberate. Cluster-local jobs stay in Kubernetes; infra maintenan
 
 ## Notes
 
-- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by `scripts/haac.py`, while internal bootstrap subtasks now live under `Taskfile.internal.yml` and the staged Cobra bridge can pass the same Task arguments through unchanged without exposing `internal:*` tasks as part of the supported wrapper surface.
+- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by the supported `haac` CLI, while internal bootstrap subtasks now live under `Taskfile.internal.yml` and the Cobra bridge can pass the same Task arguments through unchanged without exposing `internal:*` tasks as part of the supported wrapper surface.
 - `HAAC_KUBECTL_VERSION` controls the local workstation binary. `HAAC_CLUSTER_KUBECTL_IMAGE_TAG` controls the in-cluster helper image. They can differ because image publishing cadence does not always match the official client release cadence.
 - LXC should remain `unprivileged` by default; K3s, GPU, TUN, and eBPF exceptions are centrally gated with env flags.
 - `task up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.
@@ -339,6 +339,6 @@ That split is deliberate. Cluster-local jobs stay in Kubernetes; infra maintenan
 - Falco runtime is supported through a dedicated host-side sensor on the Proxmox node, not through an in-cluster DaemonSet on unprivileged LXC workers.
 - When `HAAC_ENABLE_FALCO=true`, the platform layer deploys `falcosidekick` in-cluster for alert ingest plus the protected UI, and the Proxmox host installs the Falco package with the `modern_ebpf` engine and forwards events to the cluster-side ingest service on the declared K3s master IP.
 - Falco no longer depends on `haac.io/falco-runtime` worker labels to become healthy. Those labels can remain for future experiments, but they are not part of the supported runtime path anymore.
-- `task -n up` is a Task dry-run flag. It is not implemented in `scripts/haac.py`; it comes from Task itself and shows what would run without executing it.
+- `task -n up` is a Task dry-run flag. It is not implemented by the `haac` CLI; it comes from Task itself and shows what would run without executing it.
 
 See `ARCHITECTURE.md` for the full architecture and `HOMELAB_SERVICES.md` for the service inventory.

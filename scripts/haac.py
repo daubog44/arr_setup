@@ -10054,7 +10054,7 @@ def cmd_tool_path(args: argparse.Namespace) -> None:
 def cmd_doctor(_: argparse.Namespace) -> None:
     doctor()
     print(
-        "Doctor checks local tooling only. Run `python scripts/haac.py check-env` "
+        "Doctor checks local tooling only. Run `haac check-env` through the supported wrapper "
         "before `task up` to verify workstation-to-Proxmox reachability."
     )
 

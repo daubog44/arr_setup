@@ -13,24 +13,25 @@ includes:
     taskfile: ./Taskfile.media.yml
 
 vars:
+  HAAC_CMD: '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1{{else}}sh ./haac.sh{{end}}'
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   TOFU_DIR: tofu
   LXC_PASSWORD_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'
+    sh: '{{.HAAC_CMD}} env-value --name LXC_PASSWORD'
   DOMAIN_NAME_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name DOMAIN_NAME'
+    sh: '{{.HAAC_CMD}} env-value --name DOMAIN_NAME'
   NAS_PATH_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_PATH'
+    sh: '{{.HAAC_CMD}} env-value --name NAS_PATH'
   KUBECTL:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name kubectl'
+    sh: '{{.HAAC_CMD}} tool-path --name kubectl'
   HELM:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name helm'
+    sh: '{{.HAAC_CMD}} tool-path --name helm'
   K3S_KUBECONFIG:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" kubeconfig-path'
+    sh: '{{.HAAC_CMD}} kubeconfig-path'
   MASTER_IP:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" master-ip'
+    sh: '{{.HAAC_CMD}} master-ip'
   PROXMOX_HOST:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" proxmox-access-host'
+    sh: '{{.HAAC_CMD}} proxmox-access-host'
 
 tasks:
   default:
@@ -40,12 +41,12 @@ tasks:
   check-env:
     desc: Validate the required `.env` inputs plus the effective workstation-to-Proxmox access path.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
+      - '{{.HAAC_CMD}} check-env'
 
   doctor:
     desc: Verify the local Windows/WSL or Unix tooling required before provisioning starts.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
+      - '{{.HAAC_CMD}} doctor'
 
   preflight:
     desc: "Run the ordered bootstrap preflight: env validation plus workstation/tooling checks."
@@ -56,27 +57,27 @@ tasks:
   install-tools:
     desc: Bootstrap the local platform-aware `.tools/<os>-<arch>/bin` toolchain and, on Windows, the WSL control-node packages.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" install-tools'
+      - '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1 install-tools{{else}}sh ./haac.sh install-tools{{end}}'
 
   install-windows-tools:
     desc: Backward-compatible alias for `task install-tools`.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" install-windows-tools'
+      - task: install-tools
 
   install-wsl-tools:
     desc: Install the required Ansible control-node packages inside the configured WSL distro.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" install-wsl-tools'
+      - '{{.HAAC_CMD}} install-wsl-tools'
 
   clean-artifacts:
     desc: Remove stray local investigation artifacts outside `.tmp/`.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" clean-artifacts'
+      - '{{.HAAC_CMD}} clean-artifacts'
 
   sync:
     desc: Save local work, validate the declared GitOps remote, and own the explicit merge-policy path before provisioning.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" sync-repo'
+      - '{{.HAAC_CMD}} sync-repo'
 
   up:
     desc: "Full bootstrap from scratch: OpenTofu, Ansible, GitOps bootstrap, app configuration, and verification."
@@ -96,8 +97,8 @@ tasks:
     desc: Run a diagnostic OpenTofu plan with provider refresh enabled so unsupported Proxmox LXC drift stays visible.
     deps: [check-env]
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" plan'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" plan'
 
   configure-os:
     desc: Run only the Ansible playbook to configure Proxmox and the K3s nodes.
@@ -107,7 +108,7 @@ tasks:
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/playbook.yml --extra-args={{default "" .DEBUG_LEVEL}}'
+      - '{{.HAAC_CMD}} run-ansible --inventory ansible/inventory.yml --playbook ansible/playbook.yml --extra-args={{default "" .DEBUG_LEVEL}}'
 
   provision-infra:
     desc: Reconcile the declared OpenTofu infrastructure using the state-safe apply path required by the current Proxmox LXC provider gap.
@@ -116,8 +117,8 @@ tasks:
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
 
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.
@@ -182,7 +183,7 @@ tasks:
   monitor:
     desc: Open a K9s session against the remote cluster through an SSH tunnel.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" monitor --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}"'
+      - '{{.HAAC_CMD}} monitor --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}"'
 
   deploy-argocd:
     desc: Apply the ArgoCD app manifests with DOMAIN_NAME substitution.
@@ -204,13 +205,13 @@ tasks:
   setup-hooks:
     desc: Install a cross-platform pre-commit hook that regenerates Sealed Secrets when the cluster is reachable.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" setup-hooks'
+      - '{{.HAAC_CMD}} setup-hooks'
 
   deploy-local:
     desc: Apply the local haac-stack chart when ArgoCD is not already managing it.
     deps: [internal:generate-secrets]
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" deploy-local --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --helm "{{.HELM}}"'
+      - '{{.HAAC_CMD}} deploy-local --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --helm "{{.HELM}}"'
 
   wait-for-argocd-sync:
     desc: Wait through staged ArgoCD root/platform/workload gates and the critical downloader readiness gate.
@@ -266,21 +267,21 @@ tasks:
       BACKUP_FILE: '{{default "k3s-state-latest.db" .BACKUP_FILE}}'
       NAS_MOUNT_PATH: "/mnt/pve/HaaC-Storage/media/k3s"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" restore-k3s --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}" --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
+      - '{{.HAAC_CMD}} restore-k3s --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}" --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
 
   shutdown-cluster:
     desc: Gracefully stop the K3s LXC containers on Proxmox.
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" shutdown-cluster --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}"'
+      - '{{.HAAC_CMD}} shutdown-cluster --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}"'
 
   down:
     desc: Destroy the infrastructure after a graceful cluster shutdown.
     deps: [check-env]
     cmds:
       - task: shutdown-cluster
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-tofu --dir "{{.TOFU_DIR}}" destroy -auto-approve'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" remove-file --path "scripts/pub-sealed-secrets.pem"'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" init'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" destroy -auto-approve'
+      - '{{.HAAC_CMD}} remove-file --path "scripts/pub-sealed-secrets.pem"'
 
   loop:check:
     desc: Verify the local OpenSpec/CodexPotter loop bootstrap and validate active changes.

@@ -7,9 +7,9 @@ Review is part of the loop, not an optional epilogue.
 Bootstrap-affecting work should validate in this order when applicable:
 
 1. `openspec validate <change>`
-2. `python scripts/haac.py check-env`
-3. `python scripts/haac.py doctor`
-4. `python scripts/haac.py task-run -- -n up`
+2. `.\haac.ps1 check-env` or `sh ./haac.sh check-env`
+3. `.\haac.ps1 doctor` or `sh ./haac.sh doctor`
+4. `task -n up`
 5. `python -m py_compile scripts/haac.py scripts/haac_loop.py scripts/hydrate-authelia.py`
 6. `helm template haac-stack k8s/charts/haac-stack`
 7. `kubectl kustomize k8s/bootstrap/root`
@@ -39,7 +39,7 @@ Accepted browser outcomes depend on the service:
 Spawn or emulate targeted review before closeout when touching:
 
 - `.env`, `.ssh`, secrets, Cloudflare, auth, or bootstrap trust boundaries
-- `Taskfile.yml`, `scripts/haac.py`, `scripts/haac_loop.py`, `.tools`, or WSL bridging
+- `Taskfile.yml`, the `haac` operator implementation, `scripts/haac_loop.py`, `.tools`, or WSL bridging
 - `ansible/`, `tofu/`, or `k8s/` cross-layer behavior
 
 Required review perspectives:

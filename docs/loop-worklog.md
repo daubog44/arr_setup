@@ -11,7 +11,7 @@ Real files live in:
 - timestamp
 - active change or discovery mode
 - main files or systems touched
-- validation command or review performed, including `python scripts/haac.py check-env` separately from `doctor` when live bootstrap reachability is part of the round
+- validation command or review performed, including `haac check-env` separately from `doctor` when live bootstrap reachability is part of the round
 - finding, blocker, or decision
 - next step
 

@@ -1,20 +1,21 @@
 version: "3"
 
 vars:
+  HAAC_CMD: '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1{{else}}sh ./haac.sh{{end}}'
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   TOFU_DIR: '{{default "tofu" .TOFU_DIR}}'
   LXC_PASSWORD_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name LXC_PASSWORD'
+    sh: '{{.HAAC_CMD}} env-value --name LXC_PASSWORD'
   NAS_PATH_VALUE:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" env-value --name NAS_PATH'
+    sh: '{{.HAAC_CMD}} env-value --name NAS_PATH'
   KUBECTL:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" tool-path --name kubectl'
+    sh: '{{.HAAC_CMD}} tool-path --name kubectl'
   K3S_KUBECONFIG:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" kubeconfig-path'
+    sh: '{{.HAAC_CMD}} kubeconfig-path'
   MASTER_IP:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" master-ip'
+    sh: '{{.HAAC_CMD}} master-ip'
   PROXMOX_HOST:
-    sh: '{{.PYTHON_CMD}} "scripts/haac.py" proxmox-access-host'
+    sh: '{{.HAAC_CMD}} proxmox-access-host'
 
 tasks:
   post-install:
@@ -24,9 +25,9 @@ tasks:
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" run-ansible --inventory ansible/inventory.yml --playbook ansible/maintenance-security-playbook.yml'
+      - '{{.HAAC_CMD}} check-env'
+      - '{{.HAAC_CMD}} doctor'
+      - '{{.HAAC_CMD}} run-ansible --inventory ansible/inventory.yml --playbook ansible/maintenance-security-playbook.yml'
 
   cleanup-signal-residue:
     desc: Manually prune the known stale security-report residue left by historical rollout objects in argocd/security.
@@ -35,6 +36,6 @@ tasks:
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - '{{.PYTHON_CMD}} "scripts/haac.py" check-env'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" doctor'
-      - '{{.PYTHON_CMD}} "scripts/haac.py" cleanup-security-signal-residue --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.HAAC_CMD}} check-env'
+      - '{{.HAAC_CMD}} doctor'
+      - '{{.HAAC_CMD}} cleanup-security-signal-residue --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'

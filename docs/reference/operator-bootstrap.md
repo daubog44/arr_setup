@@ -10,7 +10,7 @@ The supported entrypoints are:
 - Linux/macOS: `sh ./haac.sh up`
 - Global Task: `task up`
 
-All three entrypoints drive the same bootstrap pipeline through `Taskfile.yml`, `Taskfile.internal.yml`, and `scripts/haac.py`.
+All three entrypoints drive the same bootstrap pipeline through `Taskfile.yml`, `Taskfile.internal.yml`, and the supported `haac` Cobra surface.
 
 ## Phase Model
 
@@ -76,7 +76,7 @@ The main input surfaces are:
 - optional media/security overrides
   - downloader, Jellyfin, Bazarr, CrowdSec, Litmus, and similar feature flags/secrets
 
-The generation flow is centered in `scripts/haac.py`:
+The generation flow is centered in the supported `haac` operator surface:
 
 - render non-secret templates
 - fetch the Sealed Secrets cert when needed
@@ -108,7 +108,19 @@ Keep these invariants intact:
 - do not edit generated secrets as primary sources
 - do not copy `.env` values into code except in intended generated outputs
 - keep temporary operator artifacts under `.tmp/`
-- prefer changing templates or `scripts/haac.py` over hand-editing rendered YAML
+- prefer changing templates or the supported `haac` implementation over hand-editing rendered YAML
+
+## Remaining Python Surfaces
+
+The supported operator CLI is now the Cobra-owned `haac` surface reached through `.\haac.ps1`, `sh ./haac.sh`, or `task`.
+
+The remaining Python scripts are not supported end-user entrypoints:
+
+- `scripts/haac_loop.py`: Ralph loop automation and worklog/bootstrap glue
+- `scripts/hydrate-authelia.py`: focused template/helper maintenance script
+- `scripts/haac.py`: internal implementation module still reused by some Cobra subcommands while the larger runtime migration continues
+
+Operators should treat those scripts as implementation details or loop/maintenance surfaces, not as the primary bootstrap contract.
 
 ## Cold-Cycle Acceptance
 
