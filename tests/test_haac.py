@@ -1893,6 +1893,97 @@ class ArgocdRevisionGateTests(unittest.TestCase):
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "policy-reporter", hard=True)
         sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "policy-reporter")
 
+    def test_recover_missing_api_resource_handles_kubernetes_api_servicemonitor_error(self) -> None:
+        app = {
+            "status": {
+                "operationState": {
+                    "message": (
+                        'The Kubernetes API could not find monitoring.coreos.com/ServiceMonitor '
+                        'for requested resource monitoring/alloy. Make sure the "ServiceMonitor" '
+                        "CRD is installed on the destination cluster."
+                    )
+                }
+            }
+        }
+
+        with mock.patch.object(haac, "monitoring_servicemonitor_crd_available", return_value=True):
+            with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                with mock.patch.object(haac, "sync_argocd_application") as sync:
+                    healed = haac.recover_missing_api_resource_argocd_operation(
+                        "kubectl",
+                        Path("demo-kubeconfig"),
+                        "alloy",
+                        app,
+                    )
+
+        self.assertTrue(healed)
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy", hard=True)
+        sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy")
+
+    def test_recover_missing_api_resource_requires_podmonitor_crd_for_crowdsec(self) -> None:
+        app = {
+            "status": {
+                "operationState": {
+                    "message": (
+                        'The Kubernetes API could not find monitoring.coreos.com/PodMonitor '
+                        'for requested resource crowdsec/crowdsec-agent. Make sure the "PodMonitor" '
+                        "CRD is installed on the destination cluster."
+                    )
+                }
+            }
+        }
+
+        with mock.patch.object(haac, "monitoring_podmonitor_crd_available", return_value=False):
+            with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                with mock.patch.object(haac, "sync_argocd_application") as sync:
+                    healed = haac.recover_missing_api_resource_argocd_operation(
+                        "kubectl",
+                        Path("demo-kubeconfig"),
+                        "crowdsec",
+                        app,
+                    )
+
+        self.assertFalse(healed)
+        refresh.assert_not_called()
+        sync.assert_not_called()
+
+    def test_recover_missing_api_resource_reads_sync_result_resource_messages(self) -> None:
+        app = {
+            "status": {
+                "operationState": {
+                    "message": "one or more synchronization tasks are not valid (retried 5 times).",
+                    "syncResult": {
+                        "resources": [
+                            {
+                                "kind": "ServiceMonitor",
+                                "name": "alloy",
+                                "namespace": "monitoring",
+                                "message": (
+                                    'The Kubernetes API could not find monitoring.coreos.com/ServiceMonitor '
+                                    'for requested resource monitoring/alloy. Make sure the "ServiceMonitor" '
+                                    "CRD is installed on the destination cluster."
+                                ),
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+
+        with mock.patch.object(haac, "monitoring_servicemonitor_crd_available", return_value=True):
+            with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                with mock.patch.object(haac, "sync_argocd_application") as sync:
+                    healed = haac.recover_missing_api_resource_argocd_operation(
+                        "kubectl",
+                        Path("demo-kubeconfig"),
+                        "alloy",
+                        app,
+                    )
+
+        self.assertTrue(healed)
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy", hard=True)
+        sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy")
+
 
 class ArrStackSurfaceTests(unittest.TestCase):
     def test_up_task_phases_include_media_post_install(self) -> None:

@@ -4,6 +4,7 @@ metadata:
   name: alloy
   namespace: argocd
   annotations:
+    argocd.argoproj.io/sync-wave: "3"
     renovate/helm-chart: "alloy"
 spec:
   project: platform

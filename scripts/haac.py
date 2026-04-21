@@ -32,6 +32,7 @@ import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from typing import Callable
 
 from haaclib import endpoints as endpointlib
 from haaclib import envdefaults as envdefaultslib
@@ -2795,13 +2796,21 @@ def recover_missing_hook_argocd_operation(
     return True
 
 
-def monitoring_servicemonitor_crd_available(kubectl: str, kubeconfig: Path) -> bool:
+def monitoring_crd_available(kubectl: str, kubeconfig: Path, crd_name: str) -> bool:
     completed = run(
-        [kubectl, "--kubeconfig", str(kubeconfig), "get", "crd", "servicemonitors.monitoring.coreos.com"],
+        [kubectl, "--kubeconfig", str(kubeconfig), "get", "crd", crd_name],
         check=False,
         capture_output=True,
     )
     return completed.returncode == 0
+
+
+def monitoring_servicemonitor_crd_available(kubectl: str, kubeconfig: Path) -> bool:
+    return monitoring_crd_available(kubectl, kubeconfig, "servicemonitors.monitoring.coreos.com")
+
+
+def monitoring_podmonitor_crd_available(kubectl: str, kubeconfig: Path) -> bool:
+    return monitoring_crd_available(kubectl, kubeconfig, "podmonitors.monitoring.coreos.com")
 
 
 def recover_missing_api_resource_argocd_operation(
@@ -2812,16 +2821,39 @@ def recover_missing_api_resource_argocd_operation(
 ) -> bool:
     status = app.get("status") or {}
     operation_state = status.get("operationState") or {}
-    message = str(operation_state.get("message") or "").strip()
-    if not message:
+    messages: list[str] = []
+    operation_message = str(operation_state.get("message") or "").strip()
+    if operation_message:
+        messages.append(operation_message)
+    sync_result = operation_state.get("syncResult") or {}
+    for resource in sync_result.get("resources") or []:
+        if not isinstance(resource, dict):
+            continue
+        resource_message = str(resource.get("message") or "").strip()
+        if resource_message:
+            messages.append(resource_message)
+    if not messages:
         return False
-    if 'no matches for kind "ServiceMonitor" in version "monitoring.coreos.com/v1"' not in message:
+    message_normalized = "\n".join(messages).lower()
+    required_crd_checks: list[Callable[[str, Path], bool]] = []
+    if (
+        'no matches for kind "servicemonitor" in version "monitoring.coreos.com/v1"' in message_normalized
+        or "could not find monitoring.coreos.com/servicemonitor" in message_normalized
+    ):
+        required_crd_checks.append(monitoring_servicemonitor_crd_available)
+    if (
+        'no matches for kind "podmonitor" in version "monitoring.coreos.com/v1"' in message_normalized
+        or "could not find monitoring.coreos.com/podmonitor" in message_normalized
+    ):
+        required_crd_checks.append(monitoring_podmonitor_crd_available)
+    if not required_crd_checks:
         return False
-    if not monitoring_servicemonitor_crd_available(kubectl, kubeconfig):
-        return False
+    for crd_check in required_crd_checks:
+        if not crd_check(kubectl, kubeconfig):
+            return False
     refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
     sync_argocd_application(kubectl, kubeconfig, application)
-    print(f"[heal] Re-synced {application} after the ServiceMonitor CRD became available")
+    print(f"[heal] Re-synced {application} after the required monitoring CRDs became available")
     return True
 
 

@@ -1,6 +1,7 @@
 ## 1. Implementation
 
-- [ ] 1.1 Make the Alloy ArgoCD application tolerate missing `ServiceMonitor` CRDs during cold bootstrap
+- [ ] 1.1 Make monitoring-CRD consumer applications tolerate missing `ServiceMonitor`/`PodMonitor` CRDs during cold bootstrap
+- [ ] 1.2 Improve the child application ordering so `kube-prometheus-stack` lands before monitoring-CRD consumers
 
 ## 2. Validation
 
