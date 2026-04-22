@@ -15,7 +15,12 @@ func TestWantsTaskPassthrough(t *testing.T) {
 		{name: "help flag stays local", args: []string{"--help"}, want: false},
 		{name: "install-tools stays local", args: []string{"install-tools"}, want: false},
 		{name: "version subcommand stays local", args: []string{"version"}, want: false},
-		{name: "task passthrough handles target", args: []string{"up"}, want: true},
+		{name: "up stays local", args: []string{"up"}, want: false},
+		{name: "down stays local", args: []string{"down"}, want: false},
+		{name: "preflight stays local", args: []string{"preflight"}, want: false},
+		{name: "deploy-argocd passes through to task", args: []string{"deploy-argocd"}, want: true},
+		{name: "verify-web passes through to task", args: []string{"verify-web"}, want: true},
+		{name: "pre-commit-hook passes through to task", args: []string{"pre-commit-hook"}, want: true},
 		{name: "task passthrough keeps global flag ordering", args: []string{"-n", "up"}, want: true},
 		{name: "task passthrough keeps explicit subcommand args", args: []string{"plan", "--summary"}, want: true},
 	}
@@ -73,6 +78,39 @@ func TestRootCommandDoesNotExposeLegacySubcommand(t *testing.T) {
 	for _, cmd := range newRootCmd().Commands() {
 		if cmd.Name() == "legacy" {
 			t.Fatal("legacy subcommand should not be exposed once the Cobra surface is the supported entrypoint")
+		}
+	}
+}
+
+func TestRootCommandDoesNotExposePythonDelegateMaintenanceSubcommands(t *testing.T) {
+	t.Parallel()
+
+	blocked := map[string]struct{}{
+		"clean-artifacts":                 {},
+		"deploy-argocd":                   {},
+		"deploy-local":                    {},
+		"generate-secrets":                {},
+		"generate-secrets-local":          {},
+		"push-changes":                    {},
+		"wait-for-stack":                  {},
+		"verify-cluster":                  {},
+		"reconcile-litmus-admin":          {},
+		"reconcile-litmus-chaos":          {},
+		"cleanup-security-signal-residue": {},
+		"clear-crowdsec-operator-ban":     {},
+		"verify-web":                      {},
+		"sync-cloudflare":                 {},
+		"configure-apps":                  {},
+		"reconcile-media-stack":           {},
+		"verify-arr-flow":                 {},
+		"configure-argocd-local-auth":     {},
+		"restore-k3s":                     {},
+		"monitor":                         {},
+	}
+
+	for _, cmd := range newRootCmd().Commands() {
+		if _, found := blocked[cmd.Name()]; found {
+			t.Fatalf("%s should route through public Task targets instead of being exposed as a Cobra-owned maintenance subcommand", cmd.Name())
 		}
 	}
 }

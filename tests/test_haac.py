@@ -1651,19 +1651,83 @@ class ArgocdRevisionGateTests(unittest.TestCase):
                 with mock.patch.object(haac, "recover_stale_argocd_operation", return_value=False):
                     with mock.patch.object(haac, "recover_stalled_downloaders_rollout", return_value=False):
                         with mock.patch.object(haac, "refresh_argocd_application") as refresh:
-                            with mock.patch.object(haac.time, "sleep"):
-                                with mock.patch.object(haac.time, "time", side_effect=[0, 0, 1]):
-                                    haac.wait_for_argocd_application_ready(
-                                        "kubectl",
-                                        Path("demo-kubeconfig"),
+                            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                                with mock.patch.object(haac.time, "sleep"):
+                                    with mock.patch.object(haac.time, "time", side_effect=[0, 0, 1]):
+                                        haac.wait_for_argocd_application_ready(
+                                            "kubectl",
+                                            Path("demo-kubeconfig"),
                                         application="haac-platform",
                                         stage_label="Platform root gate",
                                         deadline=60,
                                         expected_revision="new-sha",
                                         gitops_repo_url="https://github.com/daubog44/arr_setup.git",
-                                    )
+                                        )
 
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "haac-platform",
+            revision="new-sha",
+            sync_options=[],
+        )
+
+    def test_platform_root_gate_accepts_healthy_current_revision_before_descendant_sync(self) -> None:
+        platform_root = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"status": "OutOfSync", "revision": "new-sha"},
+                "health": {"status": "Healthy"},
+                "operationState": {"phase": "Running"},
+            },
+        }
+
+        with mock.patch.object(haac, "wait_for_resource"):
+            with mock.patch.object(haac, "kubectl_json", return_value=platform_root):
+                with mock.patch.object(haac, "recover_stale_argocd_operation", return_value=False):
+                    with mock.patch.object(haac, "recover_stalled_downloaders_rollout", return_value=False):
+                        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                            with mock.patch.object(haac.time, "time", side_effect=[0, 1]):
+                                haac.wait_for_argocd_application_ready(
+                                    "kubectl",
+                                    Path("demo-kubeconfig"),
+                                    application="haac-platform",
+                                    stage_label="Platform root gate",
+                                    deadline=60,
+                                    expected_revision="new-sha",
+                                    gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                )
+
+        refresh.assert_not_called()
+
+    def test_root_app_gate_accepts_healthy_current_revision_before_descendant_sync(self) -> None:
+        root_app = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"status": "OutOfSync", "revision": "new-sha"},
+                "health": {"status": "Healthy"},
+                "operationState": {"phase": "Running"},
+            },
+        }
+
+        with mock.patch.object(haac, "wait_for_resource"):
+            with mock.patch.object(haac, "kubectl_json", return_value=root_app):
+                with mock.patch.object(haac, "recover_stale_argocd_operation", return_value=False):
+                    with mock.patch.object(haac, "recover_stalled_downloaders_rollout", return_value=False):
+                        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                            with mock.patch.object(haac.time, "time", side_effect=[0, 1]):
+                                haac.wait_for_argocd_application_ready(
+                                    "kubectl",
+                                    Path("demo-kubeconfig"),
+                                    application="haac-root",
+                                    stage_label="Root application gate",
+                                    deadline=60,
+                                    expected_revision="new-sha",
+                                    gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                )
+
+        refresh.assert_not_called()
 
     def test_recover_missing_hook_stall_recycles_repo_managed_child_application(self) -> None:
         child = {
@@ -1697,20 +1761,28 @@ class ArgocdRevisionGateTests(unittest.TestCase):
         with mock.patch.object(haac, "argocd_hook_resource_exists", return_value=False):
             with mock.patch.object(haac, "kubectl_json", return_value=parent):
                 with mock.patch.object(haac, "refresh_argocd_application") as refresh:
-                    with mock.patch.object(haac, "wait_for_argocd_application_recreation") as wait:
-                        with mock.patch.object(haac, "run") as run:
-                            with mock.patch.object(haac, "seconds_remaining", return_value=180):
-                                healed = haac.recover_missing_hook_argocd_operation(
-                                    "kubectl",
-                                    Path("demo-kubeconfig"),
-                                    "kube-prometheus-stack",
-                                    child,
-                                    deadline=180,
-                                    gitops_repo_url="https://github.com/daubog44/arr_setup.git",
-                                )
+                    with mock.patch.object(haac, "sync_argocd_application") as sync:
+                        with mock.patch.object(haac, "wait_for_argocd_application_recreation") as wait:
+                            with mock.patch.object(haac, "run") as run:
+                                with mock.patch.object(haac, "seconds_remaining", return_value=180):
+                                    healed = haac.recover_missing_hook_argocd_operation(
+                                        "kubectl",
+                                        Path("demo-kubeconfig"),
+                                        "kube-prometheus-stack",
+                                        child,
+                                        deadline=180,
+                                        gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                    )
 
         self.assertTrue(healed)
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "haac-platform", hard=True)
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "haac-platform",
+            revision=None,
+            sync_options=[],
+        )
         wait.assert_called_once_with(
             "kubectl",
             Path("demo-kubeconfig"),
@@ -1865,6 +1937,155 @@ class ArgocdRevisionGateTests(unittest.TestCase):
         self.assertEqual(payload["operation"]["initiatedBy"]["username"], "haac")
         self.assertEqual(payload["operation"]["sync"]["syncStrategy"], {"hook": {}})
 
+    def test_sync_argocd_application_patches_explicit_revision_when_requested(self) -> None:
+        with mock.patch.object(haac, "run") as run:
+            haac.sync_argocd_application(
+                "kubectl",
+                Path("demo-kubeconfig"),
+                "argocd",
+                revision="bc86ae86983776c8a1fec8eb1dbe5088e6a2e0a8",
+            )
+
+        payload = json.loads(run.call_args.args[0][-1])
+        self.assertEqual(
+            payload["operation"]["sync"]["revision"],
+            "bc86ae86983776c8a1fec8eb1dbe5088e6a2e0a8",
+        )
+
+    def test_sync_argocd_application_patches_sync_options_when_requested(self) -> None:
+        with mock.patch.object(haac, "run") as run:
+            haac.sync_argocd_application(
+                "kubectl",
+                Path("demo-kubeconfig"),
+                "kyverno",
+                sync_options=[
+                    "CreateNamespace=true",
+                    "ClientSideApplyMigration=false",
+                    "ServerSideApply=true",
+                ],
+            )
+
+        payload = json.loads(run.call_args.args[0][-1])
+        self.assertEqual(
+            payload["operation"]["sync"]["syncOptions"],
+            [
+                "CreateNamespace=true",
+                "ClientSideApplyMigration=false",
+                "ServerSideApply=true",
+            ],
+        )
+
+    def test_recover_stale_argocd_operation_restarts_sync(self) -> None:
+        app = {
+            "status": {
+                "sync": {"revision": "old-sha"},
+                "operationState": {"phase": "Running"},
+            },
+            "operation": {"sync": {"revision": "new-sha"}},
+        }
+
+        with mock.patch.object(haac, "run") as run:
+            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                healed = haac.recover_stale_argocd_operation(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    "haac-platform",
+                    app,
+                )
+
+        self.assertTrue(healed)
+        self.assertEqual(run.call_count, 2)
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "haac-platform",
+            revision="old-sha",
+            sync_options=[],
+        )
+
+    def test_recover_stale_argocd_operation_handles_running_old_repo_revision(self) -> None:
+        app = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"revision": "old-sha"},
+                "operationState": {"phase": "Running"},
+            },
+            "operation": {"sync": {"revision": "old-sha"}},
+        }
+
+        with mock.patch.object(haac, "run") as run:
+            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                healed = haac.recover_stale_argocd_operation(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    "haac-platform",
+                    app,
+                    expected_revision="new-sha",
+                    gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                )
+
+        self.assertTrue(healed)
+        self.assertEqual(run.call_count, 2)
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "haac-platform",
+            revision="new-sha",
+            sync_options=[],
+        )
+
+    def test_recover_stale_argocd_operation_reads_operation_state_fallback(self) -> None:
+        app = {
+            "spec": {"source": {"repoURL": "https://github.com/daubog44/arr_setup.git"}},
+            "status": {
+                "sync": {"revision": "old-sha"},
+                "operationState": {
+                    "phase": "Running",
+                    "operation": {"sync": {"revision": "new-sha"}},
+                },
+            },
+        }
+
+        with mock.patch.object(haac, "run") as run:
+            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                healed = haac.recover_stale_argocd_operation(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    "haac-platform",
+                    app,
+                )
+
+        self.assertTrue(healed)
+        self.assertEqual(run.call_count, 2)
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "haac-platform",
+            revision="old-sha",
+            sync_options=[],
+        )
+
+    def test_argocd_operation_sync_merges_top_level_and_operation_state_payloads(self) -> None:
+        app = {
+            "operation": {"sync": {"syncStrategy": {"hook": {}}}},
+            "status": {
+                "operationState": {
+                    "operation": {
+                        "sync": {
+                            "revision": "new-sha",
+                            "syncOptions": ["ServerSideApply=true"],
+                        }
+                    }
+                }
+            },
+        }
+
+        sync_payload = haac.argocd_operation_sync(app)
+
+        self.assertEqual(sync_payload["revision"], "new-sha")
+        self.assertEqual(sync_payload["syncOptions"], ["ServerSideApply=true"])
+        self.assertEqual(sync_payload["syncStrategy"], {"hook": {}})
+
     def test_recover_missing_api_resource_restarts_sync_once_crd_exists(self) -> None:
         app = {
             "status": {
@@ -1891,7 +2112,12 @@ class ArgocdRevisionGateTests(unittest.TestCase):
 
         self.assertTrue(healed)
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "policy-reporter", hard=True)
-        sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "policy-reporter")
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "policy-reporter",
+            sync_options=[],
+        )
 
     def test_recover_missing_api_resource_handles_kubernetes_api_servicemonitor_error(self) -> None:
         app = {
@@ -1918,7 +2144,12 @@ class ArgocdRevisionGateTests(unittest.TestCase):
 
         self.assertTrue(healed)
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy", hard=True)
-        sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy")
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "alloy",
+            sync_options=[],
+        )
 
     def test_recover_missing_api_resource_requires_podmonitor_crd_for_crowdsec(self) -> None:
         app = {
@@ -1982,7 +2213,142 @@ class ArgocdRevisionGateTests(unittest.TestCase):
 
         self.assertTrue(healed)
         refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy", hard=True)
-        sync.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "alloy")
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "alloy",
+            sync_options=[],
+        )
+
+    def test_recover_large_crd_annotation_resyncs_when_spec_has_disable_migration_fix(self) -> None:
+        app = {
+            "spec": {
+                "syncPolicy": {
+                    "syncOptions": [
+                        "CreateNamespace=true",
+                        "RespectIgnoreDifferences=true",
+                        "ServerSideApply=true",
+                        "ClientSideApplyMigration=false",
+                    ]
+                }
+            },
+            "status": {
+                "operationState": {
+                    "message": (
+                        'one or more objects failed to apply, reason: '
+                        'CustomResourceDefinition.apiextensions.k8s.io "clusterpolicies.kyverno.io" '
+                        "is invalid: metadata.annotations: Too long: may not be more than 262144 bytes"
+                    ),
+                    "operation": {
+                        "sync": {
+                            "syncOptions": [
+                                "CreateNamespace=true",
+                                "RespectIgnoreDifferences=true",
+                                "ServerSideApply=true",
+                            ]
+                        }
+                    },
+                }
+            },
+        }
+
+        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                healed = haac.recover_large_crd_annotation_argocd_operation(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    "kyverno",
+                    app,
+                )
+
+        self.assertTrue(healed)
+        refresh.assert_called_once_with("kubectl", Path("demo-kubeconfig"), "kyverno", hard=True)
+        sync.assert_called_once_with(
+            "kubectl",
+            Path("demo-kubeconfig"),
+            "kyverno",
+            sync_options=[
+                "CreateNamespace=true",
+                "RespectIgnoreDifferences=true",
+                "ServerSideApply=true",
+                "ClientSideApplyMigration=false",
+            ],
+        )
+
+    def test_recover_large_crd_annotation_requires_new_sync_option_absent_from_failed_operation(self) -> None:
+        app = {
+            "spec": {
+                "syncPolicy": {
+                    "syncOptions": [
+                        "CreateNamespace=true",
+                        "RespectIgnoreDifferences=true",
+                        "ServerSideApply=true",
+                        "ClientSideApplyMigration=false",
+                    ]
+                }
+            },
+            "status": {
+                "operationState": {
+                    "message": (
+                        'CustomResourceDefinition.apiextensions.k8s.io "policies.kyverno.io" '
+                        "is invalid: metadata.annotations: Too long: may not be more than 262144 bytes"
+                    ),
+                    "operation": {
+                        "sync": {
+                            "syncOptions": [
+                                "CreateNamespace=true",
+                                "RespectIgnoreDifferences=true",
+                                "ServerSideApply=true",
+                                "ClientSideApplyMigration=false",
+                            ]
+                        }
+                    },
+                }
+            },
+        }
+
+        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                healed = haac.recover_large_crd_annotation_argocd_operation(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    "kyverno",
+                    app,
+                )
+
+        self.assertFalse(healed)
+        refresh.assert_not_called()
+        sync.assert_not_called()
+
+    def test_recover_large_crd_annotation_ignores_unrelated_failures(self) -> None:
+        app = {
+            "spec": {
+                "syncPolicy": {
+                    "syncOptions": [
+                        "ServerSideApply=true",
+                        "ClientSideApplyMigration=false",
+                    ]
+                }
+            },
+            "status": {
+                "operationState": {
+                    "message": "deployment.apps/demo is invalid: some other error",
+                }
+            },
+        }
+
+        with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+            with mock.patch.object(haac, "sync_argocd_application") as sync:
+                healed = haac.recover_large_crd_annotation_argocd_operation(
+                    "kubectl",
+                    Path("demo-kubeconfig"),
+                    "kyverno",
+                    app,
+                )
+
+        self.assertFalse(healed)
+        refresh.assert_not_called()
+        sync.assert_not_called()
 
 
 class ArrStackSurfaceTests(unittest.TestCase):
@@ -3414,11 +3780,15 @@ class ArrStackRepoFileTests(unittest.TestCase):
         self.assertIn("verify:arr-flow", taskfile)
         self.assertIn("media:verify-flow", taskfile)
         self.assertIn("verify-arr-flow", media_taskfile)
-        self.assertIn('"scripts/haac.py" master-ip', taskfile)
-        self.assertIn('"scripts/haac.py" master-ip', media_taskfile)
-        self.assertIn('"scripts/haac.py" master-ip', chaos_taskfile)
-        self.assertIn('"scripts/haac.py" master-ip', security_taskfile)
-        self.assertIn('"scripts/haac.py" master-ip', internal_taskfile)
+        self.assertIn('{{.HAAC_CMD}} master-ip', taskfile)
+        self.assertIn('{{.HAAC_CMD}} master-ip', media_taskfile)
+        self.assertIn('{{.HAAC_CMD}} master-ip', chaos_taskfile)
+        self.assertIn('{{.HAAC_CMD}} master-ip', security_taskfile)
+        self.assertIn('{{.HAAC_CMD}} master-ip', internal_taskfile)
+        self.assertIn('- \'{{.HAAC_CMD}} up\'', taskfile)
+        self.assertIn('- \'{{.HAAC_CMD}} down\'', taskfile)
+        self.assertIn('- \'{{.HAAC_CMD}} preflight\'', taskfile)
+        self.assertIn("- task: :gitops-bootstrap", internal_taskfile)
         self.assertIn('verify-web --domain "{{.DOMAIN_NAME_VALUE}}" --master-ip "{{.MASTER_IP}}"', internal_taskfile)
         self.assertIn("clear-crowdsec-operator-ban", internal_taskfile)
 

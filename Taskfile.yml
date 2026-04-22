@@ -51,8 +51,7 @@ tasks:
   preflight:
     desc: "Run the ordered bootstrap preflight: env validation plus workstation/tooling checks."
     cmds:
-      - task: check-env
-      - task: doctor
+      - '{{.HAAC_CMD}} preflight'
 
   install-tools:
     desc: Bootstrap the local platform-aware `.tools/<os>-<arch>/bin` toolchain and, on Windows, the WSL control-node packages.
@@ -72,33 +71,29 @@ tasks:
   clean-artifacts:
     desc: Remove stray local investigation artifacts outside `.tmp/`.
     cmds:
-      - '{{.HAAC_CMD}} clean-artifacts'
+      - task: internal:clean-artifacts
 
   sync:
     desc: Save local work, validate the declared GitOps remote, and own the explicit merge-policy path before provisioning.
     cmds:
-      - '{{.HAAC_CMD}} sync-repo'
+      - task: internal:sync-repo
+
+  sync-repo:
+    desc: Compatibility alias for `task sync`.
+    cmds:
+      - task: sync
 
   up:
     desc: "Full bootstrap from scratch: OpenTofu, Ansible, GitOps bootstrap, app configuration, and verification."
-    env:
-      PROXMOX_HOST_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
-      LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
-      NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - task: preflight
-      - task: setup-hooks
-      - task: provision-infra
-      - task: configure-os
-      - task: gitops-bootstrap
-      - task: verify-all
+      - '{{.HAAC_CMD}} up'
 
   plan:
     desc: Run a diagnostic OpenTofu plan with provider refresh enabled so unsupported Proxmox LXC drift stays visible.
     deps: [check-env]
     cmds:
-      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" plan'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" -- init'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" -- plan'
 
   configure-os:
     desc: Run only the Ansible playbook to configure Proxmox and the K3s nodes.
@@ -117,8 +112,8 @@ tasks:
       LXC_PASSWORD: "{{.LXC_PASSWORD_VALUE}}"
       NAS_PATH: "{{.NAS_PATH_VALUE}}"
     cmds:
-      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" apply -auto-approve'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" -- init'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" -- apply -auto-approve'
 
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.
@@ -164,6 +159,11 @@ tasks:
     cmds:
       - task: media:verify-flow
 
+  verify-arr-flow:
+    desc: Compatibility alias for `task verify:arr-flow`.
+    cmds:
+      - task: verify:arr-flow
+
   reconcile:infra:
     desc: "Reconcile remote infra and node configuration without re-running the full final verification path."
     env:
@@ -180,10 +180,15 @@ tasks:
     cmds:
       - task: internal:verify-all
 
+  pre-commit-hook:
+    desc: Internal git hook entrypoint used by the repo-local pre-commit shim.
+    cmds:
+      - task: internal:pre-commit-hook
+
   monitor:
     desc: Open a K9s session against the remote cluster through an SSH tunnel.
     cmds:
-      - '{{.HAAC_CMD}} monitor --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}"'
+      - task: internal:monitor
 
   deploy-argocd:
     desc: Apply the ArgoCD app manifests with DOMAIN_NAME substitution.
@@ -196,6 +201,12 @@ tasks:
     deps: [check-env]
     cmds:
       - task: internal:generate-secrets
+
+  generate-secrets-local:
+    desc: Regenerate repo-managed Sealed Secrets against the current kubeconfig without refetching the controller cert.
+    deps: [check-env]
+    cmds:
+      - task: internal:generate-secrets-local
 
   push-changes:
     desc: Regenerate sealed secrets from the cached cert, then push only the GitOps source of truth without performing Git merge policy.
@@ -211,12 +222,17 @@ tasks:
     desc: Apply the local haac-stack chart when ArgoCD is not already managing it.
     deps: [internal:generate-secrets]
     cmds:
-      - '{{.HAAC_CMD}} deploy-local --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --helm "{{.HELM}}"'
+      - task: internal:deploy-local
 
   wait-for-argocd-sync:
     desc: Wait through staged ArgoCD root/platform/workload gates and the critical downloader readiness gate.
     cmds:
       - task: internal:wait-for-argocd-sync
+
+  wait-for-stack:
+    desc: Compatibility alias for `task wait-for-argocd-sync`.
+    cmds:
+      - task: wait-for-argocd-sync
 
   verify-cluster:
     desc: Run cluster-level checks over the remote K3s API.
@@ -228,15 +244,30 @@ tasks:
     cmds:
       - task: internal:verify-endpoints
 
+  verify-web:
+    desc: Compatibility alias for `task verify-endpoints`.
+    cmds:
+      - task: verify-endpoints
+
   repair-litmus-admin:
     desc: Reconcile the Litmus admin account from the repo-managed secret when the persisted MongoDB state drifted.
     cmds:
       - task: internal:repair-litmus-admin
 
+  reconcile-litmus-admin:
+    desc: Compatibility alias for `task repair-litmus-admin`.
+    cmds:
+      - task: repair-litmus-admin
+
   repair-litmus-chaos:
     desc: Reconcile a usable Litmus environment and default chaos infrastructure without manual YAML apply.
     cmds:
       - task: internal:repair-litmus-chaos
+
+  reconcile-litmus-chaos:
+    desc: Compatibility alias for `task repair-litmus-chaos`.
+    cmds:
+      - task: repair-litmus-chaos
 
   verify-browser-auth:
     desc: Run browser-level auth verification for the official public UI surface using the repo-local Playwright verifier.
@@ -249,11 +280,26 @@ tasks:
     cmds:
       - task: internal:sync-cloudflare
 
+  clear-crowdsec-operator-ban:
+    desc: Compatibility alias for the operator CrowdSec cleanup step.
+    cmds:
+      - task: internal:clear-crowdsec-operator-ban
+
   configure-apps:
     desc: Manual fallback bootstrap for QUI and qBittorrent when the in-cluster bootstrap Job must be retriggered explicitly.
     deps: [check-env]
     cmds:
       - task: internal:configure-apps
+
+  reconcile-media-stack:
+    desc: Compatibility alias for `task media:post-install`.
+    cmds:
+      - task: media:post-install
+
+  cleanup-security-signal-residue:
+    desc: Compatibility alias for `task security:cleanup-signal-residue`.
+    cmds:
+      - task: security:cleanup-signal-residue
 
   configure-argocd-local-auth:
     desc: Optionally configure a local ArgoCD username/password fallback on top of the declarative OIDC setup.
@@ -267,7 +313,10 @@ tasks:
       BACKUP_FILE: '{{default "k3s-state-latest.db" .BACKUP_FILE}}'
       NAS_MOUNT_PATH: "/mnt/pve/HaaC-Storage/media/k3s"
     cmds:
-      - '{{.HAAC_CMD}} restore-k3s --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}" --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
+      - task: internal:restore-k3s
+        vars:
+          BACKUP_FILE: "{{.BACKUP_FILE}}"
+          NAS_MOUNT_PATH: "{{.NAS_MOUNT_PATH}}"
 
   shutdown-cluster:
     desc: Gracefully stop the K3s LXC containers on Proxmox.
@@ -276,12 +325,8 @@ tasks:
 
   down:
     desc: Destroy the infrastructure after a graceful cluster shutdown.
-    deps: [check-env]
     cmds:
-      - task: shutdown-cluster
-      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" init'
-      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" destroy -auto-approve'
-      - '{{.HAAC_CMD}} remove-file --path "scripts/pub-sealed-secrets.pem"'
+      - '{{.HAAC_CMD}} down'
 
   loop:check:
     desc: Verify the local OpenSpec/CodexPotter loop bootstrap and validate active changes.

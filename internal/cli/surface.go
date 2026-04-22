@@ -143,20 +143,6 @@ func newInstallWindowsToolsCmd() *cobra.Command {
 	}
 }
 
-func newDefaultGatewayCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "default-gateway",
-		Short: "Resolve the effective default gateway for OpenTofu TF vars",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			b, err := newBridge()
-			if err != nil {
-				return err
-			}
-			return runPythonDelegate(b.repoRoot, []string{"default-gateway"})
-		},
-	}
-}
-
 func localKubeconfigPathGo() string {
 	if override := strings.TrimSpace(os.Getenv("HAAC_KUBECONFIG_PATH")); override != "" {
 		return override

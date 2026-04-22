@@ -123,6 +123,14 @@ SECURITY_SIGNAL_RESIDUE_TARGETS = {
     "security": ("falco-falcosidekick-ui-", "trivy-operator-"),
 }
 WAIT_FOR_STACK_ROOT_APPLICATIONS = {"haac-root", "haac-platform", "argocd", "haac-workloads", "haac-stack"}
+MONITORING_CRD_PROVIDER_APPLICATION = "kube-prometheus-stack"
+MONITORING_CRD_CONSUMER_APPLICATIONS = (
+    "alloy",
+    "crowdsec",
+    "node-problem-detector",
+    "policy-reporter",
+    "trivy-operator",
+)
 CROWDSEC_RUNTIME_MACHINE_TYPES = {"agent", "appsec"}
 CROWDSEC_STALE_MACHINE_MAX_AGE_SECONDS = 1800
 TRIVY_NAMESPACED_REPORT_RESOURCES = (
@@ -2536,14 +2544,49 @@ def refresh_argocd_application(kubectl: str, kubeconfig: Path, application: str,
     )
 
 
-def sync_argocd_application(kubectl: str, kubeconfig: Path, application: str, *, use_hooks: bool = True) -> None:
+def argocd_operation_sync(app: dict[str, object]) -> dict[str, object]:
+    top_level_sync = ((app.get("operation") or {}).get("sync") or {})
+    status = app.get("status") or {}
+    operation_state = status.get("operationState") or {}
+    state_sync = ((operation_state.get("operation") or {}).get("sync") or {})
+    if not top_level_sync:
+        return state_sync
+    if not state_sync:
+        return top_level_sync
+    merged = dict(state_sync)
+    for key, value in top_level_sync.items():
+        if value in ("", None, [], {}):
+            continue
+        merged[key] = value
+    return merged
+
+
+def argocd_application_spec_sync_options(app: dict[str, object]) -> list[str]:
+    sync_options = (((app.get("spec") or {}).get("syncPolicy") or {}).get("syncOptions") or [])
+    return [str(value).strip() for value in sync_options if str(value).strip()]
+
+
+def sync_argocd_application(
+    kubectl: str,
+    kubeconfig: Path,
+    application: str,
+    *,
+    use_hooks: bool = True,
+    revision: str | None = None,
+    sync_options: list[str] | None = None,
+) -> None:
     sync_strategy = {"hook": {}} if use_hooks else {"apply": {}}
+    sync_payload: dict[str, object] = {
+        "syncStrategy": sync_strategy,
+    }
+    if revision:
+        sync_payload["revision"] = revision
+    if sync_options:
+        sync_payload["syncOptions"] = sync_options
     patch_payload = {
         "operation": {
             "initiatedBy": {"username": "haac"},
-            "sync": {
-                "syncStrategy": sync_strategy,
-            },
+            "sync": sync_payload,
         }
     }
     run(
@@ -2766,6 +2809,7 @@ def recover_missing_hook_argocd_operation(
             "but the child Application still owns a resources finalizer and will not be recycled automatically. Manual intervention is required."
         )
 
+    parent_revision = argocd_application_sync_revision(parent_app) or None
     refresh_argocd_application(kubectl, kubeconfig, parent_application, hard=True)
     run(
         [
@@ -2782,12 +2826,19 @@ def recover_missing_hook_argocd_operation(
         ],
         check=False,
     )
+    sync_argocd_application(
+        kubectl,
+        kubeconfig,
+        parent_application,
+        revision=parent_revision,
+        sync_options=argocd_application_spec_sync_options(parent_app),
+    )
     wait_for_argocd_application_recreation(
         kubectl,
         kubeconfig,
         application,
         original_uid=original_uid,
-        timeout_seconds=min(180, seconds_remaining(deadline)),
+        timeout_seconds=min(300, seconds_remaining(deadline)),
     )
     print(
         f"[heal] Recycled repo-managed ArgoCD child Application {application} after missing hook "
@@ -2852,8 +2903,67 @@ def recover_missing_api_resource_argocd_operation(
         if not crd_check(kubectl, kubeconfig):
             return False
     refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
-    sync_argocd_application(kubectl, kubeconfig, application)
+    sync_argocd_application(
+        kubectl,
+        kubeconfig,
+        application,
+        sync_options=argocd_application_spec_sync_options(app),
+    )
     print(f"[heal] Re-synced {application} after the required monitoring CRDs became available")
+    return True
+
+
+def recover_large_crd_annotation_argocd_operation(
+    kubectl: str,
+    kubeconfig: Path,
+    application: str,
+    app: dict[str, object],
+) -> bool:
+    status = app.get("status") or {}
+    operation_state = status.get("operationState") or {}
+    messages: list[str] = []
+    operation_message = str(operation_state.get("message") or "").strip()
+    if operation_message:
+        messages.append(operation_message)
+    sync_result = operation_state.get("syncResult") or {}
+    for resource in sync_result.get("resources") or []:
+        if not isinstance(resource, dict):
+            continue
+        resource_message = str(resource.get("message") or "").strip()
+        if resource_message:
+            messages.append(resource_message)
+    if not messages:
+        return False
+    message_normalized = "\n".join(messages).lower()
+    if "metadata.annotations: too long" not in message_normalized:
+        return False
+    if "clusterpolicies.kyverno.io" not in message_normalized and "policies.kyverno.io" not in message_normalized:
+        return False
+
+    desired_sync_options = {
+        str(value).strip()
+        for value in (((app.get("spec") or {}).get("syncPolicy") or {}).get("syncOptions") or [])
+        if str(value).strip()
+    }
+    if "ServerSideApply=true" not in desired_sync_options or "ClientSideApplyMigration=false" not in desired_sync_options:
+        return False
+
+    current_sync_options = {
+        str(value).strip()
+        for value in ((argocd_operation_sync(app).get("syncOptions") or []))
+        if str(value).strip()
+    }
+    if "ClientSideApplyMigration=false" in current_sync_options:
+        return False
+
+    refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
+    sync_argocd_application(
+        kubectl,
+        kubeconfig,
+        application,
+        sync_options=argocd_application_spec_sync_options(app),
+    )
+    print(f"[heal] Re-synced {application} after disabling ArgoCD client-side apply migration for large CRDs")
     return True
 
 
@@ -2875,6 +2985,27 @@ def list_argocd_child_applications(kubectl: str, kubeconfig: Path) -> list[str]:
     return sorted(set(names))
 
 
+PHASED_ARGOCD_ROOT_GATES = {"haac-root", "haac-platform", "haac-workloads"}
+
+
+def ordered_argocd_child_applications(kubectl: str, kubeconfig: Path) -> list[str]:
+    ordered = list_argocd_child_applications(kubectl, kubeconfig)
+    priority: dict[str, tuple[int, str]] = {
+        MONITORING_CRD_PROVIDER_APPLICATION: (0, MONITORING_CRD_PROVIDER_APPLICATION),
+    }
+    for index, application in enumerate(MONITORING_CRD_CONSUMER_APPLICATIONS, start=1):
+        priority[application] = (index, application)
+    return sorted(ordered, key=lambda application: priority.get(application, (50, application)))
+
+
+def argocd_child_application_stage_label(application: str) -> str:
+    if application == MONITORING_CRD_PROVIDER_APPLICATION:
+        return "Monitoring CRD provider gate"
+    if application in MONITORING_CRD_CONSUMER_APPLICATIONS:
+        return "Monitoring CRD consumer gate"
+    return "Child application gate"
+
+
 def wait_for_argocd_child_applications_ready(
     kubectl: str,
     kubeconfig: Path,
@@ -2883,12 +3014,12 @@ def wait_for_argocd_child_applications_ready(
     expected_revision: str | None = None,
     gitops_repo_url: str | None = None,
 ) -> None:
-    for application in list_argocd_child_applications(kubectl, kubeconfig):
+    for application in ordered_argocd_child_applications(kubectl, kubeconfig):
         wait_for_argocd_application_ready(
             kubectl,
             kubeconfig,
             application=application,
-            stage_label="Child application gate",
+            stage_label=argocd_child_application_stage_label(application),
             deadline=deadline,
             expected_revision=expected_revision,
             gitops_repo_url=gitops_repo_url,
@@ -2921,7 +3052,14 @@ def wait_for_argocd_application_ready(
             ["get", "application", application, "-n", "argocd", "-o", "json"],
             context=f"Read ArgoCD application {application}",
         )
-        if recover_stale_argocd_operation(kubectl, kubeconfig, application, app):
+        if recover_stale_argocd_operation(
+            kubectl,
+            kubeconfig,
+            application,
+            app,
+            expected_revision=expected_revision,
+            gitops_repo_url=gitops_repo_url,
+        ):
             time.sleep(5)
             continue
         if recover_missing_hook_argocd_operation(
@@ -2935,6 +3073,9 @@ def wait_for_argocd_application_ready(
             time.sleep(5)
             continue
         if recover_missing_api_resource_argocd_operation(kubectl, kubeconfig, application, app):
+            time.sleep(5)
+            continue
+        if recover_large_crd_annotation_argocd_operation(kubectl, kubeconfig, application, app):
             time.sleep(5)
             continue
         if application == "haac-stack" and recover_stalled_downloaders_rollout(kubectl, kubeconfig):
@@ -2956,8 +3097,26 @@ def wait_for_argocd_application_ready(
         if sync_status == "Synced" and health_status == "Healthy" and revision_current:
             print(f"[ok] {stage_label}: {application} synced and healthy")
             return
+        if application in PHASED_ARGOCD_ROOT_GATES and health_status == "Healthy" and revision_current:
+            print(
+                f"[ok] {stage_label}: {application} healthy on the current revision; "
+                "descendant applications will be verified in later gates"
+            )
+            return
         if not revision_current:
             refresh_argocd_application(kubectl, kubeconfig, application, hard=True)
+            if sync_status != "Synced" and operation_phase != "Running":
+                sync_argocd_application(
+                    kubectl,
+                    kubeconfig,
+                    application,
+                    revision=expected_revision or current_revision or None,
+                    sync_options=argocd_application_spec_sync_options(app),
+                )
+                print(
+                    f"[heal] Triggered sync for stale-revision app {application} "
+                    f"while waiting for {expected_revision[:12]}"
+                )
             print(
                 f"[wait] {stage_label}: {application} on stale revision "
                 f"{current_revision[:12]} (sync={sync_status or 'Unknown'} health={health_status or 'Unknown'}) "
@@ -3196,13 +3355,28 @@ def recover_stale_argocd_operation(
     kubeconfig: Path,
     application: str,
     app: dict[str, object],
+    *,
+    expected_revision: str | None = None,
+    gitops_repo_url: str | None = None,
 ) -> bool:
     status = app.get("status") or {}
     operation_state = status.get("operationState") or {}
     operation_phase = (operation_state.get("phase") or "").strip()
     desired_revision = ((status.get("sync") or {}).get("revision") or "").strip()
-    active_revision = (((app.get("operation") or {}).get("sync") or {}).get("revision") or "").strip()
-    if operation_phase != "Running" or not desired_revision or not active_revision or active_revision == desired_revision:
+    active_revision = str(argocd_operation_sync(app).get("revision") or "").strip()
+    if operation_phase != "Running" or not active_revision:
+        return False
+    repo_managed_expected_mismatch = False
+    if (
+        expected_revision
+        and gitops_repo_url
+        and desired_revision
+        and active_revision == desired_revision
+        and desired_revision != expected_revision
+        and argocd_application_repo_url(app) == gitops_repo_url
+    ):
+        repo_managed_expected_mismatch = True
+    if active_revision == desired_revision and not repo_managed_expected_mismatch:
         return False
 
     run(
@@ -3237,7 +3411,17 @@ def recover_stale_argocd_operation(
         ],
         check=False,
     )
-    print(f"[heal] Reset stale ArgoCD operation for {application}: {active_revision[:12]} -> {desired_revision[:12]}")
+    sync_argocd_application(
+        kubectl,
+        kubeconfig,
+        application,
+        revision=expected_revision or desired_revision or None,
+        sync_options=argocd_application_spec_sync_options(app),
+    )
+    print(
+        f"[heal] Reset stale ArgoCD operation for {application} "
+        f"and re-synced {active_revision[:12]} -> {(expected_revision or desired_revision)[:12]}"
+    )
     return True
 
 
@@ -3788,6 +3972,24 @@ def wait_for_stack(master_ip: str, proxmox_host: str, kubeconfig: Path, kubectl:
         wait_for_readiness_gate("haac-platform", "Platform root gate")
         wait_for_readiness_gate("argocd", "ArgoCD self-management gate")
         wait_for_readiness_gate("haac-workloads", "Workloads root gate")
+        try:
+            wait_for_argocd_child_applications_ready(
+                kubectl,
+                session_kubeconfig,
+                deadline=deadline,
+                expected_revision=expected_revision,
+                gitops_repo_url=gitops_repo,
+            )
+        except HaaCError as exc:
+            raise HaaCError(
+                bootstrap_recovery_summary(
+                    failing_phase="GitOps readiness",
+                    last_verified_phase=last_verified_phase,
+                    rerun_guidance=UP_PHASE_RERUN_GUIDANCE["GitOps readiness"],
+                    detail=str(exc),
+                )
+            ) from exc
+        last_verified_phase = "Child application gates"
         wait_for_readiness_gate("haac-stack", "Workload application gate")
 
         print("[stage] Workload secret gate: media/protonvpn-key")

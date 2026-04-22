@@ -20,7 +20,7 @@ Use these alongside this runbook when you need the full repo contract:
 - Linux/macOS: `sh ./haac.sh up`
 - Global Task: `task up`
 
-All three entrypoints run the same Task pipeline through the supported `haac` Cobra surface.
+All three entrypoints run the same supported operator pipeline through the `haac` Cobra surface. The wrapper-owned operator contract (`install-tools`, `check-env`, `doctor`, `up`, `down`) is native Cobra; compatibility maintenance flows continue to hang off public Task targets rather than Python-backed `haac` subcommands.
 
 ## Required `.env` Inputs
 
@@ -43,11 +43,11 @@ Proxmox access uses two related inputs:
 2. `haac install-tools` has been run at least once through `.\haac.ps1` or `sh ./haac.sh`.
 3. `haac check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
 4. `haac doctor` passes and confirms the local workstation toolchain.
-5. `haac sync-repo` can fetch and merge the writable `origin/<GITOPS_REPO_REVISION>` branch before provisioning starts.
+5. `haac sync-repo` remains the explicit Git recovery path when the writable `origin/<GITOPS_REPO_REVISION>` branch must be fast-forwarded or checkpointed before publication. It is not hidden inside `up`.
 
 ## Phase Contract
 
-1. Preflight: `check-env`, `doctor`, `sync`
+1. Preflight: `check-env`, `doctor`
 2. Infra provisioning: OpenTofu init and apply through the explicit `provision-infra` phase
 3. Node configuration: Ansible plus K3s service recovery, local flannel `/run/flannel/subnet.env` readiness, and cluster node `Ready` gating before GitOps bootstrap
 4. Secret and GitOps publication: regenerate rendered artifacts, push GitOps state, bootstrap ArgoCD

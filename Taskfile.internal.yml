@@ -18,6 +18,25 @@ vars:
     sh: '{{.HAAC_CMD}} proxmox-access-host'
 
 tasks:
+  operator-up:
+    desc: Internal ordered bootstrap used by the Cobra-owned `haac up` command.
+    cmds:
+      - task: :preflight
+      - task: :setup-hooks
+      - task: :provision-infra
+      - task: :configure-os
+      - task: :gitops-bootstrap
+      - task: verify-all
+
+  operator-down:
+    desc: Internal destroy path used by the Cobra-owned `haac down` command.
+    cmds:
+      - task: :check-env
+      - task: :shutdown-cluster
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" -- init'
+      - '{{.HAAC_CMD}} run-tofu --dir "{{.TOFU_DIR}}" -- destroy -auto-approve'
+      - '{{.HAAC_CMD}} remove-file --path "scripts/pub-sealed-secrets.pem"'
+
   gitops-bootstrap:
     desc: Internal GitOps bootstrap orchestration up to staged ArgoCD health.
     cmds:
@@ -39,42 +58,47 @@ tasks:
   deploy-argocd:
     desc: Apply the ArgoCD app manifests with DOMAIN_NAME substitution.
     cmds:
-      - '{{.HAAC_CMD}} deploy-argocd --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" deploy-argocd --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   generate-secrets:
     desc: Fetch the Sealed Secrets public cert, hydrate templates, and regenerate local Sealed Secrets.
     cmds:
-      - '{{.HAAC_CMD}} generate-secrets --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" generate-secrets --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  generate-secrets-local:
+    desc: Regenerate repo-managed Sealed Secrets against an existing kubeconfig without fetching a new cert.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" generate-secrets-local --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   push-changes:
     desc: Regenerate sealed secrets from the cached cert, then push only the GitOps source of truth without performing Git merge policy.
     cmds:
-      - '{{.HAAC_CMD}} push-changes --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" push-changes --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   wait-for-argocd-sync:
     desc: Wait through staged ArgoCD root/platform/workload gates and the critical downloader readiness gate.
     cmds:
-      - '{{.HAAC_CMD}} wait-for-stack --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --timeout 3600'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" wait-for-stack --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --timeout 3600'
 
   verify-cluster:
     desc: Run cluster-level checks over the remote K3s API.
     cmds:
-      - '{{.HAAC_CMD}} verify-cluster --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" verify-cluster --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   verify-endpoints:
     desc: Check the public HTTP endpoints exposed through Cloudflare and Traefik, reporting full versus partial success.
     cmds:
-      - '{{.HAAC_CMD}} verify-web --domain "{{.DOMAIN_NAME_VALUE}}" --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" verify-web --domain "{{.DOMAIN_NAME_VALUE}}" --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   repair-litmus-admin:
     desc: Reconcile the Litmus admin account from the repo-managed secret when the persisted MongoDB state drifted.
     cmds:
-      - '{{.HAAC_CMD}} reconcile-litmus-admin --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" reconcile-litmus-admin --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   repair-litmus-chaos:
     desc: Reconcile a usable Litmus environment and default chaos infrastructure without manual YAML apply.
     cmds:
-      - '{{.HAAC_CMD}} reconcile-litmus-chaos --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" reconcile-litmus-chaos --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   verify-browser-auth:
     desc: Run browser-level auth verification for the official public UI surface using the repo-local Playwright verifier.
@@ -84,19 +108,67 @@ tasks:
   clear-crowdsec-operator-ban:
     desc: Remove the current operator workstation from the temporary CrowdSec AppSec out-of-band ban list before browser verification.
     cmds:
-      - '{{.HAAC_CMD}} clear-crowdsec-operator-ban --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" clear-crowdsec-operator-ban --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   sync-cloudflare:
     desc: Reconcile Cloudflare Tunnel ingress rules and the required DNS records.
     cmds:
-      - '{{.HAAC_CMD}} sync-cloudflare --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" sync-cloudflare --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   configure-apps:
     desc: Manual fallback bootstrap for QUI and qBittorrent when the in-cluster bootstrap Job must be retriggered explicitly.
     cmds:
-      - '{{.HAAC_CMD}} configure-apps --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" configure-apps --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
 
   configure-argocd-local-auth:
     desc: Optionally configure a local ArgoCD username/password fallback on top of the declarative OIDC setup.
     cmds:
-      - '{{.HAAC_CMD}} configure-argocd-local-auth --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" configure-argocd-local-auth --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  sync-repo:
+    desc: Checkpoint and align the GitOps repository state before publication.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" sync-repo'
+
+  clean-artifacts:
+    desc: Remove local investigation artifacts outside .tmp.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" clean-artifacts'
+
+  pre-commit-hook:
+    desc: Regenerate repo-managed secrets when the local cluster kubeconfig is usable during git pre-commit.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" pre-commit-hook'
+
+  deploy-local:
+    desc: Deploy the local haac-stack chart when ArgoCD is not already managing it.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" deploy-local --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}" --helm "{{.HELM}}"'
+
+  cleanup-security-signal-residue:
+    desc: Prune stale security-report residue left by historical rollout objects.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" cleanup-security-signal-residue --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  reconcile-media-stack:
+    desc: Reconcile the repo-managed media stack readiness surface.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" reconcile-media-stack --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  verify-arr-flow:
+    desc: Run the ARR end-to-end verification path.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" verify-arr-flow --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+
+  restore-k3s:
+    desc: Restore K3s from the selected NAS backup file.
+    vars:
+      BACKUP_FILE: '{{default "k3s-state-latest.db" .BACKUP_FILE}}'
+      NAS_MOUNT_PATH: '{{default "/mnt/pve/HaaC-Storage/media/k3s" .NAS_MOUNT_PATH}}'
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" restore-k3s --proxmox-host "{{.PROXMOX_HOST}}" --tofu-dir "{{.TOFU_DIR}}" --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
+
+  monitor:
+    desc: Open an interactive cluster monitor session.
+    cmds:
+      - '{{.PYTHON_CMD}} -u "scripts/haac.py" monitor --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}"'

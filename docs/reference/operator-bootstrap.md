@@ -21,7 +21,6 @@ The phase order is:
 1. preflight
    - `check-env`
    - `doctor`
-   - `sync`
 2. infrastructure provisioning
    - OpenTofu init/apply in `tofu/`
 3. node configuration
@@ -97,7 +96,7 @@ The normal recovery surface is intentionally narrow:
 
 The Git boundary is also explicit:
 
-- `task sync` owns the fetch/merge policy before bootstrap
+- `task sync` owns the fetch/merge policy before bootstrap when the local branch must be realigned explicitly
 - `task up` and `task push-changes` are publish-only
 - if the branch is behind or diverged, the operator must resolve that explicitly through the supported sync path
 
@@ -112,15 +111,15 @@ Keep these invariants intact:
 
 ## Remaining Python Surfaces
 
-The supported operator CLI is now the Cobra-owned `haac` surface reached through `.\haac.ps1`, `sh ./haac.sh`, or `task`.
+The supported operator CLI is now the Cobra-owned `haac` surface reached through `.\haac.ps1`, `sh ./haac.sh`, or `task`. The public `haac` command tree no longer exposes Python-backed maintenance subcommands.
 
-The remaining Python scripts are not supported end-user entrypoints:
+The remaining Python scripts are internal implementation modules or loop helpers:
 
 - `scripts/haac_loop.py`: Ralph loop automation and worklog/bootstrap glue
 - `scripts/hydrate-authelia.py`: focused template/helper maintenance script
-- `scripts/haac.py`: internal implementation module still reused by some Cobra subcommands while the larger runtime migration continues
+- `scripts/haac.py`: internal implementation module invoked by internal Task targets for compatibility maintenance paths that are still outside the native Go operator core
 
-Operators should treat those scripts as implementation details or loop/maintenance surfaces, not as the primary bootstrap contract.
+Operators should treat those scripts as implementation details or Task-owned maintenance surfaces, not as supported direct CLI entrypoints.
 
 ## Cold-Cycle Acceptance
 

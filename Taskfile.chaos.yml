@@ -27,5 +27,5 @@ tasks:
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - '{{.HAAC_CMD}} reconcile-litmus-admin --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
-      - '{{.HAAC_CMD}} reconcile-litmus-chaos --master-ip "{{.MASTER_IP}}" --proxmox-host "{{.PROXMOX_HOST}}" --kubeconfig "{{.K3S_KUBECONFIG}}" --kubectl "{{.KUBECTL}}"'
+      - task: internal:repair-litmus-admin
+      - task: internal:repair-litmus-chaos

@@ -137,7 +137,7 @@ Use those guides when changing bootstrap, media automation, or security behavior
 
 ## Task Up Contract
 
-`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all invoke the same Task pipeline. The shell wrappers now execute a repo-local Go/Cobra binary, preserve raw Task arguments unchanged, and build that binary in place with `go build` only when it is missing.
+`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all drive the same supported operator pipeline. The shell wrappers execute a repo-local Go/Cobra binary, preserve raw Task arguments unchanged, and build that binary in place with `go build` only when it is missing. The supported operator entrypoints (`install-tools`, `check-env`, `doctor`, `up`, `down`, and the direct wrapper invocations) are the Cobra-owned surface; compatibility maintenance targets are exposed as public Task targets rather than Python-backed `haac` subcommands.
 
 That bootstrap path is also the supported rerun path. A partial or previously successful run should be recoverable by rerunning the same command unless the failure output explicitly says manual intervention is required.
 
@@ -214,7 +214,7 @@ The operator-facing Seerr discovery contract is intentionally narrow:
 
 `task up` is now publish-only on the Git boundary. It stages only generated GitOps artifacts and refuses to merge remote state when the branch is behind or diverged.
 
-Git merge policy is explicit. `task sync` owns the local checkpoint plus safe fast-forward merge path, fails closed on divergence, and leaves manual conflict resolution explicit. Broad repo publication is no longer part of the supported Task operator surface.
+Git merge policy is explicit. `task sync` owns the local checkpoint plus safe fast-forward merge path, fails closed on divergence, and leaves manual conflict resolution explicit. It is a separate recovery path, not an implicit step hidden inside `task up`.
 
 `MASTER_TARGET_NODE` remains the Proxmox node name used inside OpenTofu and generated inventory. `PROXMOX_ACCESS_HOST` is the workstation-reachable IP or hostname used for the Proxmox API, SSH, and tunnel operations. If the node name itself already resolves locally, `PROXMOX_ACCESS_HOST` may be left unset and the bootstrap falls back to `MASTER_TARGET_NODE`.
 
