@@ -10,9 +10,9 @@
 
 ## 3. Migration Execution
 
-- [ ] 3.1 Port the supported operator command surface needed by `up`, `down`, preflight, and tool bootstrap away from direct Python CLI ownership
-- [ ] 3.2 Update Taskfiles and docs so the supported operator path no longer documents `scripts/haac.py` as the primary CLI
-- [ ] 3.3 Record the remaining non-operator Python surfaces explicitly if any loop-only or maintenance-only scripts stay out of scope
+- [x] 3.1 Port the supported operator command surface needed by `up`, `down`, preflight, and tool bootstrap away from direct Python CLI ownership
+- [x] 3.2 Update Taskfiles and docs so the supported operator path no longer documents `scripts/haac.py` as the primary CLI
+- [x] 3.3 Record the remaining non-operator Python surfaces explicitly if any loop-only or maintenance-only scripts stay out of scope
 
 ## 4. Validation
 

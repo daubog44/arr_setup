@@ -165,6 +165,8 @@ LEGACY_ARTIFACT_PATTERNS = (
 SANCTIONED_SCRATCH_ROOTS = (
     TMP_DIR,
 )
+ARGOCD_HOOK_RECYCLE_COOLDOWN_SECONDS = 180
+ARGOCD_HOOK_RECYCLE_COOLDOWNS: dict[str, float] = {}
 
 
 class HaaCError(RuntimeError):
@@ -2751,6 +2753,22 @@ def wait_for_argocd_application_recreation(
     raise HaaCError(f"Timeout waiting for ArgoCD application {application} recreation")
 
 
+def argocd_hook_recycle_cooldown_active(application: str, *, now: float | None = None) -> bool:
+    current_time = time.time() if now is None else now
+    expires_at = ARGOCD_HOOK_RECYCLE_COOLDOWNS.get(application)
+    if expires_at is None:
+        return False
+    if current_time >= expires_at:
+        ARGOCD_HOOK_RECYCLE_COOLDOWNS.pop(application, None)
+        return False
+    return True
+
+
+def note_argocd_hook_recycle(application: str, *, now: float | None = None) -> None:
+    current_time = time.time() if now is None else now
+    ARGOCD_HOOK_RECYCLE_COOLDOWNS[application] = current_time + ARGOCD_HOOK_RECYCLE_COOLDOWN_SECONDS
+
+
 def recover_missing_hook_argocd_operation(
     kubectl: str,
     kubeconfig: Path,
@@ -2785,6 +2803,8 @@ def recover_missing_hook_argocd_operation(
             f"ArgoCD application {application} is stuck waiting on missing hook {hook_resource['ref']}, "
             "but the current Application UID is unavailable for safe recycle verification. Manual intervention is required."
         )
+    if argocd_hook_recycle_cooldown_active(application):
+        return False
 
     parent_app = kubectl_json(
         kubectl,
@@ -2840,6 +2860,7 @@ def recover_missing_hook_argocd_operation(
         original_uid=original_uid,
         timeout_seconds=min(300, seconds_remaining(deadline)),
     )
+    note_argocd_hook_recycle(application)
     print(
         f"[heal] Recycled repo-managed ArgoCD child Application {application} after missing hook "
         f"{hook_resource['ref']} under parent {parent_application}"

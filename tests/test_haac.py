@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1792,6 +1793,52 @@ class ArgocdRevisionGateTests(unittest.TestCase):
         )
         delete_call = run.call_args.args[0]
         self.assertEqual(delete_call[:7], ["kubectl", "--kubeconfig", "demo-kubeconfig", "delete", "application", "kube-prometheus-stack", "-n"])
+        self.assertIn("kube-prometheus-stack", haac.ARGOCD_HOOK_RECYCLE_COOLDOWNS)
+        haac.ARGOCD_HOOK_RECYCLE_COOLDOWNS.clear()
+
+    def test_recover_missing_hook_stall_skips_recycle_during_cooldown(self) -> None:
+        child = {
+            "metadata": {
+                "name": "kyverno",
+                "uid": "uid-before-recycle",
+                "annotations": {"argocd.argoproj.io/tracking-id": "haac-platform:argoproj.io/Application:argocd/kyverno"},
+            },
+            "spec": {"destination": {"namespace": "kyverno"}},
+            "status": {
+                "sync": {"revision": "same-sha"},
+                "operationState": {
+                    "phase": "Running",
+                    "message": "waiting for completion of hook batch/Job/kyverno-migrate-resources",
+                },
+            },
+            "operation": {"sync": {"revision": "same-sha"}},
+        }
+
+        try:
+            haac.ARGOCD_HOOK_RECYCLE_COOLDOWNS["kyverno"] = time.time() + 60
+            with mock.patch.object(haac, "argocd_hook_resource_exists", return_value=False):
+                with mock.patch.object(haac, "kubectl_json") as kubectl_json:
+                    with mock.patch.object(haac, "refresh_argocd_application") as refresh:
+                        with mock.patch.object(haac, "sync_argocd_application") as sync:
+                            with mock.patch.object(haac, "wait_for_argocd_application_recreation") as wait:
+                                with mock.patch.object(haac, "run") as run:
+                                    healed = haac.recover_missing_hook_argocd_operation(
+                                        "kubectl",
+                                        Path("demo-kubeconfig"),
+                                        "kyverno",
+                                        child,
+                                        deadline=180,
+                                        gitops_repo_url="https://github.com/daubog44/arr_setup.git",
+                                    )
+        finally:
+            haac.ARGOCD_HOOK_RECYCLE_COOLDOWNS.clear()
+
+        self.assertFalse(healed)
+        kubectl_json.assert_not_called()
+        refresh.assert_not_called()
+        sync.assert_not_called()
+        wait.assert_not_called()
+        run.assert_not_called()
 
     def test_recover_missing_hook_stall_requires_repo_managed_parent(self) -> None:
         child = {

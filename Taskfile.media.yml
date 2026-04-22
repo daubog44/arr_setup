@@ -19,11 +19,11 @@ tasks:
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - task: internal:reconcile-media-stack
+      - task: :internal:reconcile-media-stack
 
   verify-flow:
     desc: "Run the explicit ARR end-to-end verification path: Seerr request, Prowlarr search, qBittorrent/VPN, NAS import, and Jellyfin visibility."
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - task: internal:verify-arr-flow
+      - task: :internal:verify-arr-flow

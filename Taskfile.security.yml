@@ -38,4 +38,4 @@ tasks:
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - task: internal:cleanup-security-signal-residue
+      - task: :internal:cleanup-security-signal-residue
