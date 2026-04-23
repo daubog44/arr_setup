@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "dev"
-
 func Execute() int {
 	args := os.Args[1:]
 	if wantsTaskPassthrough(args) {
@@ -39,11 +37,12 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "haac",
 		Short:         "HaaC operator CLI",
-		Long:          "HaaC exposes a Cobra-owned operator surface and passes supported task targets through to the repo-local Task binary without a Python fallback.",
+		Long:          "HaaC exposes a Cobra-owned operator surface, can initialize a workspace from Git, and passes supported task targets through to the repo-local Task binary without a Python fallback.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 
+	root.AddCommand(newInitCmd())
 	root.AddCommand(newEnvValueCmd())
 	root.AddCommand(newToolPathCmd())
 	root.AddCommand(newKubeconfigPathCmd())
@@ -54,6 +53,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newCheckEnvCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newInstallToolsCmd())
+	root.AddCommand(newUpdateToolsCmd())
 	root.AddCommand(newInstallWindowsToolsCmd())
 	root.AddCommand(newInstallWSLToolsCmd())
 	root.AddCommand(newUpCmd())
@@ -92,7 +92,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the HaaC CLI version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(version)
+			fmt.Println(renderVersion())
 		},
 	}
 }
@@ -107,6 +107,7 @@ func wantsTaskPassthrough(args []string) bool {
 	}
 	switch first {
 	case "help",
+		"init",
 		"env-value",
 		"tool-path",
 		"kubeconfig-path",
@@ -115,6 +116,7 @@ func wantsTaskPassthrough(args []string) bool {
 		"default-gateway",
 		"preflight",
 		"install-tools",
+		"update-tools",
 		"install-windows-tools",
 		"install-wsl-tools",
 		"check-env",

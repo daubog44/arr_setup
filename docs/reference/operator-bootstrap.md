@@ -6,11 +6,12 @@ This guide explains the repo-managed operator path behind `task up`.
 
 The supported entrypoints are:
 
+- direct CLI from an initialized workspace: `haac up`
 - Windows: `.\haac.ps1 up`
 - Linux/macOS: `sh ./haac.sh up`
 - Global Task: `task up`
 
-All three entrypoints drive the same bootstrap pipeline through `Taskfile.yml`, `Taskfile.internal.yml`, and the supported `haac` Cobra surface.
+All entrypoints drive the same bootstrap pipeline through the supported `haac` Cobra surface. Taskfiles and wrappers remain compatibility layers around that boundary.
 
 ## Phase Model
 
@@ -119,7 +120,7 @@ The remaining Python scripts are internal implementation modules or loop helpers
 - `scripts/hydrate-authelia.py`: focused template/helper maintenance script
 - `scripts/haac.py`: internal implementation module invoked by internal Task targets for compatibility maintenance paths that are still outside the native Go operator core
 
-Operators should treat those scripts as implementation details or Task-owned maintenance surfaces, not as supported direct CLI entrypoints.
+Operators should treat those scripts as implementation details or Task-owned maintenance surfaces, not as supported direct CLI entrypoints. The standalone distribution path is `haac init` -> fill `.env` -> `haac install-tools` -> `haac up`.
 
 ## Cold-Cycle Acceptance
 

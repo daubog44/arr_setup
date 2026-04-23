@@ -60,6 +60,20 @@ Helm is kept for `k8s/charts/haac-stack/` because that layer is heavily paramete
 
 Replacing that stack with raw YAML plus overlays would reduce readability and DRY, not improve it.
 
+## Standalone CLI
+
+The preferred product surface is now the standalone `haac` binary.
+
+The intended operator flow is:
+
+1. download a versioned `haac` release artifact
+2. run `haac init <directory>` to clone the workspace from Git and seed `.env`
+3. fill `.env`
+4. run `haac install-tools`
+5. run `haac up`
+
+Release artifacts are built from `.github/workflows/release.yml` using `.goreleaser.yaml`, and `haac version` now reports build metadata instead of only a raw dev string.
+
 ## Windows and Linux
 
 Portable CLI tools are bootstrapped into platform-specific directories under `.tools/`:
@@ -83,9 +97,9 @@ The remaining system dependencies stay OS-level on purpose:
 - `git`
 - `ssh`
 - `wsl` on Windows
-- `ansible-playbook` on Linux or inside WSL on Windows
+- `ansible-playbook` may be installed globally or through `haac install-tools --with-control-node` on non-Windows hosts
 
-If you do not have a global `task`, use the repo-local wrappers:
+If you do not have a standalone `haac` binary yet, the repo-local wrappers still work as compatibility shims:
 
 - Windows: `.\haac.ps1 up`
 - Linux/macOS: `sh ./haac.sh up`
@@ -94,27 +108,29 @@ If you do have `task` installed, `task up` still works.
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env`.
-2. Fill in the required secrets and infrastructure values.
-3. Run the local wrapper to bootstrap the repo-local tools and build the Cobra entrypoint:
-   - Windows: `.\haac.ps1 install-tools`
-   - Linux/macOS: `sh ./haac.sh install-tools`
-4. Run the Cobra-owned preflight command:
-   - Windows: `.\haac.ps1 check-env`
-   - Linux/macOS: `sh ./haac.sh check-env`
-5. Run the Cobra-owned tooling check:
-   - Windows: `.\haac.ps1 doctor`
-   - Linux/macOS: `sh ./haac.sh doctor`
+1. If you are starting from the standalone binary, initialize a workspace:
+   - `haac init ./haac-workspace`
+   - `cd ./haac-workspace`
+2. Copy `.env.example` to `.env` only if `haac init` did not already seed it for you.
+3. Fill in the required secrets and infrastructure values.
+4. Bootstrap the managed toolchain:
+   - direct CLI: `haac install-tools`
+   - compatibility wrapper on Windows: `.\haac.ps1 install-tools`
+   - compatibility wrapper on Linux/macOS: `sh ./haac.sh install-tools`
+5. Run the Cobra-owned preflight commands:
+   - `haac check-env`
+   - `haac doctor`
 6. Run the full bootstrap:
-   - Windows: `.\haac.ps1 up`
-   - Linux/macOS: `sh ./haac.sh up`
-   - or `task up` if Task is already installed globally
+   - `haac up`
+   - or the compatibility shims `.\haac.ps1 up`, `sh ./haac.sh up`, or `task up`
 
 On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `python` alias.
 
 ## Main Commands
 
 - `install-tools`: bootstrap `.tools/<os>-<arch>/bin` and, on Windows, the WSL control-node packages plus the Linux portable toolchain used from WSL
+- `update-tools`: refresh the managed toolchain against the configured versions
+- `init`: clone a HaaC workspace from Git and seed `.env`
 - `check-env`: verify required `.env` inputs plus workstation-to-Proxmox API and SSH reachability before bootstrap
 - `doctor`: verify local prerequisites
 - `up`: full provisioning and GitOps bootstrap
@@ -137,7 +153,7 @@ Use those guides when changing bootstrap, media automation, or security behavior
 
 ## Task Up Contract
 
-`task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all drive the same supported operator pipeline. The shell wrappers execute a repo-local Go/Cobra binary, preserve raw Task arguments unchanged, and build that binary in place with `go build` only when it is missing. The supported operator entrypoints (`install-tools`, `check-env`, `doctor`, `up`, `down`, and the direct wrapper invocations) are the Cobra-owned surface; compatibility maintenance targets are exposed as public Task targets rather than Python-backed `haac` subcommands.
+`haac up`, `task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all drive the same supported operator pipeline. The direct `haac` binary is now the primary product surface; the shell wrappers and Task entrypoints are compatibility shims around that same Cobra-owned contract. The supported operator entrypoints (`init`, `install-tools`, `update-tools`, `check-env`, `doctor`, `up`, `down`, and the direct wrapper invocations) are the Cobra-owned surface; compatibility maintenance targets are exposed as public Task targets rather than Python-backed `haac` subcommands.
 
 That bootstrap path is also the supported rerun path. A partial or previously successful run should be recoverable by rerunning the same command unless the failure output explicitly says manual intervention is required.
 

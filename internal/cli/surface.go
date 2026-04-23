@@ -138,7 +138,12 @@ func newInstallWindowsToolsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return installTools(b.repoRoot)
+			return installTools(toolInstallOptions{
+				workspaceRoot:   b.repoRoot,
+				scope:           string(toolInstallScopeLocal),
+				upgrade:         false,
+				withControlNode: true,
+			})
 		},
 	}
 }
@@ -222,6 +227,9 @@ func toolLocationGo(repoRoot, name string) string {
 	local := repoLocalBinaryPath(repoRoot, name, runtime.GOOS, runtime.GOARCH)
 	if fileExists(local) {
 		return local
+	}
+	if global, err := scopedBinaryPath(repoRoot, name, runtime.GOOS, runtime.GOARCH, toolInstallScopeGlobal); err == nil && fileExists(global) {
+		return global
 	}
 	if found, err := exec.LookPath(name); err == nil {
 		return found

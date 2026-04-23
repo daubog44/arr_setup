@@ -47,3 +47,4 @@ ansible/inventory.yml
 ansible/*.retry
 output/
 .tmp/
+dist/

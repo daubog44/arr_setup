@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -24,33 +25,107 @@ const (
 	kubectlVersion    = "1.35.3"
 	kubesealVersion   = "0.36.1"
 	taskVersion       = "3.49.1"
+	ansibleCoreVersion = "2.19.1"
 )
 
+type toolInstallScope string
+
+const (
+	toolInstallScopeLocal  toolInstallScope = "local"
+	toolInstallScopeGlobal toolInstallScope = "global"
+)
+
+type toolInstallOptions struct {
+	workspaceRoot   string
+	scope           string
+	upgrade         bool
+	withControlNode bool
+}
+
 func newInstallToolsCmd() *cobra.Command {
-	return &cobra.Command{
+	var workspace string
+	var scope string
+	var upgrade bool
+	var withControlNode bool
+
+	cmd := &cobra.Command{
 		Use:   "install-tools",
-		Short: "Bootstrap the repo-local portable toolchain and required local keys",
+		Short: "Bootstrap the managed HaaC toolchain for a workspace or global user scope",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return fmt.Errorf("install-tools does not accept extra arguments")
 			}
-			b, err := newBridge()
+			workspaceRoot, err := resolveWorkspaceRoot(workspace)
 			if err != nil {
 				return err
 			}
-			return installTools(b.repoRoot)
+			if !cmd.Flags().Changed("with-control-node") {
+				withControlNode = true
+			}
+			return installTools(toolInstallOptions{
+				workspaceRoot:   workspaceRoot,
+				scope:           scope,
+				upgrade:         upgrade,
+				withControlNode: withControlNode,
+			})
 		},
 	}
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Initialized HaaC workspace path (defaults to current workspace)")
+	cmd.Flags().StringVar(&scope, "scope", string(toolInstallScopeLocal), "Tool install scope: local or global")
+	cmd.Flags().BoolVar(&upgrade, "upgrade", false, "Force refresh of the managed tools even when the current version markers match")
+	cmd.Flags().BoolVar(&withControlNode, "with-control-node", false, "Also install the managed Ansible/control-node runtime where supported")
+	return cmd
 }
 
-func installTools(repoRoot string) error {
-	env, err := mergedEnvFromRepo(repoRoot)
+func newUpdateToolsCmd() *cobra.Command {
+	var workspace string
+	var scope string
+	var withControlNode bool
+
+	cmd := &cobra.Command{
+		Use:   "update-tools",
+		Short: "Refresh the managed HaaC toolchain against the configured versions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return fmt.Errorf("update-tools does not accept extra arguments")
+			}
+			workspaceRoot, err := resolveWorkspaceRoot(workspace)
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("with-control-node") {
+				withControlNode = true
+			}
+			return installTools(toolInstallOptions{
+				workspaceRoot:   workspaceRoot,
+				scope:           scope,
+				upgrade:         false,
+				withControlNode: withControlNode,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Initialized HaaC workspace path (defaults to current workspace)")
+	cmd.Flags().StringVar(&scope, "scope", string(toolInstallScopeLocal), "Tool install scope: local or global")
+	cmd.Flags().BoolVar(&withControlNode, "with-control-node", false, "Also install the managed Ansible/control-node runtime where supported")
+	return cmd
+}
+
+func installTools(options toolInstallOptions) error {
+	scope := toolInstallScope(strings.TrimSpace(options.scope))
+	if scope == "" {
+		scope = toolInstallScopeLocal
+	}
+	if scope != toolInstallScopeLocal && scope != toolInstallScopeGlobal {
+		return fmt.Errorf("unsupported install scope %q; expected local or global", options.scope)
+	}
+
+	env, err := mergedEnvFromRepo(options.workspaceRoot)
 	if err != nil {
 		return err
 	}
 
 	targets := [][2]string{{runtime.GOOS, runtime.GOARCH}}
-	if runtime.GOOS == "windows" {
+	if scope == toolInstallScopeLocal && runtime.GOOS == "windows" {
 		wslArch, err := detectWSLArch(env)
 		if err != nil {
 			return err
@@ -65,11 +140,11 @@ func installTools(repoRoot string) error {
 		}
 		seen[target] = true
 		for _, tool := range []string{"tofu", "helm", "kubectl", "kubeseal", "task"} {
-			installed, err := ensureLocalCLITool(repoRoot, tool, target[0], target[1], env)
+			installed, err := ensureScopedCLITool(options.workspaceRoot, tool, target[0], target[1], env, scope, options.upgrade)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Installed portable %s for %s-%s at %s\n", tool, target[0], target[1], installed)
+			fmt.Printf("Installed %s (%s scope) for %s-%s at %s\n", tool, scope, target[0], target[1], installed)
 		}
 	}
 
@@ -79,19 +154,36 @@ func installTools(repoRoot string) error {
 		}
 	}
 
-	if err := ensureSSHKeypair(filepath.Join(repoRoot, ".ssh", "haac_ed25519"), "haac@local"); err != nil {
-		return err
-	}
-	if err := ensureSSHKeypair(filepath.Join(repoRoot, ".ssh", "haac_semaphore_ed25519"), "haac-semaphore@local"); err != nil {
-		return err
-	}
-	if err := ensureSSHKeypair(filepath.Join(repoRoot, ".ssh", "haac_repo_deploy_ed25519"), "haac-repo-deploy@local"); err != nil {
-		return err
+	if scope == toolInstallScopeLocal {
+		if err := ensureSSHKeypair(filepath.Join(options.workspaceRoot, ".ssh", "haac_ed25519"), "haac@local"); err != nil {
+			return err
+		}
+		if err := ensureSSHKeypair(filepath.Join(options.workspaceRoot, ".ssh", "haac_semaphore_ed25519"), "haac-semaphore@local"); err != nil {
+			return err
+		}
+		if err := ensureSSHKeypair(filepath.Join(options.workspaceRoot, ".ssh", "haac_repo_deploy_ed25519"), "haac-repo-deploy@local"); err != nil {
+			return err
+		}
 	}
 
-	if runtime.GOOS == "windows" {
-		if err := installWSLTools(env); err != nil {
-			return err
+	if options.withControlNode {
+		if runtime.GOOS == "windows" {
+			if err := installWSLTools(env); err != nil {
+				return err
+			}
+		} else {
+			installed, err := ensureManagedAnsible(scope, options.workspaceRoot, options.upgrade)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Installed managed ansible-playbook (%s scope) at %s\n", scope, installed)
+		}
+	}
+
+	if scope == toolInstallScopeGlobal {
+		globalBin, err := userGlobalBinDir()
+		if err == nil {
+			fmt.Printf("Global toolchain installed under %s. Ensure that directory is on PATH before invoking the binaries directly.\n", globalBin)
 		}
 	}
 	return nil
@@ -176,18 +268,171 @@ func repoLocalBinaryPath(repoRoot, name, goos, goarch string) string {
 	return filepath.Join(repoRoot, ".tools", fmt.Sprintf("%s-%s", goos, goarch), "bin", binary)
 }
 
-func ensureLocalCLITool(repoRoot, name, goos, goarch string, env map[string]string) (string, error) {
-	destination := repoLocalBinaryPath(repoRoot, name, goos, goarch)
-	requestedVersion := requestedToolVersion(name, env)
+func userGlobalBinDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+		if localAppData == "" {
+			return "", fmt.Errorf("LOCALAPPDATA is required to resolve the global haac tool directory on Windows")
+		}
+		return filepath.Join(localAppData, "Programs", "haac", "bin"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "bin"), nil
+}
+
+func userGlobalDataDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+		if localAppData == "" {
+			return "", fmt.Errorf("LOCALAPPDATA is required to resolve the global haac data directory on Windows")
+		}
+		return filepath.Join(localAppData, "haac"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share", "haac"), nil
+}
+
+func scopedBinaryPath(repoRoot, name, goos, goarch string, scope toolInstallScope) (string, error) {
+	switch scope {
+	case toolInstallScopeLocal:
+		return repoLocalBinaryPath(repoRoot, name, goos, goarch), nil
+	case toolInstallScopeGlobal:
+		globalDir, err := userGlobalBinDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(globalDir, binaryNameForPlatform(name, goos)), nil
+	default:
+		return "", fmt.Errorf("unsupported install scope %q", scope)
+	}
+}
+
+func managedAnsibleRoot(scope toolInstallScope, workspaceRoot string) (string, error) {
+	switch scope {
+	case toolInstallScopeLocal:
+		return filepath.Join(workspaceRoot, ".tools", fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH), "python"), nil
+	case toolInstallScopeGlobal:
+		globalDataDir, err := userGlobalDataDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(globalDataDir, "python"), nil
+	default:
+		return "", fmt.Errorf("unsupported install scope %q", scope)
+	}
+}
+
+func managedAnsibleBinary(scope toolInstallScope, workspaceRoot string) (string, error) {
+	root, err := managedAnsibleRoot(scope, workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "bin", "ansible-playbook"), nil
+}
+
+func ensureManagedAnsible(scope toolInstallScope, workspaceRoot string, upgrade bool) (string, error) {
+	ansibleBinary, err := managedAnsibleBinary(scope, workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	versionMarker := ansibleBinary + ".version"
+	if !upgrade && fileExists(ansibleBinary) {
+		if data, err := os.ReadFile(versionMarker); err == nil && strings.TrimSpace(string(data)) == ansibleCoreVersion {
+			return ansibleBinary, nil
+		}
+	}
+
+	pythonBinary, err := resolvePythonVenvBootstrapBinary()
+	if err != nil {
+		return "", err
+	}
+	venvRoot := filepath.Dir(filepath.Dir(ansibleBinary))
+	if upgrade {
+		_ = os.RemoveAll(venvRoot)
+	}
+	if err := os.MkdirAll(filepath.Dir(venvRoot), 0o755); err != nil {
+		return "", err
+	}
+	venvConfig := filepath.Join(venvRoot, "pyvenv.cfg")
+	if !fileExists(venvConfig) {
+		cmd := exec.Command(pythonBinary, "-m", "venv", venvRoot)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			return "", err
+		}
+	}
+	pipBinary := filepath.Join(venvRoot, "bin", "pip")
+	if !fileExists(pipBinary) {
+		return "", fmt.Errorf("managed Python venv was created without pip at %s", pipBinary)
+	}
+	for _, args := range [][]string{
+		{"install", "--upgrade", "pip", "setuptools", "wheel"},
+		{"install", "--upgrade", fmt.Sprintf("ansible-core==%s", ansibleCoreVersion)},
+	} {
+		cmd := exec.Command(pipBinary, args...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(versionMarker, []byte(ansibleCoreVersion+"\n"), 0o644); err != nil {
+		return "", err
+	}
+	return ansibleBinary, nil
+}
+
+func resolvePythonVenvBootstrapBinary() (string, error) {
+	for _, candidate := range []string{"python3", "python"} {
+		if resolved, err := exec.LookPath(candidate); err == nil {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("python3 or python is required to bootstrap the managed ansible runtime")
+}
+
+func findManagedAnsibleBinary(repoRoot string) string {
+	for _, scope := range []toolInstallScope{toolInstallScopeLocal, toolInstallScopeGlobal} {
+		ansibleBinary, err := managedAnsibleBinary(scope, repoRoot)
+		if err != nil {
+			continue
+		}
+		if fileExists(ansibleBinary) {
+			return ansibleBinary
+		}
+	}
+	return ""
+}
+
+func ensureScopedCLITool(repoRoot, name, goos, goarch string, env map[string]string, scope toolInstallScope, upgrade bool) (string, error) {
+	destination, err := scopedBinaryPath(repoRoot, name, goos, goarch, scope)
+	if err != nil {
+		return "", err
+	}
+	return ensureManagedCLITool(destination, name, goos, goarch, requestedToolVersion(name, env), upgrade)
+}
+
+func ensureManagedCLITool(destination, name, goos, goarch, requestedVersion string, upgrade bool) (string, error) {
 	versionMarker := destination + ".version"
-	if info, err := os.Stat(destination); err == nil && !info.IsDir() {
-		if data, err := os.ReadFile(versionMarker); err == nil {
-			if strings.TrimSpace(string(data)) == requestedVersion {
-				return destination, nil
-			}
-		} else if os.IsNotExist(err) {
-			if err := os.WriteFile(versionMarker, []byte(requestedVersion+"\n"), 0o644); err == nil {
-				return destination, nil
+	if !upgrade {
+		if info, err := os.Stat(destination); err == nil && !info.IsDir() {
+			if data, err := os.ReadFile(versionMarker); err == nil {
+				if strings.TrimSpace(string(data)) == requestedVersion {
+					return destination, nil
+				}
+			} else if os.IsNotExist(err) {
+				if err := os.WriteFile(versionMarker, []byte(requestedVersion+"\n"), 0o644); err == nil {
+					return destination, nil
+				}
 			}
 		}
 	}
@@ -253,6 +498,10 @@ func ensureLocalCLITool(repoRoot, name, goos, goarch string, env map[string]stri
 	return destination, nil
 }
 
+func ensureLocalCLITool(repoRoot, name, goos, goarch string, env map[string]string) (string, error) {
+	return ensureScopedCLITool(repoRoot, name, goos, goarch, env, toolInstallScopeLocal, false)
+}
+
 func requestedToolVersion(name string, env map[string]string) string {
 	switch name {
 	case "tofu":
@@ -295,15 +544,19 @@ func installDirectBinary(url, destination, goos string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download %s failed: HTTP %d", url, resp.StatusCode)
 	}
-	file, err := os.Create(destination)
+	file, stagedPath, err := createStagedBinary(destination)
 	if err != nil {
 		return err
 	}
+	defer os.Remove(stagedPath)
 	defer file.Close()
 	if _, err := io.Copy(file, resp.Body); err != nil {
 		return err
 	}
-	return ensureExecutable(destination, goos)
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return commitStagedBinary(stagedPath, destination, goos)
 }
 
 func installZipBinary(url string, members map[string]string) error {
@@ -342,18 +595,19 @@ func writeZipMember(file *zip.File, target string) error {
 		return err
 	}
 	defer reader.Close()
-	output, err := os.Create(target)
+	output, stagedPath, err := createStagedBinary(target)
 	if err != nil {
 		return err
 	}
+	defer os.Remove(stagedPath)
 	defer output.Close()
 	if _, err := io.Copy(output, reader); err != nil {
 		return err
 	}
-	if strings.HasSuffix(strings.ToLower(target), ".exe") {
-		return nil
+	if err := output.Close(); err != nil {
+		return err
 	}
-	return os.Chmod(target, 0o755)
+	return commitStagedBinary(stagedPath, target, targetPlatformForBinary(target))
 }
 
 func installTarGzBinary(url string, members map[string]string, goos string) error {
@@ -388,16 +642,19 @@ func installTarGzBinary(url string, members map[string]string, goos string) erro
 		if !ok {
 			continue
 		}
-		output, err := os.Create(target)
+		output, stagedPath, err := createStagedBinary(target)
 		if err != nil {
 			return err
 		}
+		defer os.Remove(stagedPath)
 		if _, err := io.Copy(output, tarReader); err != nil {
 			output.Close()
 			return err
 		}
-		output.Close()
-		if err := ensureExecutable(target, goos); err != nil {
+		if err := output.Close(); err != nil {
+			return err
+		}
+		if err := commitStagedBinary(stagedPath, target, goos); err != nil {
 			return err
 		}
 	}
@@ -437,6 +694,48 @@ func ensureExecutable(path, goos string) error {
 	return os.Chmod(path, 0o755)
 }
 
+func createStagedBinary(target string) (*os.File, string, error) {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return nil, "", err
+	}
+	file, err := os.CreateTemp(filepath.Dir(target), ".haac-stage-*")
+	if err != nil {
+		return nil, "", err
+	}
+	return file, file.Name(), nil
+}
+
+func targetPlatformForBinary(path string) string {
+	if strings.HasSuffix(strings.ToLower(path), ".exe") {
+		return "windows"
+	}
+	return runtime.GOOS
+}
+
+func commitStagedBinary(stagedPath, destination, goos string) error {
+	if err := ensureExecutable(stagedPath, goos); err != nil {
+		return err
+	}
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		if err := os.Rename(stagedPath, destination); err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown replacement failure")
+	}
+	return fmt.Errorf("replace managed binary %s: %w. Close any process using that tool and rerun the command", destination, lastErr)
+}
+
 func ensureSSHKeypair(privateKeyPath, comment string) error {
 	publicKeyPath := privateKeyPath + ".pub"
 	if fileExists(privateKeyPath) && fileExists(publicKeyPath) {
@@ -466,7 +765,7 @@ func installWSLTools(env map[string]string) error {
 	cmd := exec.Command(
 		"wsl", "-d", wslDistro(env), "-u", "root", "--",
 		"bash", "-lc",
-		"apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible git python3 openssh-client sshpass",
+		"apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ansible git python3 python3-venv openssh-client",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

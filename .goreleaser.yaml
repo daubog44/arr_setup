@@ -1,0 +1,49 @@
+version: 2
+
+project_name: haac
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: haac
+    main: ./cmd/haac
+    binary: haac
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/daubog44/arr_setup/internal/cli.version={{ .Version }}
+        -X github.com/daubog44/arr_setup/internal/cli.commit={{ .Commit }}
+        -X github.com/daubog44/arr_setup/internal/cli.date={{ .Date }}
+
+archives:
+  - id: haac
+    ids:
+      - haac
+    formats:
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Version }}-snapshot"
+
+changelog:
+  use: github-native

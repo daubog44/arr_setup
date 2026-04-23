@@ -370,6 +370,13 @@ func runDoctor() error {
 		location := ""
 		if isBootstrappableTool(check[1]) {
 			location = toolLocationGo(b.repoRoot, check[1])
+		} else if check[1] == "ansible-playbook" {
+			location = findManagedAnsibleBinary(b.repoRoot)
+			if location == "" {
+				if found, err := exec.LookPath(check[1]); err == nil {
+					location = found
+				}
+			}
 		} else if found, err := exec.LookPath(check[1]); err == nil {
 			location = found
 		}
@@ -425,7 +432,6 @@ func runDoctor() error {
 				{"git", "command -v git"},
 				{"python3", "command -v python3"},
 				{"ssh", "command -v ssh"},
-				{"sshpass", "command -v sshpass"},
 			} {
 				cmd := exec.Command("wsl", "-d", distro, "--", "bash", "-lc", check[1])
 				output, err := cmd.Output()
@@ -529,9 +535,13 @@ func runAnsibleCommandGo(repoRoot, inventory, playbook, extraArgs string) error 
 	if runtime.GOOS == "windows" {
 		return runAnsibleWSLGo(repoRoot, inventoryPath, playbookPath, args, env)
 	}
-	ansibleBinary, err := exec.LookPath("ansible-playbook")
-	if err != nil {
-		return fmt.Errorf("ansible-playbook not found")
+	ansibleBinary := findManagedAnsibleBinary(repoRoot)
+	if ansibleBinary == "" {
+		resolved, err := exec.LookPath("ansible-playbook")
+		if err != nil {
+			return fmt.Errorf("ansible-playbook not found; run `haac install-tools --scope local --with-control-node` or install it globally")
+		}
+		ansibleBinary = resolved
 	}
 	commandArgs := append(args, "-i", inventoryPath, playbookPath)
 	cmd := exec.Command(ansibleBinary, commandArgs...)
