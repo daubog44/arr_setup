@@ -28,14 +28,20 @@ spec:
             existingSecret: litmus-mongodb-credentials
           architecture: replicaset
           replicaCount: 1
+          livenessProbe:
+            initialDelaySeconds: 120
+            timeoutSeconds: 30
+          readinessProbe:
+            initialDelaySeconds: 30
+            timeoutSeconds: 30
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 500m
+              memory: 512Mi
               ephemeral-storage: 500Mi
             limits:
-              cpu: 500m
-              memory: 768Mi
+              cpu: "2"
+              memory: 2Gi
               ephemeral-storage: 1Gi
           arbiter:
             enabled: false
