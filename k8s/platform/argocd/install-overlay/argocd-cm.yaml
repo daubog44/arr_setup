@@ -18,3 +18,28 @@ data:
     clientSecret: $argocd-oidc-secret:clientSecret
     requestedScopes: ["openid", "profile", "email", "groups"]
     requestedIDTokenClaims: {"groups": {"essential": true}}
+  resource.customizations.health.aquasecurity.github.io_ConfigAuditReport: |
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "Trivy reports are security findings, not GitOps readiness failures."
+    return hs
+  resource.customizations.health.aquasecurity.github.io_ExposedSecretReport: |
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "Trivy reports are security findings, not GitOps readiness failures."
+    return hs
+  resource.customizations.health.aquasecurity.github.io_RbacAssessmentReport: |
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "Trivy reports are security findings, not GitOps readiness failures."
+    return hs
+  resource.customizations.health.aquasecurity.github.io_ClusterRbacAssessmentReport: |
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "Trivy reports are security findings, not GitOps readiness failures."
+    return hs
+  resource.customizations.health.aquasecurity.github.io_VulnerabilityReport: |
+    hs = {}
+    hs.status = "Healthy"
+    hs.message = "Trivy reports are security findings, not GitOps readiness failures."
+    return hs

@@ -143,9 +143,9 @@ spec:
 
         prometheusOperator:
           admissionWebhooks:
-            annotations:
-              argocd.argoproj.io/hook: PreSync
-              argocd.argoproj.io/hook-delete-policy: HookSucceeded
+            # Avoid ArgoCD hook deletion stalls during first bootstrap. Render
+            # checks and PrometheusRule health still validate the monitoring stack.
+            enabled: false
 
         prometheus:
           additionalServiceMonitors:
