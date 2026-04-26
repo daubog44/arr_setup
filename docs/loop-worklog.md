@@ -24,6 +24,6 @@ Real files live in:
 ## Mandatory On Closeout
 
 - exact validation commands run
-- if `task up` did not complete, whether `check-env`, `doctor`, or a later phase was the blocker
-- if `task up` did not complete, the furthest successful phase
+- if `haac up` did not complete, whether `check-env`, `doctor`, or a later phase was the blocker
+- if `haac up` did not complete, the furthest successful phase
 - if a new change was opened, the change name and reason

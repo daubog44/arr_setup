@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  HAAC_CMD: '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1{{else}}sh ./haac.sh{{end}}'
+  HAAC_CMD: '{{default "haac" .HAAC_CMD}}'
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   TOFU_DIR: '{{default "tofu" .TOFU_DIR}}'
   LXC_PASSWORD_VALUE:
@@ -27,5 +27,5 @@ tasks:
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - task: :internal:repair-litmus-admin
-      - task: :internal:repair-litmus-chaos
+      - '{{.HAAC_CMD}} reconcile-litmus-admin'
+      - '{{.HAAC_CMD}} reconcile-litmus-chaos'

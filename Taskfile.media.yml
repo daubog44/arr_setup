@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  HAAC_CMD: '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1{{else}}sh ./haac.sh{{end}}'
+  HAAC_CMD: '{{default "haac" .HAAC_CMD}}'
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   TOFU_DIR: '{{default "tofu" .TOFU_DIR}}'
   KUBECTL:
@@ -19,11 +19,11 @@ tasks:
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - task: :internal:reconcile-media-stack
+      - '{{.HAAC_CMD}} reconcile-media-stack'
 
   verify-flow:
     desc: "Run the explicit ARR end-to-end verification path: Seerr request, Prowlarr search, qBittorrent/VPN, NAS import, and Jellyfin visibility."
     cmds:
       - '{{.HAAC_CMD}} check-env'
       - '{{.HAAC_CMD}} doctor'
-      - task: :internal:verify-arr-flow
+      - '{{.HAAC_CMD}} verify-arr-flow'

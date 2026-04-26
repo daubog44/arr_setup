@@ -180,7 +180,7 @@ func newSyncRepoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return b.runTask([]string{"sync-repo"})
+			return syncRepoGo(b.repoRoot)
 		},
 	}
 }
@@ -197,7 +197,7 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTaskInternalTarget(b, "internal:operator-up")
+			return runOperatorUpGo(b.repoRoot)
 		},
 	}
 }
@@ -214,7 +214,7 @@ func newDownCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runTaskInternalTarget(b, "internal:operator-down")
+			return runOperatorDownGo(b.repoRoot)
 		},
 	}
 }
@@ -259,12 +259,6 @@ func newRemoveFileCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&path, "path", "", "Relative or absolute file path")
 	return cmd
-}
-
-func runTaskInternalTarget(b *bridge, target string) error {
-	return b.runTaskWithExtraEnv([]string{target}, map[string]string{
-		"HAAC_COBRA_ORCHESTRATOR_BYPASS": "1",
-	})
 }
 
 func runCheckEnv() error {
@@ -315,7 +309,7 @@ func runCheckEnv() error {
 		return err
 	}
 	accessHost := proxmoxAccessHostGo(env)
-	hint := "Set PROXMOX_ACCESS_HOST to the workstation-reachable Proxmox IP/FQDN, or ensure MASTER_TARGET_NODE resolves locally before running `task up`."
+	hint := "Set PROXMOX_ACCESS_HOST to the workstation-reachable Proxmox IP/FQDN, or ensure MASTER_TARGET_NODE resolves locally before running `haac up`."
 	if err := ensureTCPEndpointGo(accessHost, 8006, "Proxmox API", hint); err != nil {
 		return err
 	}
@@ -351,12 +345,10 @@ func runDoctor() error {
 
 	failures := make([]string, 0)
 	checks := [][2]string{
-		{"python", "python"},
 		{"git", "git"},
 		{"ssh", "ssh"},
 		{"node", "node"},
 		{"kubectl", "kubectl"},
-		{"task", "task"},
 		{"tofu", "tofu"},
 		{"helm", "helm"},
 		{"kubeseal", "kubeseal"},
@@ -397,7 +389,7 @@ func runDoctor() error {
 	if fileExists(semaphoreKey) && fileExists(semaphoreKey+".pub") {
 		fmt.Printf("[ok] semaphore maintenance ssh keypair: %s\n", semaphoreKey)
 	} else {
-		fmt.Printf("[warn] semaphore maintenance ssh keypair missing: %s (it will be created during `configure-os` or `task up` before cluster publication)\n", semaphoreKey)
+		fmt.Printf("[warn] semaphore maintenance ssh keypair missing: %s (it will be created during `haac up` before cluster publication)\n", semaphoreKey)
 	}
 	if fileExists(repoDeployKey) && fileExists(repoDeployKey+".pub") {
 		fmt.Printf("[ok] repo deploy ssh keypair: %s\n", repoDeployKey)
@@ -418,7 +410,7 @@ func runDoctor() error {
 			if err != nil {
 				return err
 			}
-			for _, binary := range []string{"tofu", "helm", "kubectl", "kubeseal", "task"} {
+			for _, binary := range []string{"tofu", "helm", "kubectl", "kubeseal"} {
 				linuxTool := repoLocalBinaryPath(b.repoRoot, binary, "linux", linuxArch)
 				if fileExists(linuxTool) {
 					fmt.Printf("[ok] portable linux tool (%s): %s\n", binary, linuxTool)
@@ -433,9 +425,7 @@ func runDoctor() error {
 				{"python3", "command -v python3"},
 				{"ssh", "command -v ssh"},
 			} {
-				cmd := exec.Command("wsl", "-d", distro, "--", "bash", "-lc", check[1])
-				output, err := cmd.Output()
-				location := strings.TrimSpace(strings.ReplaceAll(string(output), "\x00", ""))
+				location, err := runWSLOutputWithRetries(env, "bash", "-lc", check[1])
 				if err == nil && location != "" {
 					fmt.Printf("[ok] %s:%s: %s\n", distro, check[0], location)
 				} else {
@@ -449,7 +439,7 @@ func runDoctor() error {
 	if len(failures) != 0 {
 		return fmt.Errorf("missing required tooling: %s", strings.Join(failures, ", "))
 	}
-	fmt.Println("Doctor checks local tooling only. Run `haac check-env` through the supported wrapper before `task up` to verify workstation-to-Proxmox reachability.")
+	fmt.Println("Doctor checks local tooling only. Run `haac check-env` before `haac up` to verify workstation-to-Proxmox reachability.")
 	return nil
 }
 
@@ -568,15 +558,12 @@ func installHooksGo(repoRoot string) error {
 	}
 
 	hookPath := filepath.Join(gitHooksDir, "pre-commit")
-	hookContent := "#!/usr/bin/env sh\nset -eu\nROOT=$(CDPATH= cd -- \"$(dirname -- \"$0\")/../..\" && pwd)\nexec \"$ROOT/haac.sh\" pre-commit-hook\n"
-	if runtime.GOOS == "windows" {
-		hookContent = "#!/usr/bin/env sh\nset -eu\nROOT=$(CDPATH= cd -- \"$(dirname -- \"$0\")/../..\" && pwd)\nexec powershell -ExecutionPolicy Bypass -File \"$ROOT/haac.ps1\" pre-commit-hook\n"
-	}
+	hookContent := "#!/usr/bin/env sh\nset -eu\ncommand -v haac >/dev/null 2>&1 || { echo 'haac CLI not found on PATH; install the Go binary before using this hook.' >&2; exit 1; }\nexec haac pre-commit-hook\n"
 	if err := os.WriteFile(hookPath, []byte(hookContent), 0o755); err != nil {
 		return err
 	}
 	hookCmdPath := filepath.Join(gitHooksDir, "pre-commit.cmd")
-	hookCmdContent := "@echo off\r\npowershell -ExecutionPolicy Bypass -File \"%~dp0\\..\\..\\haac.ps1\" pre-commit-hook\r\nexit /b %ERRORLEVEL%\r\n"
+	hookCmdContent := "@echo off\r\nwhere haac >nul 2>nul\r\nif errorlevel 1 (\r\n  echo haac CLI not found on PATH; install the Go binary before using this hook.\r\n  exit /b 1\r\n)\r\nhaac pre-commit-hook\r\nexit /b %ERRORLEVEL%\r\n"
 	return os.WriteFile(hookCmdPath, []byte(hookCmdContent), 0o644)
 }
 
@@ -685,7 +672,7 @@ func ensureTCPEndpointGo(host string, port int, label string, hint string) error
 	if dnsErr := new(net.DNSError); errors.As(err, &dnsErr) {
 		return fmt.Errorf("%s target %q is not resolvable from this workstation. %s\n%v", label, host, hint, err)
 	}
-	return fmt.Errorf("%s is not reachable at %s:%d. Connect to the required network or fix access before rerunning `task up`.\n%v", label, host, port, err)
+	return fmt.Errorf("%s is not reachable at %s:%d. Connect to the required network or fix access before rerunning `haac up`.\n%v", label, host, port, err)
 }
 
 func warnSharedCredentialScopeGo(env map[string]string) {

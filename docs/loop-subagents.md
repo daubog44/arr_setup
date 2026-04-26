@@ -35,4 +35,4 @@ State:
 
 Example:
 
-- `Inspect Taskfile.yml plus scripts/haac.py. Read-only. Return top 3 reliability gaps that could break task up on Windows or Linux.`
+- `Inspect internal/cli plus Taskfile.yml. Read-only. Return top 3 reliability gaps that could break haac up on Windows or Linux.`

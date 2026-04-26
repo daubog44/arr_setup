@@ -12,11 +12,10 @@ This repository exists to deliver a homelab-as-code workflow where one command b
 
 The operator contract is:
 
-- Windows: `.\haac.ps1 up`
-- Linux/macOS: `sh ./haac.sh up`
-- Global Task, if installed: `task up`
+- Windows/Linux/macOS: `haac up`
+- Optional compatibility alias, if Task is installed: `task up`
 
-`task up` is the product. Everything else supports that path.
+`haac up` is the product. Task targets may only alias public `haac` commands.
 
 ## Source Of Truth
 
@@ -33,7 +32,7 @@ The operator contract is:
 - Windows and Linux are first-class operator environments. `.tools/<os>-<arch>/bin` is the portable CLI layer.
 - The primary kubeconfig on the workstation must not be mutated as a side effect of a temporary tunnel session.
 - GitOps health must be validated in phases, not inferred from one workload alone.
-- `task up` must remain the primary supported rerun path after partial failure unless the failure output explicitly requires manual intervention.
+- `haac up` must remain the primary supported rerun path after partial failure unless the failure output explicitly requires manual intervention.
 - Bootstrap failures must report the failing phase, the last verified phase, and rerun guidance rather than leaving recovery implicit.
 
 ## OpenSpec Workflow
@@ -92,7 +91,7 @@ Auto-improve is mandatory:
 - `security-auditor`
   - reviews `.env`, `.ssh`, Sealed Secrets, Cloudflare, OIDC, and bootstrap trust boundaries
 - `devops-pipeline`
-  - owns `Taskfile.yml`, `scripts/haac.py`, `.tools/`, WSL bridging, and the reliability of `task up`
+  - owns `internal/cli/`, optional Task aliases, `.tools/`, WSL bridging, and the reliability of `haac up`
 - `gitops-k8s`
   - owns ArgoCD topology, namespaces, sync waves, health gates, gateway routing, and cluster-side bootstrap
 - `docs-maintainer`
@@ -140,10 +139,11 @@ A change touching the bootstrap path is only done when the active spec records:
 - `plan`
 - `helm template`
 - `kubectl kustomize`
-- `task -n up`
-- `task up` or wrapper equivalent when the environment is available
+- direct `haac` command smoke tests
+- optional `task -n up` compatibility dry-run when Task is available
+- `haac up` when the environment is available
 
-For `task up`, success means:
+For `haac up`, success means:
 
 - infra created or reconciled
 - K3s reachable

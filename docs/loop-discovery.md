@@ -11,7 +11,7 @@ It also applies to the loop assets themselves when the missing capability should
 You may open a new OpenSpec change only when you have at least one of:
 
 - a failed validation command in the bootstrap ladder
-- a missing operator contract for `task up`
+- a missing operator contract for `haac up`
 - a real architecture or security inconsistency in the current homelab stack
 - a missing loop capability that blocks reliable autonomous work
 - a gap between docs, specs, and actual repo behavior
@@ -25,7 +25,7 @@ Before creating a new change, record:
 - exact scope
 - exact failure, mismatch, or missing capability
 - one command output, file path, or concrete observation
-- why this matters to `task up`, GitOps reliability, or loop correctness
+- why this matters to `haac up`, GitOps reliability, or loop correctness
 - the proposed minimal solution shape
 - why that proposed solution is the right first move
 
@@ -51,5 +51,5 @@ If the missing capability is in the loop itself:
 If the missing capability is in the broader homelab stack:
 
 - classify it as infra, ansible, k8s, gitops, storage, security, networking, tooling, docs, or automation debt
-- propose the narrowest solution that materially improves `task up`, operator reliability, or stack coherence
+- propose the narrowest solution that materially improves `haac up`, operator reliability, or stack coherence
 - prefer solutions that improve centralization and DRY instead of adding one-off exceptions

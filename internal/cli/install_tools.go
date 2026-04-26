@@ -19,12 +19,12 @@ import (
 )
 
 const (
-	defaultWSLDistro  = "Debian"
-	tofuVersion       = "1.11.5"
-	helmVersion       = "4.1.3"
-	kubectlVersion    = "1.35.3"
-	kubesealVersion   = "0.36.1"
-	taskVersion       = "3.49.1"
+	defaultWSLDistro   = "Debian"
+	tofuVersion        = "1.11.5"
+	helmVersion        = "4.1.3"
+	kubectlVersion     = "1.35.3"
+	kubesealVersion    = "0.36.1"
+	taskVersion        = "3.49.1"
 	ansibleCoreVersion = "2.19.1"
 )
 
@@ -227,6 +227,12 @@ func mergedEnvFromRepo(repoRoot string) (map[string]string, error) {
 	if value := strings.TrimSpace(merged["LXC_PASSWORD"]); value != "" && strings.TrimSpace(merged["PROXMOX_HOST_PASSWORD"]) == "" {
 		merged["PROXMOX_HOST_PASSWORD"] = value
 	}
+	if err := applyIdentityDefaultsGo(merged); err != nil {
+		return nil, err
+	}
+	if err := applyDerivedEnvDefaultsGo(repoRoot, merged); err != nil {
+		return nil, err
+	}
 	return merged, nil
 }
 
@@ -234,12 +240,14 @@ func detectWSLArch(env map[string]string) (string, error) {
 	if _, err := exec.LookPath("wsl"); err != nil {
 		return "", fmt.Errorf("WSL is not installed. Install WSL and %s first, then rerun install-tools", wslDistro(env))
 	}
-	cmd := exec.Command("wsl", "-d", wslDistro(env), "--", "uname", "-m")
-	output, err := cmd.Output()
+	output, err := runWSLOutputWithRetries(env, "uname", "-m")
 	if err != nil {
+		if retryableWSLRuntimeError(fmt.Sprint(err), err) {
+			return "", fmt.Errorf("WSL runtime socket queue stayed saturated after retries. Close parallel WSL/tunnel sessions or run `wsl --shutdown`, then rerun doctor: %w", err)
+		}
 		return "", fmt.Errorf("resolve WSL architecture for distro %s: %w", wslDistro(env), err)
 	}
-	return normalizeArch(string(output))
+	return normalizeArch(output)
 }
 
 func wslDistro(env map[string]string) string {
@@ -785,4 +793,39 @@ func wslDistroExists(env map[string]string) bool {
 		}
 	}
 	return false
+}
+
+func runWSLOutputWithRetries(env map[string]string, args ...string) (string, error) {
+	var lastOutput string
+	var lastErr error
+	commandArgs := append([]string{"-d", wslDistro(env), "--"}, args...)
+	for attempt := 1; attempt <= 5; attempt++ {
+		cmd := exec.Command("wsl", commandArgs...)
+		output, err := cmd.CombinedOutput()
+		cleaned := strings.TrimSpace(strings.ReplaceAll(string(output), "\x00", ""))
+		if err == nil {
+			return cleaned, nil
+		}
+		lastOutput = cleaned
+		lastErr = err
+		if !retryableWSLRuntimeError(cleaned, err) {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+	if lastOutput != "" {
+		return "", fmt.Errorf("%w: %s", lastErr, lastOutput)
+	}
+	return "", lastErr
+}
+
+func retryableWSLRuntimeError(output string, err error) bool {
+	if err == nil {
+		return false
+	}
+	lowered := strings.ToLower(output)
+	return strings.Contains(lowered, "0x80072747") ||
+		strings.Contains(lowered, "buffer") ||
+		strings.Contains(lowered, "coda piena") ||
+		strings.Contains(lowered, "socket")
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	pathpkg "path"
@@ -300,7 +301,7 @@ func refreshClusterKnownHostsGo(repoRoot string, env map[string]string, timeout 
 func replaceKnownHostEntriesGo(path, host, entries string) error {
 	existing := make([]string, 0)
 	if fileExists(path) {
-		data, err := os.ReadFile(path)
+		data, err := readFileWithRetryGo(path)
 		if err != nil {
 			return err
 		}
@@ -339,7 +340,46 @@ func replaceKnownHostEntriesGo(path, host, entries string) error {
 	if strings.TrimSpace(rendered) != "" {
 		rendered += "\n"
 	}
-	return os.WriteFile(path, []byte(rendered), 0o600)
+	return writeFileWithRetryGo(path, []byte(rendered), 0o600)
+}
+
+func readFileWithRetryGo(path string) ([]byte, error) {
+	var data []byte
+	err := withTransientFileRetryGo(func() error {
+		var err error
+		data, err = os.ReadFile(path)
+		return err
+	})
+	return data, err
+}
+
+func writeFileWithRetryGo(path string, data []byte, perm fs.FileMode) error {
+	return withTransientFileRetryGo(func() error {
+		return os.WriteFile(path, data, perm)
+	})
+}
+
+func withTransientFileRetryGo(operation func() error) error {
+	var err error
+	for attempt := 0; attempt < 12; attempt++ {
+		err = operation()
+		if err == nil || !transientFileLockErrorGo(err) {
+			return err
+		}
+		time.Sleep(time.Duration(250+attempt*250) * time.Millisecond)
+	}
+	return err
+}
+
+func transientFileLockErrorGo(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "user-mapped section open") ||
+		strings.Contains(message, "being used by another process") ||
+		strings.Contains(message, "sharing violation") ||
+		strings.Contains(message, "access is denied")
 }
 
 func wslRuntimeDir(env map[string]string) string {

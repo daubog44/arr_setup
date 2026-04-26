@@ -57,20 +57,6 @@ func (b *bridge) runTask(args []string) error {
 	return b.run(taskBinary, args, env)
 }
 
-func (b *bridge) runTaskWithExtraEnv(args []string, overrides map[string]string) error {
-	taskBinary, err := b.taskBinary()
-	if err != nil {
-		return err
-	}
-	env := os.Environ()
-	localTaskDir := filepath.Dir(taskBinary)
-	env = upsertEnv(env, "PATH", prependPath(localTaskDir, os.Getenv("PATH")))
-	for key, value := range overrides {
-		env = upsertEnv(env, key, value)
-	}
-	return b.run(taskBinary, args, env)
-}
-
 func (b *bridge) run(binary string, args []string, env []string) error {
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = b.repoRoot
@@ -93,7 +79,7 @@ func (b *bridge) taskBinary() (string, error) {
 	if fileExists(localBinary) {
 		return localBinary, nil
 	}
-	return "", fmt.Errorf("repo-local task binary not found at %s; run install-tools or use task directly", localBinary)
+	return "", fmt.Errorf("repo-local task binary not found at %s; run `haac install-tools` or use `task` directly", localBinary)
 }
 
 func taskBinaryName() string {

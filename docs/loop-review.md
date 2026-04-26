@@ -7,15 +7,15 @@ Review is part of the loop, not an optional epilogue.
 Bootstrap-affecting work should validate in this order when applicable:
 
 1. `openspec validate <change>`
-2. `.\haac.ps1 check-env` or `sh ./haac.sh check-env`
-3. `.\haac.ps1 doctor` or `sh ./haac.sh doctor`
-4. `task -n up`
-5. `python -m py_compile scripts/haac.py scripts/haac_loop.py scripts/hydrate-authelia.py`
+2. `haac check-env`
+3. `haac doctor`
+4. Direct `haac` command smoke tests, plus optional `task -n up` compatibility dry-run when Task is available
+5. `go test ./...`
 6. `helm template haac-stack k8s/charts/haac-stack`
 7. `kubectl kustomize k8s/bootstrap/root`
 8. `kubectl kustomize k8s/platform`
 9. `kubectl kustomize k8s/workloads`
-10. `task up` or wrapper equivalent when the real environment is available
+10. `haac up` when the real environment is available
 11. Playwright MCP browser navigation of the emitted public URLs when the round reaches endpoint verification
 
 If a step is not applicable, say why. Do not collapse `check-env` into `doctor`; they validate different surfaces.
@@ -52,5 +52,5 @@ Required review perspectives:
 
 - fail fast on secret exposure, destructive commands, or incorrect source-of-truth duplication
 - retryable failures should be retried only when the retry condition is explicit
-- if `check-env` fails, record it as the live-environment preflight blocker instead of summarizing the round as a generic `doctor` or `task up` failure
-- if `task up` cannot run end to end, record the exact blocker and the furthest verified phase
+- if `check-env` fails, record it as the live-environment preflight blocker instead of summarizing the round as a generic `doctor` or `haac up` failure
+- if `haac up` cannot run end to end, record the exact blocker and the furthest verified phase

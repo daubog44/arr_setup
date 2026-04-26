@@ -4,7 +4,7 @@
 
 Run one command that provisions, configures, deploys, and verifies the homelab.
 
-That same command is also the normal recovery path after a partial or converged run. Operators should rerun `task up` unless the failure output explicitly says a manual fix is required first.
+That same command is also the normal recovery path after a partial or converged run. Operators should rerun `haac up` unless the failure output explicitly says a manual fix is required first.
 
 ## Related References
 
@@ -16,15 +16,14 @@ Use these alongside this runbook when you need the full repo contract:
 
 ## Preferred Commands
 
-- Windows: `.\haac.ps1 up`
-- Linux/macOS: `sh ./haac.sh up`
-- Global Task: `task up`
+- Direct CLI: `haac up`
+- Optional Task alias: `task up`
 
-All three entrypoints run the same supported operator pipeline through the `haac` Cobra surface. The wrapper-owned operator contract (`install-tools`, `check-env`, `doctor`, `up`, `down`) is native Cobra; compatibility maintenance flows continue to hang off public Task targets rather than Python-backed `haac` subcommands.
+The direct `haac` command is the supported operator pipeline. Task targets are compatibility aliases around public Cobra commands; shell and PowerShell wrappers are not part of the product boundary.
 
 ## Required `.env` Inputs
 
-`task up` expects these `.env` surfaces to be populated before provisioning starts:
+`haac up` expects these `.env` surfaces to be populated before provisioning starts:
 
 - infra and storage: `LXC_PASSWORD`, `LXC_MASTER_HOSTNAME`, `NAS_ADDRESS`, `HOST_NAS_PATH`, `NAS_PATH`, `NAS_SHARE_NAME`, `SMB_USER`, `SMB_PASSWORD`, `STORAGE_UID`, `STORAGE_GID`
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
@@ -40,7 +39,7 @@ Proxmox access uses two related inputs:
 ## Preflight Contract
 
 1. `.env` is present and complete.
-2. `haac install-tools` has been run at least once through `.\haac.ps1` or `sh ./haac.sh`.
+2. `haac install-tools` has been run at least once.
 3. `haac check-env` confirms the effective Proxmox API and SSH host derived from `PROXMOX_ACCESS_HOST` with fallback to `MASTER_TARGET_NODE` is resolvable and reachable before provisioning starts.
 4. `haac doctor` passes and confirms the local workstation toolchain.
 5. `haac sync-repo` remains the explicit Git recovery path when the writable `origin/<GITOPS_REPO_REVISION>` branch must be fast-forwarded or checkpointed before publication. It is not hidden inside `up`.
@@ -64,7 +63,7 @@ Proxmox access uses two related inputs:
 
 ## Rerun Contract
 
-- `task up` is a convergent reconciliation command, not a one-shot bootstrap.
+- `haac up` is a convergent reconciliation command, not a one-shot bootstrap.
 - Re-running after a partial failure is the primary supported recovery path for provisioning, configuration, GitOps, Cloudflare, and verification phases.
 - If the rendered GitOps artifacts are unchanged, the publication phase should report convergence instead of creating an empty publish commit.
 - If Cloudflare ingress rules and DNS records are already aligned, the publication phase should report reconciliation without creating duplicates.
@@ -94,7 +93,7 @@ When any phase fails, the operator output should include:
 
 - the failing phase
 - the last verified phase
-- whether rerunning `task up` is the normal recovery path or whether manual intervention is required first
+- whether rerunning `haac up` is the normal recovery path or whether manual intervention is required first
 
 ## Expected Final Output
 
@@ -110,8 +109,25 @@ The table must include:
 
 If some endpoints pass and others fail, the summary must still print every endpoint, report partial failure explicitly, and return a failing exit code.
 
+`haac verify-web` now records the response owner, `Server`, `CF-Ray`, redirect target, and response body size for every endpoint. If every declared hostname returns Cloudflare-fronted `403`, treat that as a dedicated edge/origin blocker instead of a generic service outage and run:
+
+```powershell
+haac diagnose-edge
+haac clear-crowdsec-operator-ban
+haac verify-web
+haac verify-browser-auth
+```
+
+`haac diagnose-edge` separates:
+
+- Cloudflare edge policy: no diagnostic marker appears in origin logs while every hostname returns Cloudflare-fronted `403`.
+- CrowdSec/Traefik origin block: the marker appears in Traefik or CrowdSec evidence and CrowdSec has a decision for the operator IP.
+- Authelia protected route: expected `302` redirect to `https://auth.<domain>/`.
+- App-native auth: expected app login shell, app redirect, or native `401` depending on the service.
+
 ## Known Recovery Pattern
 
 - If infra already exists, resume from a narrower task instead of destroying everything.
 - If the cluster tunnel path is broken, fix workstation-to-Proxmox reachability before retrying `up`.
 - If the URL summary fails, inspect platform health before assuming workload-level failure.
+- If all public URLs suddenly return empty Cloudflare-fronted `403`, check `haac diagnose-edge` first. In the reproduced case the root cause was a CrowdSec bouncer decision on the operator public IP, not Cloudflare Access or tunnel drift.

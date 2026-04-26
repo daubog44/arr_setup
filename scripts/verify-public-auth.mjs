@@ -404,6 +404,16 @@ async function maybeAutheliaLogin(page, env) {
           await username.fill(env.AUTHELIA_ADMIN_USERNAME || "admin");
         }
       }
+      const passwordVisible = await password.isVisible().catch(() => false);
+      if (!passwordVisible) {
+        const signInVisible = await signIn.isVisible().catch(() => false);
+        const signInEnabled = signInVisible && (await signIn.isEnabled().catch(() => false));
+        if (signInEnabled) {
+          await signIn.click();
+          await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+          continue;
+        }
+      }
       await password.waitFor({ state: "visible", timeout: 30000 });
       const passwordEnabled = await password.isEnabled().catch(() => false);
       if (!passwordEnabled) {

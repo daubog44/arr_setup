@@ -66,6 +66,15 @@ Observability note:
 
 The supported proof in this repo is an intentionally bad request such as `/.env` returning `403` through the Traefik plus CrowdSec path.
 
+`403` triage has four different meanings in this stack:
+
+- Cloudflare edge `403`: every hostname returns `403` with Cloudflare headers and the diagnostic marker does not appear in origin logs. This needs Cloudflare WAF/firewall/settings inspection.
+- CrowdSec bouncer/AppSec `403`: the request reaches Traefik and a CrowdSec decision or AppSec match blocks it before backend routing.
+- Authelia protection: protected routes should redirect with `302` to `https://auth.<domain>/`, not return raw `403`.
+- App-native auth: apps such as Servarr, Seerr, Jellyfin, and qBittorrent can return their own login shell, redirect, or `401` and still be healthy.
+
+Use `haac diagnose-edge` before weakening any security layer. It probes the declared ingress catalog, checks Cloudflare security API scope, looks for the diagnostic marker in origin logs, and lists CrowdSec decisions for the operator public IP without printing secrets.
+
 The repo keeps `crowdsecurity/http-crawl-non_statics` in simulation mode. That scenario is low-confidence and produced false positives against supported SPA-style operator UIs such as Headlamp and Policy Reporter/Kyverno during real browser verification. The signal remains visible, but remediation from that scenario is intentionally disabled.
 
 The repo also keeps a narrow repo-managed false-positive contract for supported operator/media paths that legitimately create noisy `403` or AppSec matches during normal verification:

@@ -1,21 +1,19 @@
 # Operator Bootstrap Reference
 
-This guide explains the repo-managed operator path behind `task up`.
+This guide explains the repo-managed operator path behind `haac up`.
 
-## What `task up` Owns
+## What `haac up` Owns
 
 The supported entrypoints are:
 
 - direct CLI from an initialized workspace: `haac up`
-- Windows: `.\haac.ps1 up`
-- Linux/macOS: `sh ./haac.sh up`
-- Global Task: `task up`
+- optional Task alias: `task up`
 
-All entrypoints drive the same bootstrap pipeline through the supported `haac` Cobra surface. Taskfiles and wrappers remain compatibility layers around that boundary.
+The direct `haac` command owns the bootstrap pipeline. Taskfiles remain optional aliases around public `haac` commands; shell and PowerShell wrappers are intentionally absent.
 
 ## Phase Model
 
-`task up` is expected to be convergent. A partial failure should normally be recoverable by rerunning the same command unless the output explicitly says manual intervention is required first.
+`haac up` is expected to be convergent. A partial failure should normally be recoverable by rerunning the same command unless the output explicitly says manual intervention is required first.
 
 The phase order is:
 
@@ -56,7 +54,8 @@ The repository is intentionally split by responsibility:
 - `k8s/platform/`: platform apps and cluster services such as ArgoCD, monitoring, security, storage, and ingress
 - `k8s/workloads/`: workload-facing ArgoCD applications
 - `k8s/charts/haac-stack/`: the Helm-rendered dynamic workload layer
-- `scripts/`: bootstrap helpers, generated artifact wiring, API bootstraps, verification flows, and recovery commands
+- `internal/cli/`: the Go/Cobra operator backend, including phase engine, generated artifact wiring, GitOps publication, API bootstraps, verification flows, and recovery commands
+- `scripts/`: loop helpers and legacy maintenance utilities that are not part of the supported product backend
 
 ## `.env` To Generated Output Mapping
 
@@ -88,17 +87,19 @@ The generation flow is centered in the supported `haac` operator surface:
 
 The normal recovery surface is intentionally narrow:
 
-- `task up`: full convergent reconciliation
-- `task media:post-install`: rerun only the supported media bootstrap and API wiring
-- `task wait-for-argocd-sync`: staged GitOps readiness only
-- `task verify-all`: cluster + public surface verification
-- `task verify:arr-flow`: media request-to-playback acceptance path
-- `task down`: graceful shutdown plus destroy
+- `haac up`: full convergent reconciliation
+- `haac reconcile-media-stack`: rerun only the supported media bootstrap and API wiring
+- `haac wait-for-stack`: staged GitOps readiness only
+- `haac verify-cluster` plus `haac verify-web`: cluster + public surface verification
+- `haac diagnose-edge`: classify Cloudflare-fronted `403` failures across Cloudflare token scope, tunnel/origin evidence, and CrowdSec decisions
+- `haac clear-crowdsec-operator-ban`: remove temporary CrowdSec decisions for the current operator public IP
+- `haac verify-arr-flow`: media request-to-playback acceptance path
+- `haac down`: graceful shutdown plus destroy
 
 The Git boundary is also explicit:
 
-- `task sync` owns the fetch/merge policy before bootstrap when the local branch must be realigned explicitly
-- `task up` and `task push-changes` are publish-only
+- `haac sync-repo` owns the fetch/merge policy before bootstrap when the local branch must be realigned explicitly
+- `haac up` and `haac push-changes` are publish-only
 - if the branch is behind or diverged, the operator must resolve that explicitly through the supported sync path
 
 ## Generated Artifact Rules
@@ -110,26 +111,30 @@ Keep these invariants intact:
 - keep temporary operator artifacts under `.tmp/`
 - prefer changing templates or the supported `haac` implementation over hand-editing rendered YAML
 
-## Remaining Python Surfaces
+## Legacy Surfaces
 
-The supported operator CLI is now the Cobra-owned `haac` surface reached through `.\haac.ps1`, `sh ./haac.sh`, or `task`. The public `haac` command tree no longer exposes Python-backed maintenance subcommands.
+The supported operator CLI is the Cobra-owned `haac` surface. The public `haac` command tree no longer exposes Python-backed maintenance subcommands, and `haac up` does not execute the historical Python bootstrap backend.
 
-The remaining Python scripts are internal implementation modules or loop helpers:
+The remaining Python files are loop helpers, tests, or historical maintenance artifacts. They are not part of the supported operator path.
 
-- `scripts/haac_loop.py`: Ralph loop automation and worklog/bootstrap glue
-- `scripts/hydrate-authelia.py`: focused template/helper maintenance script
-- `scripts/haac.py`: internal implementation module invoked by internal Task targets for compatibility maintenance paths that are still outside the native Go operator core
+Operators should treat those files as implementation details for development workflows, not as supported direct CLI entrypoints. The standalone distribution path is `haac init` -> fill `.env` -> `haac install-tools` -> `haac up`.
 
-Operators should treat those scripts as implementation details or Task-owned maintenance surfaces, not as supported direct CLI entrypoints. The standalone distribution path is `haac init` -> fill `.env` -> `haac install-tools` -> `haac up`.
+## Cloudflare Edge Diagnostics
+
+`haac sync-cloudflare` owns tunnel ingress and DNS, but Cloudflare security policy APIs require broader token scope than DNS/tunnel reconciliation. For full edge remediation automation the token must be able to read zone settings, read WAF/rulesets, and read/edit IP access rules. If those scopes are absent, `haac diagnose-edge` reports the exact missing API surface and the manual dashboard path instead of retrying blindly.
+
+Optional `.env` input:
+
+- `CLOUDFLARE_VERIFICATION_ALLOWLIST_IPS`: comma-separated operator IPs to allow when running `haac diagnose-edge --apply-operator-allowlist`; if unset, the CLI uses the currently detected public IP.
 
 ## Cold-Cycle Acceptance
 
 The destructive acceptance surface is:
 
-1. `task down`
-2. `task up`
-3. `task wait-for-argocd-sync`
-4. `task verify-all`
-5. `task verify:arr-flow`
+1. `haac down`
+2. `haac up`
+3. `haac wait-for-stack`
+4. `haac verify-cluster` and `haac verify-web`
+5. `haac verify-arr-flow`
 
 That sequence is the strongest proof that the stack is both bootstrap-capable and rerunnable from a cold start.

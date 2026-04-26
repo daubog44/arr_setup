@@ -120,7 +120,7 @@ The repo-managed ARR bootstrap enforces the common media-management posture expe
 - Linux permission management enabled
 - deterministic root-folder and category routing
 
-Key naming defaults from `scripts/haac.py`:
+Key naming defaults from the Go-native `haac reconcile-media-stack` behavior:
 
 - Radarr movie folder format:
   - `{Movie CleanTitle} ({Release Year})`

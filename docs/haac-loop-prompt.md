@@ -4,7 +4,7 @@
 
 Main task of the loop is to move the homelab toward a reliable one-command bootstrap:
 
-- `task up` or wrapper equivalent works
+- `haac up` works; `task up` is only an optional alias
 - the current architecture stays coherent
 - the stack stays modern, DRY, centralized, and reviewable
 - public URLs are emitted as part of the operator contract
@@ -37,7 +37,7 @@ If a required file is missing, treat that as setup debt and fix it first.
 - one new evidence-backed OpenSpec change per round, max
 - one coherent task chunk per round is preferred; do not spray unrelated repo edits
 - validation, review, and security review are mandatory for bootstrap-affecting work
-- when live bootstrap depends on workstation-to-Proxmox reachability, run and record `haac check-env` through the supported wrapper before treating `doctor` or a blocked `task up` attempt as evidence of readiness
+- when live bootstrap depends on workstation-to-Proxmox reachability, run and record `haac check-env` before treating `doctor` or a blocked `haac up` attempt as evidence of readiness
 - if validation fails, default action is fix or document the blocker with evidence, not silent acceptance
 - update docs and task checklists when behavior changes
 - if a missing loop capability blocks correctness, open exactly one new evidence-backed OpenSpec change for that gap

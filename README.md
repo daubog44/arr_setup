@@ -10,9 +10,9 @@ This repository provisions and operates a Proxmox + K3s homelab/media stack with
 
 The stack includes the `*arr` suite, Jellyfin, qBittorrent/QUI, Authelia, Headlamp, Cloudflare Tunnel, Longhorn, monitoring, and security services.
 
-`task up` uses a state-safe OpenTofu apply path for existing LXC nodes because the current `bpg/proxmox` provider cannot round-trip HAAC-managed raw LXC config such as `idmap`. Keep `task plan` as the diagnostic path when you want a full provider-refresh view of unsupported drift.
+`haac up` uses a state-safe OpenTofu apply path for existing LXC nodes because the current `bpg/proxmox` provider cannot round-trip HAAC-managed raw LXC config such as `idmap`. Keep `haac task plan` or `task plan` as the diagnostic path when you want a full provider-refresh view of unsupported drift.
 
-Bootstrap-critical `mgmt` stateful workloads default to `local-path` in this repo. The current Proxmox LXC + ZFS substrate does not provide a reliable Longhorn replica backend for those services, so `task up` keeps the control plane and management layer on node-local storage while Longhorn remains available as a platform component.
+Bootstrap-critical `mgmt` stateful workloads default to `local-path` in this repo. The current Proxmox LXC + ZFS substrate does not provide a reliable Longhorn replica backend for those services, so `haac up` keeps the control plane and management layer on node-local storage while Longhorn remains available as a platform component.
 
 ## Repository Layout
 
@@ -22,7 +22,7 @@ Bootstrap-critical `mgmt` stateful workloads default to `local-path` in this rep
 - `k8s/platform/`: ArgoCD self-management, infra apps, Traefik config, NFD
 - `k8s/workloads/`: workload-facing ArgoCD applications
 - `k8s/charts/haac-stack/`: the dynamic workload stack rendered by Helm
-- `scripts/`: cross-platform orchestration helpers used by Task and the local wrappers
+- `scripts/`: loop helpers and legacy maintenance utilities; the supported operator backend is Go/Cobra
 
 ## GitOps Layout
 
@@ -72,7 +72,7 @@ The intended operator flow is:
 4. run `haac install-tools`
 5. run `haac up`
 
-Release artifacts are built from `.github/workflows/release.yml` using `.goreleaser.yaml`, and `haac version` now reports build metadata instead of only a raw dev string.
+Tagged release artifacts are built from `.github/workflows/release.yml` using `.goreleaser.yaml`. Every push to `main` also uploads a non-release Windows `haac.exe` workflow artifact from `.github/workflows/build-haac.yml`. `haac version` reports build metadata instead of only a raw dev string.
 
 ## Windows and Linux
 
@@ -88,23 +88,16 @@ The portable set is:
 - `helm`
 - `kubectl`
 - `kubeseal`
-- `task`
 
 The remaining system dependencies stay OS-level on purpose:
 
 - `go`
-- `python`
 - `git`
 - `ssh`
 - `wsl` on Windows
 - `ansible-playbook` may be installed globally or through `haac install-tools --with-control-node` on non-Windows hosts
 
-If you do not have a standalone `haac` binary yet, the repo-local wrappers still work as compatibility shims:
-
-- Windows: `.\haac.ps1 up`
-- Linux/macOS: `sh ./haac.sh up`
-
-If you do have `task` installed, `task up` still works.
+`task` is still installable as an optional compatibility runner for repo aliases, but it is not required by the product path. The shell and PowerShell shims were removed; use the cross-platform `haac` binary directly.
 
 ## Quick Start
 
@@ -114,17 +107,15 @@ If you do have `task` installed, `task up` still works.
 2. Copy `.env.example` to `.env` only if `haac init` did not already seed it for you.
 3. Fill in the required secrets and infrastructure values.
 4. Bootstrap the managed toolchain:
-   - direct CLI: `haac install-tools`
-   - compatibility wrapper on Windows: `.\haac.ps1 install-tools`
-   - compatibility wrapper on Linux/macOS: `sh ./haac.sh install-tools`
+   - `haac install-tools`
 5. Run the Cobra-owned preflight commands:
    - `haac check-env`
    - `haac doctor`
 6. Run the full bootstrap:
    - `haac up`
-   - or the compatibility shims `.\haac.ps1 up`, `sh ./haac.sh up`, or `task up`
+   - optional Task alias: `task up`
 
-On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `python` alias.
+The only required operator input step is a populated `.env`. Python is not part of the supported `haac up` backend; Ansible still uses Python inside the managed control-node runtime.
 
 ## Main Commands
 
@@ -145,7 +136,7 @@ On Linux, set `PYTHON_CMD=python3` in `.env` if your distro does not provide a `
 
 The quick start and command summary live here, but the durable detailed guides now live under `docs/reference/`:
 
-- `docs/reference/operator-bootstrap.md`: the real `task up` phase contract, generated artifact boundaries, rerun paths, and codebase split
+- `docs/reference/operator-bootstrap.md`: the real `haac up` phase contract, generated artifact boundaries, rerun paths, and codebase split
 - `docs/reference/media-stack.md`: Seerr, Prowlarr, ARR, downloader, NAS, and Jellyfin request-to-playback flow
 - `docs/reference/security-stack.md`: Cloudflare, Authelia, Kyverno, Falco, Trivy, and CrowdSec layering
 
@@ -153,7 +144,7 @@ Use those guides when changing bootstrap, media automation, or security behavior
 
 ## Task Up Contract
 
-`haac up`, `task up`, `.\haac.ps1 up`, and `sh ./haac.sh up` all drive the same supported operator pipeline. The direct `haac` binary is now the primary product surface; the shell wrappers and Task entrypoints are compatibility shims around that same Cobra-owned contract. The supported operator entrypoints (`init`, `install-tools`, `update-tools`, `check-env`, `doctor`, `up`, `down`, and the direct wrapper invocations) are the Cobra-owned surface; compatibility maintenance targets are exposed as public Task targets rather than Python-backed `haac` subcommands.
+`haac up` is the supported operator pipeline. `task up` is an optional compatibility alias that delegates to the public `haac` command; there are no shell or PowerShell product wrappers. The supported operator entrypoints (`init`, `install-tools`, `update-tools`, `check-env`, `doctor`, `up`, `down`, `generate-secrets`, `push-changes`, `deploy-argocd`, `wait-for-stack`, `sync-cloudflare`, `reconcile-litmus-*`, and `reconcile-media-stack`) are Cobra-owned.
 
 That bootstrap path is also the supported rerun path. A partial or previously successful run should be recoverable by rerunning the same command unless the failure output explicitly says manual intervention is required.
 
@@ -168,7 +159,7 @@ The logical phase order is:
 7. cluster verification
 8. public URL verification and final summary
 
-The minimum `.env` inputs for `task up` are grouped into three surfaces:
+The minimum `.env` inputs for `haac up` are grouped into three surfaces:
 
 - infra and storage: `LXC_PASSWORD`, `LXC_MASTER_HOSTNAME`, `NAS_ADDRESS`, `HOST_NAS_PATH`, `NAS_PATH`, `NAS_SHARE_NAME`, `SMB_USER`, `SMB_PASSWORD`, `STORAGE_UID`, `STORAGE_GID`
 - GitOps publication: `GITOPS_REPO_URL`, `GITOPS_REPO_REVISION`
@@ -228,9 +219,9 @@ The operator-facing Seerr discovery contract is intentionally narrow:
 
 `LXC_PASSWORD` remains the documented password source of truth. The supported `haac` operator commands reuse it as the default Proxmox host password unless a caller explicitly overrides `PROXMOX_HOST_PASSWORD`.
 
-`task up` is now publish-only on the Git boundary. It stages only generated GitOps artifacts and refuses to merge remote state when the branch is behind or diverged.
+`haac up` is now publish-only on the Git boundary. It stages only generated GitOps artifacts and refuses to merge remote state when the branch is behind or diverged.
 
-Git merge policy is explicit. `task sync` owns the local checkpoint plus safe fast-forward merge path, fails closed on divergence, and leaves manual conflict resolution explicit. It is a separate recovery path, not an implicit step hidden inside `task up`.
+Git merge policy is explicit. `haac sync-repo` owns the local checkpoint plus safe fast-forward merge path, fails closed on divergence, and leaves manual conflict resolution explicit. It is a separate recovery path, not an implicit step hidden inside `haac up`.
 
 `MASTER_TARGET_NODE` remains the Proxmox node name used inside OpenTofu and generated inventory. `PROXMOX_ACCESS_HOST` is the workstation-reachable IP or hostname used for the Proxmox API, SSH, and tunnel operations. If the node name itself already resolves locally, `PROXMOX_ACCESS_HOST` may be left unset and the bootstrap falls back to `MASTER_TARGET_NODE`.
 
@@ -240,7 +231,7 @@ ArgoCD bootstrap ownership is now local to the repo: Ansible prepares the cluste
 
 Cloudflare Tunnel autoupdate is configurable again through `.env` via `HAAC_ENABLE_CLOUDFLARED_AUTOUPDATE`. Trivy remains intentionally bounded to avoid control-plane churn on the single-master SQLite/Kine topology.
 
-Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and validation of the effective Proxmox API/SSH access host before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. `configure-os` also stops before GitOps bootstrap if K3s service recovery does not yield local flannel subnet state or a fully `Ready` node set. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `task up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
+Preflight now includes local env completeness, workstation tooling, writable GitOps sync, and validation of the effective Proxmox API/SSH access host before provisioning starts. OpenTofu, Ansible, ArgoCD degradation, and Cloudflare API failures stop the run immediately. Node configuration also stops before GitOps bootstrap if K3s service recovery does not yield local flannel subnet state or a fully `Ready` node set. Readiness and endpoint checks retry until timeout. When a phase still fails, the operator output now reports the failing phase, the last verified phase, and whether rerunning `haac up` is the normal recovery path. The detailed operator contract lives in `docs/runbooks/task-up.md`.
 
 The official public URL surface is only the ingress catalog declared in `k8s/charts/haac-stack/config-templates/values.yaml.template` and rendered into `k8s/charts/haac-stack/values.yaml`. `verify-web`, Homepage, the generated `HTTPRoute` set, and Cloudflare publication all derive from that same source of truth. Every published route must declare an explicit `auth_strategy` (`public`, `edge_forward_auth`, `native_oidc`, or `app_native`), and rendering fails closed if a route omits that field. Hosts outside the official catalog are unsupported and are not published through the Cloudflare tunnel.
 
@@ -347,10 +338,10 @@ That split is deliberate. Cluster-local jobs stay in Kubernetes; infra maintenan
 
 ## Notes
 
-- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by the supported `haac` CLI, while internal bootstrap subtasks now live under `Taskfile.internal.yml` and the Cobra bridge can pass the same Task arguments through unchanged without exposing `internal:*` tasks as part of the supported wrapper surface.
+- `.env` is the source of truth for GitOps repo settings, local tool pins, LXC flags, workstation settings, and all Terraform inputs. `Taskfile.yml` no longer defines `TF_VAR_*`; that mapping is generated centrally by the supported `haac` CLI, and Task targets are optional aliases around public `haac` commands.
 - `HAAC_KUBECTL_VERSION` controls the local workstation binary. `HAAC_CLUSTER_KUBECTL_IMAGE_TAG` controls the in-cluster helper image. They can differ because image publishing cadence does not always match the official client release cadence.
 - LXC should remain `unprivileged` by default; K3s, GPU, TUN, and eBPF exceptions are centrally gated with env flags.
-- `task up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.
+- `haac up` includes automatic Cloudflare tunnel/DNS reconciliation through the Cloudflare API.
 - GPU workload scheduling uses standard Kubernetes GPU resources; Node Feature Discovery is used for infrastructure-side GPU discovery.
 - Falco runtime is supported through a dedicated host-side sensor on the Proxmox node, not through an in-cluster DaemonSet on unprivileged LXC workers.
 - When `HAAC_ENABLE_FALCO=true`, the platform layer deploys `falcosidekick` in-cluster for alert ingest plus the protected UI, and the Proxmox host installs the Falco package with the `modern_ebpf` engine and forwards events to the cluster-side ingest service on the declared K3s master IP.

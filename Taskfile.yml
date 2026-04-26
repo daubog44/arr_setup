@@ -13,7 +13,7 @@ includes:
     taskfile: ./Taskfile.media.yml
 
 vars:
-  HAAC_CMD: '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1{{else}}sh ./haac.sh{{end}}'
+  HAAC_CMD: '{{default "haac" .HAAC_CMD}}'
   PYTHON_CMD: '{{default "python" .PYTHON_CMD}}'
   TOFU_DIR: tofu
   LXC_PASSWORD_VALUE:
@@ -56,7 +56,7 @@ tasks:
   install-tools:
     desc: Bootstrap the local platform-aware `.tools/<os>-<arch>/bin` toolchain and, on Windows, the WSL control-node packages.
     cmds:
-      - '{{if eq OS "windows"}}powershell -ExecutionPolicy Bypass -File ./haac.ps1 install-tools{{else}}sh ./haac.sh install-tools{{end}}'
+      - '{{.HAAC_CMD}} install-tools'
 
   install-windows-tools:
     desc: Backward-compatible alias for `task install-tools`.
@@ -71,12 +71,12 @@ tasks:
   clean-artifacts:
     desc: Remove stray local investigation artifacts outside `.tmp/`.
     cmds:
-      - task: internal:clean-artifacts
+      - '{{.HAAC_CMD}} clean-artifacts'
 
   sync:
     desc: Save local work, validate the declared GitOps remote, and own the explicit merge-policy path before provisioning.
     cmds:
-      - task: internal:sync-repo
+      - '{{.HAAC_CMD}} sync-repo'
 
   sync-repo:
     desc: Compatibility alias for `task sync`.
@@ -118,46 +118,50 @@ tasks:
   gitops-bootstrap:
     desc: Generate secrets, push them, bootstrap the App-of-Apps in ArgoCD, and let in-cluster post-deploy automation reconcile itself.
     cmds:
-      - task: internal:gitops-bootstrap
+      - '{{.HAAC_CMD}} generate-secrets'
+      - '{{.HAAC_CMD}} push-changes'
+      - '{{.HAAC_CMD}} deploy-argocd'
+      - '{{.HAAC_CMD}} wait-for-stack'
       - task: security:post-install
-      - task: chaos:post-install
-      - task: media:post-install
-      - task: internal:sync-cloudflare
+      - '{{.HAAC_CMD}} reconcile-litmus-admin'
+      - '{{.HAAC_CMD}} reconcile-litmus-chaos'
+      - '{{.HAAC_CMD}} reconcile-media-stack'
+      - '{{.HAAC_CMD}} sync-cloudflare'
 
   reconcile:sealed-secrets:
     desc: "Regenerate Sealed Secrets from `.env`, publish only the GitOps outputs, and wait for the cluster to reconcile them."
     cmds:
-      - task: internal:generate-secrets
-      - task: internal:push-changes
-      - task: internal:wait-for-argocd-sync
+      - '{{.HAAC_CMD}} generate-secrets'
+      - '{{.HAAC_CMD}} push-changes'
+      - '{{.HAAC_CMD}} wait-for-stack'
 
   reconcile:argocd:
     desc: "Push GitOps state, re-apply the remote ArgoCD bootstrap overlay, reconcile Cloudflare edge state, and verify public URLs."
     cmds:
       - task: gitops-bootstrap
-      - task: internal:repair-litmus-admin
-      - task: internal:repair-litmus-chaos
-      - task: internal:verify-endpoints
-      - task: internal:verify-browser-auth
+      - '{{.HAAC_CMD}} reconcile-litmus-admin'
+      - '{{.HAAC_CMD}} reconcile-litmus-chaos'
+      - '{{.HAAC_CMD}} verify-web'
+      - '{{.HAAC_CMD}} verify-browser-auth'
 
   reconcile:gitops:
     desc: "Reconcile the full remote GitOps layer without reprovisioning infra: secrets, ArgoCD bootstrap, workloads, Cloudflare, and public URLs."
     cmds:
       - task: gitops-bootstrap
-      - task: internal:repair-litmus-admin
-      - task: internal:repair-litmus-chaos
-      - task: internal:verify-endpoints
-      - task: internal:verify-browser-auth
+      - '{{.HAAC_CMD}} reconcile-litmus-admin'
+      - '{{.HAAC_CMD}} reconcile-litmus-chaos'
+      - '{{.HAAC_CMD}} verify-web'
+      - '{{.HAAC_CMD}} verify-browser-auth'
 
   reconcile:media:
     desc: "Reconcile only the repo-managed media stack readiness surface without reprovisioning infra or re-running the full GitOps publication flow."
     cmds:
-      - task: media:post-install
+      - '{{.HAAC_CMD}} reconcile-media-stack'
 
   verify:arr-flow:
     desc: "Run the supported ARR end-to-end verification path without folding media downloads into `task up`."
     cmds:
-      - task: media:verify-flow
+      - '{{.HAAC_CMD}} verify-arr-flow'
 
   verify-arr-flow:
     desc: Compatibility alias for `task verify:arr-flow`.
@@ -178,40 +182,45 @@ tasks:
   verify-all:
     desc: Verify cluster health, then enforce both HTTP-level and browser-level public URL checks.
     cmds:
-      - task: internal:verify-all
+      - '{{.HAAC_CMD}} verify-cluster'
+      - '{{.HAAC_CMD}} reconcile-litmus-admin'
+      - '{{.HAAC_CMD}} reconcile-litmus-chaos'
+      - '{{.HAAC_CMD}} verify-web'
+      - '{{.HAAC_CMD}} clear-crowdsec-operator-ban'
+      - '{{.HAAC_CMD}} verify-browser-auth'
 
   pre-commit-hook:
     desc: Internal git hook entrypoint used by the repo-local pre-commit shim.
     cmds:
-      - task: internal:pre-commit-hook
+      - '{{.HAAC_CMD}} pre-commit-hook'
 
   monitor:
     desc: Open a K9s session against the remote cluster through an SSH tunnel.
     cmds:
-      - task: internal:monitor
+      - '{{.HAAC_CMD}} monitor'
 
   deploy-argocd:
     desc: Apply the ArgoCD app manifests with DOMAIN_NAME substitution.
     deps: [check-env]
     cmds:
-      - task: internal:deploy-argocd
+      - '{{.HAAC_CMD}} deploy-argocd'
 
   generate-secrets:
     desc: Fetch the Sealed Secrets public cert, hydrate templates, and regenerate local Sealed Secrets.
     deps: [check-env]
     cmds:
-      - task: internal:generate-secrets
+      - '{{.HAAC_CMD}} generate-secrets'
 
   generate-secrets-local:
     desc: Regenerate repo-managed Sealed Secrets against the current kubeconfig without refetching the controller cert.
     deps: [check-env]
     cmds:
-      - task: internal:generate-secrets-local
+      - '{{.HAAC_CMD}} generate-secrets-local'
 
   push-changes:
     desc: Regenerate sealed secrets from the cached cert, then push only the GitOps source of truth without performing Git merge policy.
     cmds:
-      - task: internal:push-changes
+      - '{{.HAAC_CMD}} push-changes'
 
   setup-hooks:
     desc: Install a cross-platform pre-commit hook that regenerates Sealed Secrets when the cluster is reachable.
@@ -220,14 +229,14 @@ tasks:
 
   deploy-local:
     desc: Apply the local haac-stack chart when ArgoCD is not already managing it.
-    deps: [internal:generate-secrets]
+    deps: [generate-secrets]
     cmds:
-      - task: internal:deploy-local
+      - '{{.HAAC_CMD}} deploy-local'
 
   wait-for-argocd-sync:
     desc: Wait through staged ArgoCD root/platform/workload gates and the critical downloader readiness gate.
     cmds:
-      - task: internal:wait-for-argocd-sync
+      - '{{.HAAC_CMD}} wait-for-stack'
 
   wait-for-stack:
     desc: Compatibility alias for `task wait-for-argocd-sync`.
@@ -237,22 +246,27 @@ tasks:
   verify-cluster:
     desc: Run cluster-level checks over the remote K3s API.
     cmds:
-      - task: internal:verify-cluster
+      - '{{.HAAC_CMD}} verify-cluster'
 
   verify-endpoints:
     desc: Check the public HTTP endpoints exposed through Cloudflare and Traefik, reporting full versus partial success.
     cmds:
-      - task: internal:verify-endpoints
+      - '{{.HAAC_CMD}} verify-web'
 
   verify-web:
     desc: Compatibility alias for `task verify-endpoints`.
     cmds:
       - task: verify-endpoints
 
+  diagnose-edge:
+    desc: Diagnose Cloudflare-fronted 403 failures across Cloudflare scope, tunnel/origin logs, and CrowdSec decisions.
+    cmds:
+      - '{{.HAAC_CMD}} diagnose-edge'
+
   repair-litmus-admin:
     desc: Reconcile the Litmus admin account from the repo-managed secret when the persisted MongoDB state drifted.
     cmds:
-      - task: internal:repair-litmus-admin
+      - '{{.HAAC_CMD}} reconcile-litmus-admin'
 
   reconcile-litmus-admin:
     desc: Compatibility alias for `task repair-litmus-admin`.
@@ -262,7 +276,7 @@ tasks:
   repair-litmus-chaos:
     desc: Reconcile a usable Litmus environment and default chaos infrastructure without manual YAML apply.
     cmds:
-      - task: internal:repair-litmus-chaos
+      - '{{.HAAC_CMD}} reconcile-litmus-chaos'
 
   reconcile-litmus-chaos:
     desc: Compatibility alias for `task repair-litmus-chaos`.
@@ -272,18 +286,18 @@ tasks:
   verify-browser-auth:
     desc: Run browser-level auth verification for the official public UI surface using the repo-local Playwright verifier.
     cmds:
-      - task: internal:verify-browser-auth
+      - '{{.HAAC_CMD}} verify-browser-auth'
 
   sync-cloudflare:
     desc: Reconcile Cloudflare Tunnel ingress rules and the required DNS records.
     deps: [check-env]
     cmds:
-      - task: internal:sync-cloudflare
+      - '{{.HAAC_CMD}} sync-cloudflare'
 
   clear-crowdsec-operator-ban:
     desc: Compatibility alias for the operator CrowdSec cleanup step.
     cmds:
-      - task: internal:clear-crowdsec-operator-ban
+      - '{{.HAAC_CMD}} clear-crowdsec-operator-ban'
 
   configure-apps:
     desc: Manual fallback bootstrap for QUI and qBittorrent when the in-cluster bootstrap Job must be retriggered explicitly.
@@ -294,18 +308,18 @@ tasks:
   reconcile-media-stack:
     desc: Compatibility alias for `task media:post-install`.
     cmds:
-      - task: media:post-install
+      - '{{.HAAC_CMD}} reconcile-media-stack'
 
   cleanup-security-signal-residue:
     desc: Compatibility alias for `task security:cleanup-signal-residue`.
     cmds:
-      - task: security:cleanup-signal-residue
+      - '{{.HAAC_CMD}} cleanup-security-signal-residue'
 
   configure-argocd-local-auth:
     desc: Optionally configure a local ArgoCD username/password fallback on top of the declarative OIDC setup.
     deps: [check-env]
     cmds:
-      - task: internal:configure-argocd-local-auth
+      - '{{.HAAC_CMD}} configure-argocd-local-auth'
 
   restore-k3s:
     desc: Restore the K3s SQLite database from a NAS backup file.
@@ -313,10 +327,7 @@ tasks:
       BACKUP_FILE: '{{default "k3s-state-latest.db" .BACKUP_FILE}}'
       NAS_MOUNT_PATH: "/mnt/pve/HaaC-Storage/media/k3s"
     cmds:
-      - task: internal:restore-k3s
-        vars:
-          BACKUP_FILE: "{{.BACKUP_FILE}}"
-          NAS_MOUNT_PATH: "{{.NAS_MOUNT_PATH}}"
+      - '{{.HAAC_CMD}} restore-k3s --backup-file "{{.BACKUP_FILE}}" --nas-mount-path "{{.NAS_MOUNT_PATH}}"'
 
   shutdown-cluster:
     desc: Gracefully stop the K3s LXC containers on Proxmox.
