@@ -142,9 +142,12 @@ spec:
                 datasource: Prometheus
 
         prometheusOperator:
+          tls:
+            enabled: false
           admissionWebhooks:
-            # Avoid ArgoCD hook deletion stalls during first bootstrap. Render
-            # checks and PrometheusRule health still validate the monitoring stack.
+            # Avoid ArgoCD hook deletion stalls during first bootstrap. TLS is
+            # disabled with the webhook because the chart otherwise mounts the
+            # webhook-generated admission secret into the operator pod.
             enabled: false
 
         prometheus:
