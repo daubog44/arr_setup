@@ -44,7 +44,7 @@ global:
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "7fc42692acbe29337290ea6c544ccb20d9801615064a7e59afa9c17f1d4152c8"
+    homepageConfigChecksum: "cc59374222941329bcf57e701d48e891eb2a1f2cab88245646976a15c082871f"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -428,6 +428,17 @@ ingresses:
     homepage_name: Kyverno
     homepage_icon: mdi-shield-check-outline
     homepage_description: Policy Reporter
+  crowdsec:
+    enabled: true
+    subdomain: crowdsec
+    service: crowdsec-web-ui
+    port: 3000
+    namespace: crowdsec
+    auth_strategy: edge_forward_auth
+    homepage_group: Security
+    homepage_name: CrowdSec
+    homepage_icon: mdi-shield-account-outline
+    homepage_description: Threat Decisions
 
 homepage:
   bookmarks:
