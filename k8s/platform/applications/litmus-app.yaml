@@ -24,6 +24,10 @@ spec:
         # Deploy the chaos center and agent together for homelab simplicity
         adminMode: true
         mongodb:
+          image:
+            registry: docker.io
+            repository: bitnamilegacy/mongodb
+            tag: 8.0.13-debian-12-r0
           auth:
             existingSecret: litmus-mongodb-credentials
           architecture: replicaset
