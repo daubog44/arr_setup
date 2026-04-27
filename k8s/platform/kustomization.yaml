@@ -4,6 +4,8 @@ resources:
   - argocd
   - applications
   - crowdsec/crowdsec-lapi-sealed-secret.yaml
+  - crowdsec/crowdsec-web-ui-auth-sealed-secret.yaml
+  - crowdsec/crowdsec-web-ui.yaml
   - chaos/litmus-admin-credentials-sealed-secret.yaml
   - chaos/litmus-mongodb-credentials-sealed-secret.yaml
   - falco-ingest-service.yaml

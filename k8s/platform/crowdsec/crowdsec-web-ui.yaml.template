@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crowdsec-web-ui-data
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec-web-ui
+    app.kubernetes.io/part-of: crowdsec
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowdsec-web-ui
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec-web-ui
+    app.kubernetes.io/part-of: crowdsec
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: crowdsec-web-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: crowdsec-web-ui
+        app.kubernetes.io/part-of: crowdsec
+      annotations:
+        checksum/crowdsec-web-ui-auth: "${CROWDSEC_WEBUI_SECRET_SHA256}"
+    spec:
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: crowdsec-web-ui
+          image: "${CROWDSEC_WEBUI_IMAGE_REPOSITORY}:${CROWDSEC_WEBUI_IMAGE_TAG}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: CROWDSEC_URL
+              value: http://crowdsec-service.crowdsec.svc.cluster.local:8080
+            - name: CROWDSEC_USER
+              valueFrom:
+                secretKeyRef:
+                  name: crowdsec-web-ui-auth
+                  key: CROWDSEC_USER
+            - name: CROWDSEC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: crowdsec-web-ui-auth
+                  key: CROWDSEC_PASSWORD
+            - name: CROWDSEC_LOOKBACK_PERIOD
+              value: 168h
+            - name: CROWDSEC_REFRESH_INTERVAL
+              value: 30s
+            - name: CROWDSEC_FULL_REFRESH_INTERVAL
+              value: 5m
+            - name: CROWDSEC_BOOTSTRAP_RETRY_ENABLED
+              value: "true"
+            - name: CROWDSEC_ALERT_INCLUDE_CAPI
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 8
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: crowdsec-web-ui-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crowdsec-web-ui
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec-web-ui
+    app.kubernetes.io/part-of: crowdsec
+spec:
+  selector:
+    app.kubernetes.io/name: crowdsec-web-ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
