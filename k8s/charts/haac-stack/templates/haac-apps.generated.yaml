@@ -79,12 +79,15 @@ spec:
             - name: config
               mountPath: "/app/config"
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: config
       spec:
         accessModes:
           - ReadWriteOnce
         storageClassName: {{ .Values.global.storage.statefulClass | quote }}
+        volumeMode: Filesystem
         resources:
           requests:
             storage: "5Gi"
