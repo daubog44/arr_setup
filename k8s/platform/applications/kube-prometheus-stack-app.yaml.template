@@ -13,7 +13,7 @@ spec:
     repoURL: https://prometheus-community.github.io/helm-charts
     chart: kube-prometheus-stack
     # renovate: registryUrl=https://prometheus-community.github.io/helm-charts chart=kube-prometheus-stack
-    targetRevision: "82.14.1"
+    targetRevision: "84.3.0"
     helm:
       values: |
         # Disable default rules that are too noisy for homelabs or not applicable
@@ -142,10 +142,13 @@ spec:
                 datasource: Prometheus
 
         prometheusOperator:
+          tls:
+            enabled: false
           admissionWebhooks:
-            annotations:
-              argocd.argoproj.io/hook: PreSync
-              argocd.argoproj.io/hook-delete-policy: HookSucceeded
+            # Avoid ArgoCD hook deletion stalls during first bootstrap. TLS is
+            # disabled with the webhook because the chart otherwise mounts the
+            # webhook-generated admission secret into the operator pod.
+            enabled: false
 
         prometheus:
           additionalServiceMonitors:

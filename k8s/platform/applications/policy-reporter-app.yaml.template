@@ -12,7 +12,7 @@ spec:
     repoURL: https://kyverno.github.io/policy-reporter
     chart: policy-reporter
     # renovate: registryUrl=https://kyverno.github.io/policy-reporter chart=policy-reporter
-    targetRevision: "3.7.3"
+    targetRevision: "3.7.4"
     helm:
       values: |
         replicaCount: 1
