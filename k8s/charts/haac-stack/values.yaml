@@ -55,7 +55,7 @@ global:
       tag: 8.19.0
     qbittorrent:
       repository: lscr.io/linuxserver/qbittorrent
-      tag: 4.6.7
+      tag: 20.04.1
     qui:
       repository: ghcr.io/autobrr/qui
       tag: v1.17.0
@@ -70,13 +70,13 @@ global:
       tag: 4.0.17
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
-      tag: 1.37.0
+      tag: 2.3.5
     bazarr:
       repository: lscr.io/linuxserver/bazarr
       tag: 1.5.6
     lidarr:
       repository: lscr.io/linuxserver/lidarr
-      tag: 3.1.0
+      tag: 8.1.2135
     whisparr:
       repository: ghcr.io/hotio/whisparr
       tag: v3
