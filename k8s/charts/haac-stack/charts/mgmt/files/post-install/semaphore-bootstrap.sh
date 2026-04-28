@@ -161,13 +161,8 @@ ensure_smoke_execution() {
   TASKS=$(api GET "/api/project/$PROJECT_ID/tasks" || echo "[]")
   COMPACT_TASKS=$(printf '%s' "$TASKS" | tr -d '\n\r\t ')
   SUCCESS_COUNT=$(printf '%s' "$COMPACT_TASKS" | grep -o "\"template_id\":$TEMPLATE_ID[^}]*\"status\":\"success\"" | wc -l | tr -d ' ' || true)
-  TASK_COUNT=$(printf '%s' "$COMPACT_TASKS" | grep -o "\"template_id\":$TEMPLATE_ID" | wc -l | tr -d ' ' || true)
   if [ "${SUCCESS_COUNT:-0}" -gt 0 ]; then
     echo "Semaphore smoke execution already succeeded"
-    return 0
-  fi
-  if [ "${TASK_COUNT:-0}" -ge 10 ]; then
-    echo "Semaphore smoke execution has already been attempted ${TASK_COUNT} times; not creating more bootstrap history"
     return 0
   fi
   echo "Launching Semaphore smoke execution for template $TEMPLATE_ID"
