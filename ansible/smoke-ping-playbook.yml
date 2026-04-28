@@ -1,0 +1,7 @@
+---
+- name: HaaC smoke ping
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Verify Ansible can reach the target
+      ansible.builtin.ping:
