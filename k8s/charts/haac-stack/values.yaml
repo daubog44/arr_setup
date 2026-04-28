@@ -44,7 +44,7 @@ global:
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "cc59374222941329bcf57e701d48e891eb2a1f2cab88245646976a15c082871f"
+    homepageConfigChecksum: "d0758430005fee04b6eb6358ade3a7ec1ab5a20a8c9eb613e2fc50de04d8d5be"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
@@ -118,7 +118,7 @@ global:
       tag: "3.23"
     kubectl:
       repository: rancher/kubectl
-      tag: "v1.36.0"
+      tag: "v1.35.2"
     flaresolverr:
       repository: ghcr.io/flaresolverr/flaresolverr
       tag: v3.4.6

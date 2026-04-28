@@ -19,6 +19,7 @@ spec:
     helm:
       valueFiles:
         - values.yaml
+        - haac-apps.generated.values.yaml
   destination:
     server: https://kubernetes.default.svc
   ignoreDifferences:
