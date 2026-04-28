@@ -672,17 +672,63 @@
       delegate_to: "{{ proxmox_host }}"
 
     - name: Ensure LXC Container is restarted to apply hardware mappings
-      ansible.builtin.shell: "pct stop {{ lxc_vmid }} || true && pct start {{ lxc_vmid }}"
+      ansible.builtin.shell: |
+        set -eu
+        vmid="{{ lxc_vmid }}"
+        if pct status "$vmid" | grep -q 'status: running'; then
+          pct shutdown "$vmid" --timeout 30 || pct stop "$vmid" || true
+        fi
+        for _ in $(seq 1 18); do
+          if pct status "$vmid" | grep -q 'status: stopped'; then
+            break
+          fi
+          sleep 5
+        done
+        for attempt in $(seq 1 5); do
+          if pct start "$vmid"; then
+            exit 0
+          fi
+          if pct status "$vmid" | grep -q 'status: running'; then
+            exit 0
+          fi
+          pct unlock "$vmid" || true
+          sleep $((attempt * 5))
+        done
+        if pct status "$vmid" | grep -q 'status: running'; then
+          exit 0
+        fi
+        pct status "$vmid"
+        exit 1
       when: lxc_conf.changed
+      delegate_to: "{{ proxmox_host }}"
+
+    - name: Ensure LXC Container is running before guest access
+      ansible.builtin.shell: |
+        set -eu
+        vmid="{{ lxc_vmid }}"
+        if pct status "$vmid" | grep -q 'status: running'; then
+          exit 0
+        fi
+        pct unlock "$vmid" || true
+        for attempt in $(seq 1 5); do
+          if pct start "$vmid"; then
+            echo started
+            exit 0
+          fi
+          sleep $((attempt * 5))
+        done
+        pct status "$vmid"
+        exit 1
+      register: lxc_ensure_running
+      changed_when: "'started' in lxc_ensure_running.stdout"
       delegate_to: "{{ proxmox_host }}"
 
     - name: Wait for LXC Container to securely be running
       ansible.builtin.shell: "pct status {{ lxc_vmid }}"
       register: lxc_status
       until: "'status: running' in lxc_status.stdout"
-      retries: 5
+      retries: 12
       delay: 5
-      when: lxc_conf.changed
       delegate_to: "{{ proxmox_host }}"
 
     - name: Ensure the operator bootstrap SSH public key is installed in guest root
@@ -1493,7 +1539,7 @@
       retries: 24
       delay: 5
 
-    # ArgoCD bootstrap ownership intentionally lives in scripts/haac.py -> deploy_argocd().
+    # ArgoCD bootstrap ownership intentionally lives in the Go/Cobra deploy-argocd command.
     # That path applies the repo-local install overlay so the bootstrap source of truth stays in Git.
 
 - name: Deferred Kubernetes Node Label Reconciliation
@@ -1507,6 +1553,16 @@
 - name: Automated Security Updates (Unattended Upgrades)
   hosts: k3s_master:k3s_workers
   gather_facts: false
+  serial: 1
+
+  pre_tasks:
+    - name: Reset SSH connection before unattended-upgrades reconciliation
+      ansible.builtin.meta: reset_connection
+
+    - name: Wait for node SSH to be ready before unattended-upgrades reconciliation
+      ansible.builtin.wait_for_connection:
+        delay: 2
+        timeout: 180
 
   tasks:
     - name: Install unattended-upgrades

@@ -40,8 +40,10 @@ spec:
           sbomGenerationEnabled: false
           configAuditScannerEnabled: true
           rbacAssessmentScannerEnabled: true
-          infraAssessmentScannerEnabled: true
-          clusterComplianceEnabled: true
+          # Node infra/compliance scans require hostPID and hostPath mounts.
+          # Keep them disabled for the baseline PodSecurity/LXC homelab model.
+          infraAssessmentScannerEnabled: false
+          clusterComplianceEnabled: false
           exposedSecretScannerEnabled: true
           scannerReportTTL: "6h"
 

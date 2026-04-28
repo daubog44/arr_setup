@@ -7,7 +7,8 @@
   ],
   "kubernetes": {
     "managerFilePatterns": [
-      "/\\.yaml$/"
+      "/\\.yaml$/",
+      "/\\.yaml\\.template$/"
     ]
   },
   "helmv3": {
@@ -46,9 +47,10 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["\\.yaml$", "Taskfile\\.yml$", "\\.sh$", "playbook\\.yml$"],
+      "fileMatch": ["\\.yaml(?:\\.template)?$", "Taskfile\\.yml$", "\\.sh$", "playbook\\.yml$"],
       "matchStrings": [
         "image:\\s*(?<depName>[^\\s:]+):(?<currentValue>[^\\s\"']+)",
+        "repository:\\s*\"?(?<depName>[^\\s\"']+)\"?\\s*\\n\\s*tag:\\s*\"?(?<currentValue>[^\\s\"']+)\"?",
         "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>[^\\s]+?)(?: versioning=(?<versioning>[^\\s]+?))?\\s+.*?[:=]\\s*\"?(?<currentValue>[^\\s\"']+)\"?"
       ],
       "datasourceTemplate": "docker"
@@ -64,7 +66,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["\\.yaml$"],
+      "fileMatch": ["\\.yaml(?:\\.template)?$"],
       "matchStrings": [
         "# renovate: registryUrl=(?<registryUrl>[^\\s]+) chart=(?<depName>[^\\s]+)\\s+targetRevision: \"(?<currentValue>[^\"]+)\""
       ],
