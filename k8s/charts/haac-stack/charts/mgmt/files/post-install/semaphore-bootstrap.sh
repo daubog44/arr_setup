@@ -82,7 +82,7 @@ KEY_ID=$(find_named_id "$KEYS" "HaaC Maintenance SSH Key")
 MAINTENANCE_PRIVATE_KEY=$(json_escape_file "$MAINTENANCE_SSH_KEY_PATH")
 if [ -n "$KEY_ID" ]; then
   echo "Updating maintenance SSH key ID: $KEY_ID"
-  api_json PUT "/api/project/$PROJECT_ID/keys/$KEY_ID" "{\"id\":$KEY_ID,\"name\":\"HaaC Maintenance SSH Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$MAINTENANCE_PRIVATE_KEY\"}}" > /dev/null
+  api_json PUT "/api/project/$PROJECT_ID/keys/$KEY_ID" "{\"id\":$KEY_ID,\"name\":\"HaaC Maintenance SSH Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"override_secret\":true,\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$MAINTENANCE_PRIVATE_KEY\"}}" > /dev/null
 else
   KEY=$(api_json POST "/api/project/$PROJECT_ID/keys" "{\"name\":\"HaaC Maintenance SSH Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"\",\"passphrase\":\"\",\"private_key\":\"$MAINTENANCE_PRIVATE_KEY\"}}")
   KEY_ID=$(echo "$KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
@@ -95,7 +95,7 @@ if [ -f /etc/repo-ssh/repo_deploy_ed25519 ]; then
   REPO_PRIVATE_KEY=$(json_escape_file /etc/repo-ssh/repo_deploy_ed25519)
   if [ -n "$REPO_KEY_ID" ]; then
     echo "Updating repo deploy key ID: $REPO_KEY_ID"
-    api_json PUT "/api/project/$PROJECT_ID/keys/$REPO_KEY_ID" "{\"id\":$REPO_KEY_ID,\"name\":\"HaaC Repo Deploy Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$REPO_PRIVATE_KEY\"}}" > /dev/null
+    api_json PUT "/api/project/$PROJECT_ID/keys/$REPO_KEY_ID" "{\"id\":$REPO_KEY_ID,\"name\":\"HaaC Repo Deploy Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"override_secret\":true,\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$REPO_PRIVATE_KEY\"}}" > /dev/null
   else
     REPO_KEY=$(api_json POST "/api/project/$PROJECT_ID/keys" "{\"name\":\"HaaC Repo Deploy Key\",\"project_id\":$PROJECT_ID,\"type\":\"ssh\",\"ssh\":{\"login\":\"git\",\"passphrase\":\"\",\"private_key\":\"$REPO_PRIVATE_KEY\"}}")
     REPO_KEY_ID=$(echo "$REPO_KEY" | sed 's/.*"id":\([0-9]*\).*/\1/')
