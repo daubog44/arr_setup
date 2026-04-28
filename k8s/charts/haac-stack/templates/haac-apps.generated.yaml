@@ -117,7 +117,7 @@ metadata:
   name: "pegaprox-config"
   namespace: "mgmt"
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "3"
 spec:
   accessModes:
     - ReadWriteOnce
