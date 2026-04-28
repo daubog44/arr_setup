@@ -19,6 +19,38 @@ spec:
     - >-
       {{ include "haac-stack.ingress.url" (dict "subdomain" $conf.subdomain "Values" $.Values) }}
   rules:
+{{- range ($conf.path_routes | default (list)) }}
+    - matches:
+        - path:
+            type: {{ default "PathPrefix" .pathType }}
+            value: {{ .path | quote }}
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: "{{ default $conf.service .service }}"
+          port: {{ .port }}
+          weight: 1
+      filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: "force-https"
+{{- if eq $authStrategy "edge_forward_auth" }}
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: "authelia"
+{{- end }}
+{{- range ($conf.extra_middlewares | default (list)) }}
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: "{{ . }}"
+{{ end }}
+{{- end }}
     - matches:
         - path:
             type: PathPrefix

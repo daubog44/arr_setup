@@ -1,0 +1,32 @@
+apiVersion: haac.dev/v1alpha1
+kind: App
+metadata:
+  name: uptime-kuma-sample
+spec:
+  enabled: false
+  profile: stateful-web-app
+  namespace: mgmt
+  image:
+    repository: louislam/uptime-kuma
+    tag: "1"
+  service:
+    port: 3001
+  route:
+    subdomain: uptime
+    auth: edge_forward_auth
+  storage:
+    config:
+      enabled: true
+      size: 2Gi
+      mountPath: /app/data
+  homepage:
+    group: Management
+    name: Uptime Kuma Sample
+    icon: uptime-kuma.png
+    description: Disabled stateful sample for validating PVC and route rendering
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi

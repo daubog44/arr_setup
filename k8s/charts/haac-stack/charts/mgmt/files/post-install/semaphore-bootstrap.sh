@@ -148,6 +148,46 @@ upsert_template() {
   printf '%s' "$TEMPLATE_ID"
 }
 
+ensure_smoke_execution() {
+  TEMPLATE_ID="$1"
+  TASKS=$(api GET "/api/project/$PROJECT_ID/tasks" || echo "[]")
+  COMPACT_TASKS=$(printf '%s' "$TASKS" | tr -d '\n\r\t ')
+  SUCCESS_COUNT=$(printf '%s' "$COMPACT_TASKS" | grep -o "\"template_id\":$TEMPLATE_ID[^}]*\"status\":\"success\"" | wc -l | tr -d ' ' || true)
+  TASK_COUNT=$(printf '%s' "$COMPACT_TASKS" | grep -o "\"template_id\":$TEMPLATE_ID" | wc -l | tr -d ' ' || true)
+  if [ "${SUCCESS_COUNT:-0}" -gt 0 ]; then
+    echo "Semaphore smoke execution already succeeded"
+    return 0
+  fi
+  if [ "${TASK_COUNT:-0}" -ge 3 ]; then
+    echo "Semaphore smoke execution has already been attempted ${TASK_COUNT} times; not creating more bootstrap history"
+    return 0
+  fi
+  echo "Launching Semaphore smoke execution for template $TEMPLATE_ID"
+  TASK=$(api_json POST "/api/project/$PROJECT_ID/tasks" "{\"template_id\":$TEMPLATE_ID}")
+  TASK_ID=$(echo "$TASK" | sed 's/.*"id":\([0-9]*\).*/\1/')
+  if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "$TASK" ]; then
+    echo "Could not parse Semaphore smoke task ID from API response" >&2
+    exit 1
+  fi
+  for _ in $(seq 1 36); do
+    CURRENT=$(api GET "/api/project/$PROJECT_ID/tasks/$TASK_ID" || echo "{}")
+    STATUS=$(printf '%s' "$CURRENT" | tr -d '\n\r\t ' | sed 's/.*"status":"\([^"]*\)".*/\1/')
+    case "$STATUS" in
+      success)
+        echo "Semaphore smoke execution succeeded: task $TASK_ID"
+        return 0
+        ;;
+      error|failed|stopped)
+        echo "Semaphore smoke execution failed with status $STATUS: task $TASK_ID" >&2
+        exit 1
+        ;;
+    esac
+    sleep 5
+  done
+  echo "Timed out waiting for Semaphore smoke execution task $TASK_ID" >&2
+  exit 1
+}
+
 TPL_K3S_ID=$(upsert_template "$MAINTENANCE_K3S_TEMPLATE_NAME" "$MAINTENANCE_K3S_PLAYBOOK_PATH" "$MAINTENANCE_K3S_TEMPLATE_DESCRIPTION")
 echo "Reconciled K3s template ID: $TPL_K3S_ID"
 
@@ -157,10 +197,16 @@ echo "Reconciled Proxmox template ID: $TPL_PVE_ID"
 TPL_RESTORE_ID=$(upsert_template "$MAINTENANCE_RESTORE_TEMPLATE_NAME" "$MAINTENANCE_RESTORE_PLAYBOOK_PATH" "$MAINTENANCE_RESTORE_TEMPLATE_DESCRIPTION")
 echo "Reconciled Restore DB template ID: $TPL_RESTORE_ID"
 
+TPL_SMOKE_ID=$(upsert_template "$MAINTENANCE_SMOKE_TEMPLATE_NAME" "$MAINTENANCE_SMOKE_PLAYBOOK_PATH" "$MAINTENANCE_SMOKE_TEMPLATE_DESCRIPTION")
+echo "Reconciled Smoke template ID: $TPL_SMOKE_ID"
+
 upsert_schedule "$TPL_K3S_ID" "$MAINTENANCE_K3S_SCHEDULE_NAME" "$MAINTENANCE_K3S_SCHEDULE_CRON"
 echo "Reconciled K3s schedule"
 
 upsert_schedule "$TPL_PVE_ID" "$MAINTENANCE_PROXMOX_SCHEDULE_NAME" "$MAINTENANCE_PROXMOX_SCHEDULE_CRON"
 echo "Reconciled Proxmox schedule (30min after K3s)"
+
+ensure_smoke_execution "$TPL_SMOKE_ID"
+echo "Reconciled Semaphore smoke history"
 
 echo "Semaphore bootstrap complete."

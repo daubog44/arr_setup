@@ -12,4 +12,15 @@ ingresses:
     homepage_name: "PegaProx"
     homepage_icon: "mdi-server"
     homepage_description: "Proxmox and XCP-ng datacenter management UI"
+    path_routes:
+      - name: "vnc-websocket"
+        path: "^/api/clusters/[^/]+/vms/.+/vncwebsocket$"
+        pathType: "RegularExpression"
+        service: "pegaprox"
+        port: 5001
+      - name: "ssh-websocket"
+        path: "^/api/clusters/[^/]+/nodes/.+/shellws$"
+        pathType: "RegularExpression"
+        service: "pegaprox"
+        port: 5002
 

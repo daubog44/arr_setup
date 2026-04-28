@@ -49,6 +49,8 @@ spec:
               value: "0.0.0.0"
             - name: PEGAPROX_ALLOWED_ORIGINS
               value: "https://pegaprox.nucleoautogenerativo.it"
+            - name: PEGAPROX_URL
+              value: "https://pegaprox.nucleoautogenerativo.it"
             - name: PEGAPROX_SERVER
               value: "auto"
           resources:

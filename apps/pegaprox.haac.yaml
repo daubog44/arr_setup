@@ -1,0 +1,60 @@
+apiVersion: haac.dev/v1alpha1
+kind: App
+metadata:
+  name: pegaprox
+spec:
+  enabled: true
+  profile: stateful-web-app
+  namespace: mgmt
+  image:
+    repository: ghcr.io/pegaprox/pegaprox
+    tag: 0.9.8.1
+  service:
+    port: 5000
+    extraPorts:
+      - name: vnc-ws
+        port: 5001
+      - name: ssh-ws
+        port: 5002
+  route:
+    subdomain: pegaprox
+    auth: edge_forward_auth
+    pathRoutes:
+      - name: vnc-websocket
+        pathType: RegularExpression
+        path: ^/api/clusters/[^/]+/vms/.+/vncwebsocket$
+        port: 5001
+      - name: ssh-websocket
+        pathType: RegularExpression
+        path: ^/api/clusters/[^/]+/nodes/.+/shellws$
+        port: 5002
+  storage:
+    config:
+      enabled: true
+      size: 5Gi
+      mountPath: /app/config
+  env:
+    - name: PEGAPROX_BEHIND_PROXY
+      value: "true"
+    - name: PEGAPROX_HOST
+      value: 0.0.0.0
+    - name: PEGAPROX_ALLOWED_ORIGINS
+      value: https://pegaprox.nucleoautogenerativo.it
+    - name: PEGAPROX_URL
+      value: https://pegaprox.nucleoautogenerativo.it
+    - name: PEGAPROX_SERVER
+      value: auto
+  homepage:
+    group: Management
+    name: PegaProx
+    icon: mdi-server
+    description: Proxmox and XCP-ng datacenter management UI
+  security:
+    runAsUser: 999
+    runAsGroup: 999
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi

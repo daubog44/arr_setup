@@ -1,0 +1,27 @@
+apiVersion: haac.dev/v1alpha1
+kind: App
+metadata:
+  name: whoami-sample
+spec:
+  enabled: false
+  profile: web-app
+  namespace: mgmt
+  image:
+    repository: traefik/whoami
+    tag: v1.11.0
+  service:
+    port: 80
+  route:
+    subdomain: whoami
+    auth: edge_forward_auth
+  homepage:
+    group: Management
+    name: Whoami Sample
+    icon: mdi-test-tube
+    description: Disabled sample for validating the HaaC app descriptor layer
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
