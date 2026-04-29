@@ -1,0 +1,30 @@
+version: 1
+sourceGroups:
+  - name: app-descriptors
+    paths:
+      - apps/*.haac.yaml
+  - name: haac-stack-routing-and-config
+    paths:
+      - k8s/charts/haac-stack/config-templates/*.template
+      - k8s/charts/haac-stack/templates/*.yaml
+      - k8s/charts/haac-stack/charts/mgmt/templates/*.yaml
+      - k8s/charts/haac-stack/charts/mgmt/files/post-install/*.sh
+  - name: platform-templates
+    paths:
+      - k8s/platform/kustomization.yaml
+      - k8s/platform/applications/*.yaml.template
+      - k8s/platform/crowdsec/*.yaml.template
+      - k8s/platform/traefik/*.yaml.template
+      - k8s/platform/argocd/install-overlay/*.yaml.template
+  - name: platform-observability
+    paths:
+      - k8s/platform/observability/*.yaml
+  - name: chaos-catalog
+    paths:
+      - k8s/platform/chaos/*.yaml
+      - k8s/platform/chaos/litmus-workflow-catalog/*.json
+      - k8s/platform/chaos/litmus-workflow-catalog/*.yaml
+  - name: maintenance-ansible
+    paths:
+      - ansible/*playbook.yml
+      - ansible/files/haac-*-maintenance.sh

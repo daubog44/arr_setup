@@ -1,7 +1,7 @@
 ---
 # Compatibility aggregate playbook for manual maintenance runs.
 # Semaphore uses the split playbooks below for strict host-class isolation:
-#   - HaaC/ansible/maintenance-k3s-playbook.yml
-#   - HaaC/ansible/maintenance-proxmox-playbook.yml
+#   - ansible/maintenance-k3s-playbook.yml
+#   - ansible/maintenance-proxmox-playbook.yml
 - import_playbook: maintenance-k3s-playbook.yml
 - import_playbook: maintenance-proxmox-playbook.yml

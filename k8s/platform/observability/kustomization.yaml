@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - alloy-dashboard-configmap.yaml
   - arr-stack-dashboard-configmap.yaml
+  - pegaprox-dashboard-configmap.yaml

@@ -53,6 +53,25 @@ spec:
               value: "https://pegaprox.nucleoautogenerativo.it"
             - name: PEGAPROX_SERVER
               value: "auto"
+            - name: PEGAPROX_OIDC_PROVIDER
+              value: "generic"
+            - name: PEGAPROX_OIDC_AUTHORITY
+              value: "https://auth.nucleoautogenerativo.it"
+            - name: PEGAPROX_OIDC_CLIENT_ID
+              value: "pegaprox"
+            - name: PEGAPROX_OIDC_REDIRECT_URI
+              value: "https://pegaprox.nucleoautogenerativo.it/oidc/callback"
+            - name: PEGAPROX_OIDC_SCOPES
+              value: "openid profile email groups"
+            - name: PEGAPROX_OIDC_BUTTON_TEXT
+              value: "Sign in with Authelia"
+            - name: PEGAPROX_OIDC_DEFAULT_ROLE
+              value: "viewer"
+            - name: PEGAPROX_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "pegaprox-oidc-secret"
+                  key: "clientSecret"
           resources:
             requests:
               cpu: "250m"
@@ -152,3 +171,27 @@ spec:
           port: 5002
   egress:
     - {}
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: "pegaprox"
+  namespace: "monitoring"
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+  labels:
+    app.kubernetes.io/managed-by: "haac"
+    app.kubernetes.io/name: "pegaprox"
+    app.kubernetes.io/part-of: "haac-apps"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: "pegaprox"
+  namespaceSelector:
+    matchNames:
+      - "mgmt"
+  endpoints:
+    - port: http
+      path: "/api/metrics"
+      interval: "30s"

@@ -16,18 +16,26 @@ spec:
         port: 5001
       - name: ssh-ws
         port: 5002
+  auth:
+    oidc:
+      enabled: true
+      provider: generic
+      issuer: https://auth.${DOMAIN_NAME}
+      clientID: pegaprox
+      redirectURI: https://pegaprox.${DOMAIN_NAME}/oidc/callback
+      scopes:
+        - openid
+        - profile
+        - email
+        - groups
+      buttonText: Sign in with Authelia
+      defaultRole: viewer
+      autoCreateUsers: true
   route:
     subdomain: pegaprox
     auth: edge_forward_auth
-    pathRoutes:
-      - name: vnc-websocket
-        pathType: RegularExpression
-        path: ^/api/clusters/[^/]+/vms/.+/vncwebsocket$
-        port: 5001
-      - name: ssh-websocket
-        pathType: RegularExpression
-        path: ^/api/clusters/[^/]+/nodes/.+/shellws$
-        port: 5002
+    presets:
+      - pegaprox-console
   storage:
     config:
       enabled: true
@@ -39,11 +47,37 @@ spec:
     - name: PEGAPROX_HOST
       value: 0.0.0.0
     - name: PEGAPROX_ALLOWED_ORIGINS
-      value: https://pegaprox.nucleoautogenerativo.it
+      value: https://pegaprox.${DOMAIN_NAME}
     - name: PEGAPROX_URL
-      value: https://pegaprox.nucleoautogenerativo.it
+      value: https://pegaprox.${DOMAIN_NAME}
     - name: PEGAPROX_SERVER
       value: auto
+    - name: PEGAPROX_OIDC_PROVIDER
+      value: generic
+    - name: PEGAPROX_OIDC_AUTHORITY
+      value: https://auth.${DOMAIN_NAME}
+    - name: PEGAPROX_OIDC_CLIENT_ID
+      value: pegaprox
+    - name: PEGAPROX_OIDC_REDIRECT_URI
+      value: https://pegaprox.${DOMAIN_NAME}/oidc/callback
+    - name: PEGAPROX_OIDC_SCOPES
+      value: openid profile email groups
+    - name: PEGAPROX_OIDC_BUTTON_TEXT
+      value: Sign in with Authelia
+    - name: PEGAPROX_OIDC_DEFAULT_ROLE
+      value: viewer
+  secrets:
+    - name: PEGAPROX_OIDC_CLIENT_SECRET
+      secretName: pegaprox-oidc-secret
+      key: clientSecret
+  observability:
+    metrics:
+      enabled: true
+      path: /api/metrics
+      interval: 30s
+  postInstall:
+    hooks:
+      - pegaprox-settings
   homepage:
     group: Management
     name: PegaProx

@@ -76,7 +76,7 @@ global:
       tag: 1.5.6
     lidarr:
       repository: lscr.io/linuxserver/lidarr
-      tag: 8.1.2135
+      tag: 3.1.0.4875-ls25
     whisparr:
       repository: ghcr.io/hotio/whisparr
       tag: v3

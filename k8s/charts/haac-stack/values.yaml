@@ -40,11 +40,11 @@ global:
     autoUpdate:
       enabled: true
   auth:
-    autheliaConfigChecksum: "d8e8ac791cf98f2fd1a2da8241bf8aa57c31dcf7c9a162508200aa5173a9ce46"
+    autheliaConfigChecksum: "37d7d153144c6e1d39528842003f75cc1b95ecbbaed5077acf422fae02f72911"
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "d741631e56cb9d5cff9e8b356b593648c06de15eb1fcf61a3f5784026d2cc35c"
+    homepageConfigChecksum: "07f2913b4012ccbdf39dabc12514b9733a92ee15110456fa47211226475a3cbe"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:

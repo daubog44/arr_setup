@@ -47,7 +47,7 @@ spec:
             - name: REPO_REVISION
               value: "{{ .Values.global.gitops.repoRevision }}"
             - name: MAINTENANCE_INVENTORY_PATH
-              value: "HaaC/ansible/maintenance-inventory.yml"
+              value: "ansible/maintenance-inventory.yml"
             - name: MAINTENANCE_SSH_KEY_PATH
               value: "/etc/ansible-ssh/maintenance_ed25519"
             - name: MAINTENANCE_KNOWN_HOSTS_PATH

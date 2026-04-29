@@ -14,12 +14,12 @@ ingresses:
     homepage_description: "Proxmox and XCP-ng datacenter management UI"
     path_routes:
       - name: "vnc-websocket"
-        path: "^/api/clusters/[^/]+/vms/.+/vncwebsocket$"
+        path: "^/api/clusters/[^/]+/vms/[^/]+/(qemu|lxc)/[0-9]+/vncwebsocket$"
         pathType: "RegularExpression"
         service: "pegaprox"
         port: 5001
       - name: "ssh-websocket"
-        path: "^/api/clusters/[^/]+/nodes/.+/shellws$"
+        path: "^/api/clusters/[^/]+/nodes/[^/]+/shellws$"
         pathType: "RegularExpression"
         service: "pegaprox"
         port: 5002

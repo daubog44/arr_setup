@@ -98,3 +98,17 @@ identity_providers:
           - groups
           - email
         userinfo_signed_response_alg: none
+      - client_id: pegaprox
+        client_name: PegaProx
+        client_secret: "$plaintext$${PEGAPROX_OIDC_SECRET}"
+        public: false
+        token_endpoint_auth_method: client_secret_post
+        authorization_policy: one_factor
+        redirect_uris:
+          - https://pegaprox.${DOMAIN_NAME}/oidc/callback
+        scopes:
+          - openid
+          - profile
+          - groups
+          - email
+        userinfo_signed_response_alg: none
