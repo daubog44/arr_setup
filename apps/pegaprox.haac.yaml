@@ -70,6 +70,21 @@ spec:
     - name: PEGAPROX_OIDC_CLIENT_SECRET
       secretName: pegaprox-oidc-secret
       key: clientSecret
+    - name: PEGAPROX_PROXMOX_NAME
+      secretName: pegaprox-proxmox-secret
+      key: PEGAPROX_PROXMOX_NAME
+    - name: PEGAPROX_PROXMOX_HOST
+      secretName: pegaprox-proxmox-secret
+      key: PEGAPROX_PROXMOX_HOST
+    - name: PEGAPROX_PROXMOX_USER
+      secretName: pegaprox-proxmox-secret
+      key: PEGAPROX_PROXMOX_USER
+    - name: PEGAPROX_PROXMOX_PASSWORD
+      secretName: pegaprox-proxmox-secret
+      key: PEGAPROX_PROXMOX_PASSWORD
+    - name: PEGAPROX_PROXMOX_SSL_VERIFY
+      secretName: pegaprox-proxmox-secret
+      key: PEGAPROX_PROXMOX_SSL_VERIFY
   observability:
     metrics:
       enabled: true

@@ -72,6 +72,31 @@ spec:
                 secretKeyRef:
                   name: "pegaprox-oidc-secret"
                   key: "clientSecret"
+            - name: PEGAPROX_PROXMOX_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: "pegaprox-proxmox-secret"
+                  key: "PEGAPROX_PROXMOX_NAME"
+            - name: PEGAPROX_PROXMOX_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: "pegaprox-proxmox-secret"
+                  key: "PEGAPROX_PROXMOX_HOST"
+            - name: PEGAPROX_PROXMOX_USER
+              valueFrom:
+                secretKeyRef:
+                  name: "pegaprox-proxmox-secret"
+                  key: "PEGAPROX_PROXMOX_USER"
+            - name: PEGAPROX_PROXMOX_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "pegaprox-proxmox-secret"
+                  key: "PEGAPROX_PROXMOX_PASSWORD"
+            - name: PEGAPROX_PROXMOX_SSL_VERIFY
+              valueFrom:
+                secretKeyRef:
+                  name: "pegaprox-proxmox-secret"
+                  key: "PEGAPROX_PROXMOX_SSL_VERIFY"
           resources:
             requests:
               cpu: "250m"
