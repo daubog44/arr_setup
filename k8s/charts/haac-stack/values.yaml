@@ -52,7 +52,7 @@ global:
       tag: v3.41.1
     curl:
       repository: curlimages/curl
-      tag: 8.19.0
+      tag: 8.20.0
     qbittorrent:
       repository: lscr.io/linuxserver/qbittorrent
       tag: 20.04.1
