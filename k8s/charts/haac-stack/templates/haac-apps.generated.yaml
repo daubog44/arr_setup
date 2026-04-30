@@ -33,7 +33,7 @@ spec:
         fsGroup: 999
       containers:
         - name: app
-          image: "ghcr.io/pegaprox/pegaprox:0.9.8.1"
+          image: "ghcr.io/pegaprox/pegaprox:0.9.8.2"
           imagePullPolicy: "IfNotPresent"
           ports:
             - name: http
