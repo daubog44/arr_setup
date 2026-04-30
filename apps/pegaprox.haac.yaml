@@ -8,7 +8,7 @@ spec:
   namespace: mgmt
   image:
     repository: ghcr.io/pegaprox/pegaprox
-    tag: 0.9.8.1
+    tag: 0.9.8.2
   service:
     port: 5000
     extraPorts:
