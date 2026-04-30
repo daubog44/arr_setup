@@ -26,5 +26,6 @@ sourceGroups:
       - k8s/platform/chaos/litmus-workflow-catalog/*.yaml
   - name: maintenance-ansible
     paths:
+      - ansible/maintenance-inventory.yml
       - ansible/*playbook.yml
       - ansible/files/haac-*-maintenance.sh
