@@ -51,6 +51,10 @@ spec:
         grafana:
           enabled: false
 
+        crds:
+          migration:
+            enabled: false
+
   destination:
     server: https://kubernetes.default.svc
     namespace: kyverno
