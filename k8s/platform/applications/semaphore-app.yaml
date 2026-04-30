@@ -95,6 +95,11 @@ spec:
             cpu: 500m
             memory: 512Mi
 
+        extraEnvVariables:
+          HAAC_MAINTENANCE_SSH_PRIVATE_KEY_PATH: /etc/ansible-ssh/maintenance_ed25519
+          HAAC_SSH_KNOWN_HOSTS_PATH: /etc/ansible-ssh/known_hosts
+          HAAC_SSH_HOST_KEY_CHECKING: accept-new
+
         nodeSelector:
           node-role.kubernetes.io/control-plane: "true"
         tolerations:
@@ -108,9 +113,16 @@ spec:
           - name: ansible-inventory
             configMap:
               name: ansible-inventory-cm
+          - name: maintenance-ssh-key
+            secret:
+              secretName: haac-maintenance-ssh-key
+              defaultMode: 0400
         extraVolumeMounts:
           - name: ansible-inventory
             mountPath: /opt/ansible
+            readOnly: true
+          - name: maintenance-ssh-key
+            mountPath: /etc/ansible-ssh
             readOnly: true
 
   destination:

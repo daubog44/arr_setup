@@ -29,11 +29,11 @@ spec:
         - email
         - groups
       buttonText: Sign in with Authelia
-      defaultRole: viewer
+      defaultRole: admin
       autoCreateUsers: true
   route:
     subdomain: pegaprox
-    auth: edge_forward_auth
+    auth: app_native
     presets:
       - pegaprox-console
   storage:
@@ -65,7 +65,7 @@ spec:
     - name: PEGAPROX_OIDC_BUTTON_TEXT
       value: Sign in with Authelia
     - name: PEGAPROX_OIDC_DEFAULT_ROLE
-      value: viewer
+      value: admin
   secrets:
     - name: PEGAPROX_OIDC_CLIENT_SECRET
       secretName: pegaprox-oidc-secret

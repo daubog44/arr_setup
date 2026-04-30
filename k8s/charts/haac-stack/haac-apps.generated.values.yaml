@@ -7,7 +7,7 @@ ingresses:
     service: "pegaprox"
     port: 5000
     namespace: "mgmt"
-    auth_strategy: "edge_forward_auth"
+    auth_strategy: "app_native"
     homepage_group: "Management"
     homepage_name: "PegaProx"
     homepage_icon: "mdi-server"
@@ -19,7 +19,7 @@ ingresses:
         service: "pegaprox"
         port: 5001
       - name: "ssh-websocket"
-        path: "^/api/clusters/[^/]+/nodes/[^/]+/shellws$"
+        path: "^/api/clusters/[^/]+/nodes/[^/]+/shell(?:ws)?$"
         pathType: "RegularExpression"
         service: "pegaprox"
         port: 5002

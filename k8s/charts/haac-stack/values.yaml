@@ -44,7 +44,7 @@ global:
     headlampAccessLevel: "readonly"
     downloadersAuthChecksum: "47f4e76d877c9e6daef3b7abbf9a405cc83c69f43044a06a545f1682fa0062a3"
     protonvpnSecretChecksum: "c70f58e550270070363d4bb6ce1cabb57d1d0e785c4e15fa9d8209d55e91c9e8"
-    homepageConfigChecksum: "07f2913b4012ccbdf39dabc12514b9733a92ee15110456fa47211226475a3cbe"
+    homepageConfigChecksum: "87eaa4422df9169cdb816518c6987b62e8080b0913faf203a52519a771a82a81"
     homepageWidgetsChecksum: "eb4dd11d1512d8dd31e7ea7c3aa9df527e57e1f63e859337aa9538e427666b8a"
   images:
     gluetun:
