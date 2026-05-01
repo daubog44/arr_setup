@@ -82,7 +82,7 @@ global:
       tag: v3
     sabnzbd:
       repository: lscr.io/linuxserver/sabnzbd
-      tag: 4.5.5
+      tag: 5.0.0
     exportarr:
       repository: ghcr.io/onedr0p/exportarr
       tag: v2.3.0
