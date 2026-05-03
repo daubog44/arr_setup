@@ -21,6 +21,7 @@ global:
     dnsIp: "10.43.0.10"
   scheduling:
     gpu:
+      nvidiaDevicePluginEnabled: false
       nvidiaRuntimeClassName: nvidia
       jellyfinRuntimeClassName: ""
       jellyfinResourceName: gpu.intel.com/i915
