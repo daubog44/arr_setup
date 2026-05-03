@@ -19,7 +19,9 @@ spec:
       labels:
         app: jellyfin
     spec:
-      runtimeClassName: {{ .Values.global.scheduling.gpu.nvidiaRuntimeClassName | quote }}
+      {{- with .Values.global.scheduling.gpu.jellyfinRuntimeClassName }}
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
       containers:
         - name: jellyfin
           image: >-
@@ -54,8 +56,19 @@ spec:
             - name: JELLYFIN_PublishedServerUrl
               value: "https://jellyfin.{{ .Values.global.domainName }}"
           resources:
+            {{- if .Values.global.scheduling.gpu.jellyfinResourceName }}
             limits:
-              nvidia.com/gpu: 1
+              {{ .Values.global.scheduling.gpu.jellyfinResourceName }}: {{ .Values.global.scheduling.gpu.jellyfinResourceCount | quote }}
+            requests:
+              {{ .Values.global.scheduling.gpu.jellyfinResourceName }}: {{ .Values.global.scheduling.gpu.jellyfinResourceCount | quote }}
+            {{- else }}
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /config

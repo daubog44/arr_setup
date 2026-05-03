@@ -22,6 +22,9 @@ global:
   scheduling:
     gpu:
       nvidiaRuntimeClassName: nvidia
+      jellyfinRuntimeClassName: ""
+      jellyfinResourceName: gpu.intel.com/i915
+      jellyfinResourceCount: "1"
       nvidiaNodeFeatureLabels:
         - feature.node.kubernetes.io/pci-0300_10de.present
         - feature.node.kubernetes.io/pci-0302_10de.present
