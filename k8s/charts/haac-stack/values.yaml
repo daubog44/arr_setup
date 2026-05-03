@@ -24,7 +24,7 @@ global:
       nvidiaDevicePluginEnabled: false
       nvidiaRuntimeClassName: nvidia
       jellyfinRuntimeClassName: ""
-      jellyfinResourceName: gpu.intel.com/i915
+      jellyfinResourceName: ""
       jellyfinResourceCount: "1"
       nvidiaNodeFeatureLabels:
         - feature.node.kubernetes.io/pci-0300_10de.present
