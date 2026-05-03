@@ -27,11 +27,19 @@ spec:
           ports:
             - containerPort: 8096
               name: http
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8096
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
               port: 8096
             initialDelaySeconds: 30
+            timeoutSeconds: 10
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
@@ -39,7 +47,9 @@ spec:
               path: /health
               port: 8096
             initialDelaySeconds: 15
+            timeoutSeconds: 10
             periodSeconds: 10
+            failureThreshold: 6
           env:
             - name: JELLYFIN_PublishedServerUrl
               value: "https://jellyfin.{{ .Values.global.domainName }}"

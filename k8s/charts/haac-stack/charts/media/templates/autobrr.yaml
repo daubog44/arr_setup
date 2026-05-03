@@ -24,11 +24,19 @@ spec:
               name: http
             - containerPort: 9074
               name: metrics
+          startupProbe:
+            httpGet:
+              path: /
+              port: 7474
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /
               port: 7474
             initialDelaySeconds: 15
+            timeoutSeconds: 10
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
@@ -36,7 +44,9 @@ spec:
               path: /
               port: 7474
             initialDelaySeconds: 5
+            timeoutSeconds: 10
             periodSeconds: 10
+            failureThreshold: 6
           env:
             - name: PUID
               value: "{{ .Values.global.storage.uid }}"

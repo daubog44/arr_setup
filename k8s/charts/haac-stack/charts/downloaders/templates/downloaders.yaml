@@ -231,7 +231,7 @@ spec:
 
               qbit_reconcile_preferences() {
                 qbit_login_cookie
-                preference_payload=$(printf '{"save_path":"%s","temp_path":"%s","temp_path_enabled":true,"queueing_enabled":true,"max_active_downloads":8,"max_active_torrents":12,"max_active_uploads":8,"dont_count_slow_torrents":true,"slow_torrent_dl_rate_threshold":102400,"slow_torrent_inactive_timer":60}' "$QBIT_SAVE_PATH" "$QBIT_TEMP_PATH")
+                preference_payload=$(printf '{"save_path":"%s","temp_path":"%s","temp_path_enabled":true,"queueing_enabled":true,"max_active_downloads":8,"max_active_torrents":12,"max_active_uploads":8,"dont_count_slow_torrents":true,"slow_torrent_dl_rate_threshold":102400,"slow_torrent_inactive_timer":60,"random_port":false,"upnp":false}' "$QBIT_SAVE_PATH" "$QBIT_TEMP_PATH")
                 curl_common -fsS -b /tmp/qbit-cookies.txt \
                   --data-urlencode "json=${preference_payload}" \
                   http://127.0.0.1:8080/api/v2/app/setPreferences >/dev/null
@@ -241,10 +241,30 @@ spec:
                 preferences=$(curl_common -fsS -b /tmp/qbit-cookies.txt http://127.0.0.1:8080/api/v2/app/preferences || true)
                 printf '%s' "$preferences" | grep -q "\"save_path\":\"${QBIT_SAVE_PATH}" &&
                   printf '%s' "$preferences" | grep -q "\"temp_path\":\"${QBIT_TEMP_PATH}" &&
-                  printf '%s' "$preferences" | grep -q '"temp_path_enabled":true' &&
-                  printf '%s' "$preferences" | grep -q '"queueing_enabled":true' &&
-                  printf '%s' "$preferences" | grep -q '"max_active_downloads":8' &&
-                  printf '%s' "$preferences" | grep -q '"dont_count_slow_torrents":true'
+                  printf '%s' "$preferences" | grep -Eq '"temp_path_enabled"[[:space:]]*:[[:space:]]*true' &&
+                  printf '%s' "$preferences" | grep -Eq '"queueing_enabled"[[:space:]]*:[[:space:]]*true' &&
+                  printf '%s' "$preferences" | grep -Eq '"max_active_downloads"[[:space:]]*:[[:space:]]*8' &&
+                  printf '%s' "$preferences" | grep -Eq '"dont_count_slow_torrents"[[:space:]]*:[[:space:]]*true' &&
+                  printf '%s' "$preferences" | grep -Eq '"random_port"[[:space:]]*:[[:space:]]*false' &&
+                  printf '%s' "$preferences" | grep -Eq '"upnp"[[:space:]]*:[[:space:]]*false'
+              }
+
+              qbit_forwarded_port_supported() {
+                forwarded_port="$1"
+                preferences=$(curl_common -fsS -b /tmp/qbit-cookies.txt http://127.0.0.1:8080/api/v2/app/preferences || true)
+                printf '%s' "$preferences" | grep -Eq "\"listen_port\"[[:space:]]*:[[:space:]]*${forwarded_port}" &&
+                  printf '%s' "$preferences" | grep -Eq '"random_port"[[:space:]]*:[[:space:]]*false' &&
+                  printf '%s' "$preferences" | grep -Eq '"upnp"[[:space:]]*:[[:space:]]*false'
+              }
+
+              qbit_reconcile_forwarded_port() {
+                forwarded_port="$1"
+                qbit_login_cookie
+                curl_common -fsS -b /tmp/qbit-cookies.txt \
+                  --data-urlencode "json={\"listen_port\": ${forwarded_port}, \"random_port\": false, \"upnp\": false}" \
+                  http://127.0.0.1:8080/api/v2/app/setPreferences >/dev/null
+                sleep 1
+                qbit_forwarded_port_supported "$forwarded_port"
               }
 
               qbit_upsert_category() {
@@ -416,11 +436,16 @@ spec:
               last_port=0
               while true; do
                 if [ -f /tmp/gluetun/forwarded_port ]; then
-                  port=$(cat /tmp/gluetun/forwarded_port)
-                  if [ "$port" != "$last_port" ] && [ -n "$port" ]; then
-                    echo "Syncing port $port to qBittorrent..."
+                  port=$(tr -d '[:space:]' </tmp/gluetun/forwarded_port)
+                  if [ -n "$port" ]; then
                     qbit_login_cookie
-                    curl -s -o /dev/null -b /tmp/qbit-cookies.txt -d "json={\"listen_port\": ${port}}" http://localhost:8080/api/v2/app/setPreferences
+                  fi
+                  if [ -n "$port" ] && { [ "$port" != "$last_port" ] || ! qbit_forwarded_port_supported "$port"; }; then
+                    echo "Syncing port $port to qBittorrent..."
+                    if ! qbit_reconcile_forwarded_port "$port"; then
+                      echo "qBittorrent did not persist Proton forwarded port ${port}." >&2
+                      exit 1
+                    fi
                     echo "Port synchronized."
                     last_port=$port
                   fi

@@ -22,17 +22,26 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             tcpSocket:
               port: 8080
             initialDelaySeconds: 30
+            timeoutSeconds: 10
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
             tcpSocket:
               port: 8080
             initialDelaySeconds: 15
+            timeoutSeconds: 10
             periodSeconds: 10
+            failureThreshold: 6
           env:
             - name: PUID
               value: "{{ .Values.global.storage.uid }}"

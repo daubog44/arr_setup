@@ -22,11 +22,19 @@ spec:
           ports:
             - containerPort: 7878
               name: http
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: 7878
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /ping
               port: 7878
             initialDelaySeconds: 30
+            timeoutSeconds: 10
             periodSeconds: 30
             failureThreshold: 3
           readinessProbe:
@@ -34,7 +42,9 @@ spec:
               path: /ping
               port: 7878
             initialDelaySeconds: 15
+            timeoutSeconds: 10
             periodSeconds: 10
+            failureThreshold: 6
           env:
             - name: PUID
               value: "{{ .Values.global.storage.uid }}"

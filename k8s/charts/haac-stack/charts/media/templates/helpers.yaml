@@ -33,11 +33,14 @@ spec:
             tcpSocket:
               port: 8191
             initialDelaySeconds: 10
+            timeoutSeconds: 10
             periodSeconds: 10
+            failureThreshold: 6
           livenessProbe:
             tcpSocket:
               port: 8191
             initialDelaySeconds: 30
+            timeoutSeconds: 10
             periodSeconds: 30
             failureThreshold: 3
 ---

@@ -9,6 +9,13 @@ sourceGroups:
       - k8s/charts/haac-stack/templates/*.yaml
       - k8s/charts/haac-stack/charts/mgmt/templates/*.yaml
       - k8s/charts/haac-stack/charts/mgmt/files/post-install/*.sh
+  - name: haac-stack-workload-charts
+    paths:
+      - k8s/charts/haac-stack/charts/downloaders/templates/*.yaml
+      - k8s/charts/haac-stack/charts/media/templates/*.yaml
+  - name: media-bootstrap-catalog
+    paths:
+      - config/media/*.yaml
   - name: platform-templates
     paths:
       - k8s/platform/kustomization.yaml

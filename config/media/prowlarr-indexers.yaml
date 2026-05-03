@@ -1,0 +1,126 @@
+version: 1
+indexers:
+  - name: YTS
+    implementation: YTS
+    region: global
+    purpose: movies
+    required: false
+    tags:
+      - haac-managed
+      - movies
+    fields:
+      apiurl: movies-api.accel.li
+
+  - name: EZTV
+    implementation: EZTV
+    region: global
+    purpose: tv
+    required: false
+    tags:
+      - haac-managed
+      - tv
+      - flaresolverr
+
+  - name: ilCorSaRoNeRo
+    implementation: ilCorSaRoNeRo
+    region: it-IT
+    purpose: movies-tv-general
+    required: false
+    tags:
+      - haac-managed
+      - italia
+      - flaresolverr
+    fields:
+      dl_type: Magnet
+
+  - name: Il Corsaro Blu
+    implementation: Il Corsaro Blu
+    region: it-IT
+    purpose: movies-tv-general
+    required: false
+    tags:
+      - haac-managed
+      - italia
+      - flaresolverr
+    credentialEnv:
+      username: PROWLARR_ILCORSAROBLU_USERNAME
+      password: PROWLARR_ILCORSAROBLU_PASSWORD
+    fields:
+      freeleech: false
+
+  - name: ItaTorrents
+    implementation: ItaTorrents
+    region: it-IT
+    purpose: movies-tv-general
+    required: false
+    tags:
+      - haac-managed
+      - italia
+    credentialEnv:
+      apikey: PROWLARR_ITATORRENTS_API_KEY
+    fields:
+      freeleech: false
+      sort: created_at
+      type: desc
+      single_file_release_use_filename: true
+
+  - name: Shareisland (API)
+    implementation: Shareisland (API)
+    region: it-IT
+    purpose: movies-tv-general
+    required: false
+    tags:
+      - haac-managed
+      - italia
+    credentialEnv:
+      apikey: PROWLARR_SHAREISLAND_API_KEY
+    fields:
+      freeleech: false
+      sort: created_at
+      type: desc
+      single_file_release_use_filename: true
+
+  - name: TrackerZero
+    implementation: TrackerZero
+    region: it-IT
+    purpose: movies-tv-music
+    required: false
+    tags:
+      - haac-managed
+      - italia
+    credentialEnv:
+      apikey: PROWLARR_TRACKERZERO_API_KEY
+      passkey: PROWLARR_TRACKERZERO_PASSKEY
+    fields:
+      sort: created_at
+      type: desc
+
+  - name: ArabaFenice
+    implementation: ArabaFenice
+    region: it-IT
+    purpose: movies-tv-general
+    required: false
+    tags:
+      - haac-managed
+      - italia
+    credentialEnv:
+      username: PROWLARR_ARABAFENICE_USERNAME
+      password: PROWLARR_ARABAFENICE_PASSWORD
+    fields:
+      sort: 3
+      type: desc
+
+  - name: Girotorrent
+    implementation: Girotorrent
+    region: it-IT
+    purpose: movies-tv-general
+    required: false
+    tags:
+      - haac-managed
+      - italia
+    credentialEnv:
+      username: PROWLARR_GIROTORRENT_USERNAME
+      password: PROWLARR_GIROTORRENT_PASSWORD
+    fields:
+      sort: 3
+      type: desc
