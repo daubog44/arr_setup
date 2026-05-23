@@ -116,7 +116,7 @@ global:
       tag: v2.23.0
     busybox:
       repository: busybox
-      tag: 1.37.0
+      tag: 1.38.0
     alpine:
       repository: alpine
       tag: "3.23"
