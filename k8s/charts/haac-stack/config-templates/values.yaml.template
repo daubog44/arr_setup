@@ -125,7 +125,7 @@ global:
       tag: "${HAAC_CLUSTER_KUBECTL_IMAGE_TAG}"
     flaresolverr:
       repository: ghcr.io/flaresolverr/flaresolverr
-      tag: v3.4.6
+      tag: v3.5.0
     unpackerr:
       repository: ghcr.io/unpackerr/unpackerr
       tag: v0.15.2
