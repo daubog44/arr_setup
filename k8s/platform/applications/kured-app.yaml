@@ -15,7 +15,7 @@ spec:
     repoURL: https://kubereboot.github.io/charts
     chart: kured
     # renovate: registryUrl=https://kubereboot.github.io/charts chart=kured
-    targetRevision: "5.11.0"
+    targetRevision: "5.12.0"
     helm:
       values: |
         tolerations:
