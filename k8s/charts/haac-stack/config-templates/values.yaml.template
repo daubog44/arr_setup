@@ -134,7 +134,7 @@ global:
       tag: 8.6.0
     intelGpuInit:
       repository: intel/intel-gpu-initcontainer
-      tag: 0.35.0
+      tag: 0.36.0
     intelGpuPlugin:
       repository: intel/intel-gpu-plugin
       tag: 0.35.0
