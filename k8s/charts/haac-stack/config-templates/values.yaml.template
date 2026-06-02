@@ -92,7 +92,7 @@ global:
       tag: v2.3.0
     seerr:
       repository: ghcr.io/seerr-team/seerr
-      tag: v3.2.0
+      tag: v3.3.0
     authelia:
       repository: authelia/authelia
       tag: 4.39.20
