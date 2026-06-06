@@ -98,7 +98,7 @@ global:
       tag: 4.39.20
     jellyfin:
       repository: jellyfin/jellyfin
-      tag: 10.11.10
+      tag: 10.11.11
     homepage:
       repository: ghcr.io/gethomepage/homepage
       tag: v1.13.1
