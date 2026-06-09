@@ -119,7 +119,7 @@ global:
       tag: 1.38.0
     alpine:
       repository: alpine
-      tag: "3.23"
+      tag: "3.24"
     kubectl:
       repository: rancher/kubectl
       tag: "v1.36.1"
