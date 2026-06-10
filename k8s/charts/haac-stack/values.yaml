@@ -104,7 +104,7 @@ global:
       tag: v1.13.2
     headlamp:
       repository: ghcr.io/headlamp-k8s/headlamp
-      tag: v0.42.0
+      tag: v0.43.0
     cloudflared:
       repository: cloudflare/cloudflared
       tag: 2026.6.0
