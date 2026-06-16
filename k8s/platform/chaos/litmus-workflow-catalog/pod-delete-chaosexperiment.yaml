@@ -42,7 +42,7 @@ spec:
         verbs:
           - "get"
           - "list"
-    image: "litmuschaos.docker.scarf.sh/litmuschaos/go-runner:3.29.0"
+    image: "litmuschaos.docker.scarf.sh/litmuschaos/go-runner:3.30.0"
     imagePullPolicy: IfNotPresent
     command:
       - /bin/bash
