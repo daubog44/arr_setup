@@ -143,7 +143,7 @@ global:
       tag: v0.19.2
     systemUpgradeController:
       repository: rancher/system-upgrade-controller
-      tag: v0.19.2
+      tag: v0.20.0
     k3sUpgrade:
       repository: rancher/k3s-upgrade
   longhorn:
