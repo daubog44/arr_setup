@@ -11,7 +11,7 @@ spec:
     repoURL: https://falcosecurity.github.io/charts
     chart: falcosidekick
     # renovate: registryUrl=https://falcosecurity.github.io/charts chart=falcosidekick
-    targetRevision: "0.13.1"
+    targetRevision: "0.14.0"
     helm:
       values: |
         replicaCount: 1
