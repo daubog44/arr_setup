@@ -71,7 +71,7 @@ global:
       tag: 6.2.1
     sonarr:
       repository: lscr.io/linuxserver/sonarr
-      tag: 4.0.18
+      tag: 4.0.19
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
       tag: 2.4.0
