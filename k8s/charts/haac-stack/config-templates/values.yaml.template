@@ -110,7 +110,7 @@ global:
       tag: 2026.7.2
     autobrr:
       repository: ghcr.io/autobrr/autobrr
-      tag: v1.82.0
+      tag: v1.82.1
     ntfy:
       repository: binwiederhier/ntfy
       tag: v2.26.0
