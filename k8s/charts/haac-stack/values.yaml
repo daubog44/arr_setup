@@ -53,7 +53,7 @@ global:
   images:
     gluetun:
       repository: qmcgaw/gluetun
-      tag: v3.41.1
+      tag: v3.41.2
     curl:
       repository: curlimages/curl
       tag: 8.21.0
