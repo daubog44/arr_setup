@@ -8,7 +8,7 @@ spec:
   namespace: mgmt
   image:
     repository: traefik/whoami
-    tag: v1.11.0
+    tag: v1.12.0
   service:
     port: 80
   route:
