@@ -107,7 +107,7 @@ global:
       tag: v0.45.0
     cloudflared:
       repository: cloudflare/cloudflared
-      tag: 2026.8.2
+      tag: 2026.8.3
     autobrr:
       repository: ghcr.io/autobrr/autobrr
       tag: v1.85.0
