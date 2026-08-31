@@ -128,7 +128,7 @@ global:
       tag: v3.5.0
     unpackerr:
       repository: ghcr.io/unpackerr/unpackerr
-      tag: v0.15.2
+      tag: v0.16.1
     recyclarr:
       repository: ghcr.io/recyclarr/recyclarr
       tag: 8.7.1
