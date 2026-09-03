@@ -95,7 +95,7 @@ global:
       tag: v3.4.1
     authelia:
       repository: authelia/authelia
-      tag: 4.39.20
+      tag: 4.39.21
     jellyfin:
       repository: jellyfin/jellyfin
       tag: 10.11.11
