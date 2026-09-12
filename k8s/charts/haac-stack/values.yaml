@@ -125,7 +125,7 @@ global:
       tag: "v1.36.2"
     flaresolverr:
       repository: ghcr.io/flaresolverr/flaresolverr
-      tag: v3.5.1
+      tag: v3.5.2
     unpackerr:
       repository: ghcr.io/unpackerr/unpackerr
       tag: v0.16.1
