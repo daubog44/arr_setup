@@ -68,13 +68,13 @@ global:
       tag: "1.3.5-31"
     radarr:
       repository: lscr.io/linuxserver/radarr
-      tag: 6.3.0
+      tag: 6.4.4
     sonarr:
       repository: lscr.io/linuxserver/sonarr
-      tag: 4.0.19
+      tag: 4.0.20
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
-      tag: 2.5.2
+      tag: 2.6.5
     bazarr:
       repository: lscr.io/linuxserver/bazarr
       tag: 1.6.1
