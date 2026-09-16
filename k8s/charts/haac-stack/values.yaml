@@ -137,7 +137,7 @@ global:
       tag: 0.37.0
     intelGpuPlugin:
       repository: intel/intel-gpu-plugin
-      tag: 0.36.0
+      tag: 0.37.0
     nvidiaDevicePlugin:
       repository: nvcr.io/nvidia/k8s-device-plugin
       tag: v0.20.0
