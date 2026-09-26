@@ -77,7 +77,7 @@ global:
       tag: 2.6.5
     bazarr:
       repository: lscr.io/linuxserver/bazarr
-      tag: 1.6.1
+      tag: 1.6.2
     lidarr:
       repository: lscr.io/linuxserver/lidarr
       tag: 3.1.0.4875-ls25
