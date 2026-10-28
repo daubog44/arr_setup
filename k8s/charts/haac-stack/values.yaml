@@ -74,7 +74,7 @@ global:
       tag: 4.0.20
     prowlarr:
       repository: lscr.io/linuxserver/prowlarr
-      tag: 2.6.5
+      tag: 2.7.0
     bazarr:
       repository: lscr.io/linuxserver/bazarr
       tag: 1.6.2
