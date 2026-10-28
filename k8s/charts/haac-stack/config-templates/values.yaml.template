@@ -131,7 +131,7 @@ global:
       tag: v1.0.0
     recyclarr:
       repository: ghcr.io/recyclarr/recyclarr
-      tag: 8.8.0
+      tag: 8.8.1
     intelGpuInit:
       repository: intel/intel-gpu-initcontainer
       tag: 0.37.1
