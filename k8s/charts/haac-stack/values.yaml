@@ -140,7 +140,7 @@ global:
       tag: 0.37.1
     nvidiaDevicePlugin:
       repository: nvcr.io/nvidia/k8s-device-plugin
-      tag: v0.20.1
+      tag: v0.20.2
     systemUpgradeController:
       repository: rancher/system-upgrade-controller
       tag: v0.21.1
