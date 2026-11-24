@@ -113,7 +113,7 @@ global:
       tag: v1.91.1
     ntfy:
       repository: binwiederhier/ntfy
-      tag: v2.38.1
+      tag: v2.38.2
     busybox:
       repository: busybox
       tag: 1.38.0
